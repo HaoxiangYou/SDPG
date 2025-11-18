@@ -18,6 +18,9 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
+    "torch",
+    "hydra-core",
+    "hydra_colorlog",
     # Add your project dependencies here
 ]
 dynamic = ["version", "readme"]
