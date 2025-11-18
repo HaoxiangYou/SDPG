@@ -1,0 +1,97 @@
+[build-system]
+requires = ["setuptools", "build", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "approximate-forl"
+authors = [{ name = "approximate-forl contributors", email = "95882094+HaoxiangYou@users.noreply.github.com" }]
+requires-python = ">=3.10"
+description = "Implementation for approximate first-order RL"
+license = { text = "MIT" }
+classifiers = [
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    # Add your project dependencies here
+]
+dynamic = ["version", "readme"]
+
+[project.optional-dependencies]
+dev = ["ruff"]
+
+[project.urls]
+GitHub = "https://github.com/yourusername/ApproximateFoRL"
+
+[tool.setuptools.packages.find]
+include = ["approximate_forl*"]
+
+[tool.setuptools.package-data]
+approximate_forl = ["**/*.yml", "**/*.yaml"]
+
+[tool.setuptools.dynamic]
+version = { file = ["VERSION"] }
+readme = { file = ["README.md"], content-type = "text/markdown" }
+
+[tool.ruff]
+cache-dir = ".cache/ruff"
+line-length = 120
+indent-width = 4
+extend-exclude = [
+    ".git",
+    ".vscode",
+    "__pycache__",
+    "docs",
+    "build",
+    "third_party",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "I",  # isort
+    "F",  # pyflakes
+    "W",  # pycodestyle warnings
+    "B",  # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    # "NPY",  # NumPy-specific rules
+    # "PLC",  # pylint convention
+    # "PLE",  # pylint error
+    # "PLW",  # pylint warning
+]
+ignore = [
+    "E501",  # Many lines are over 120 characters already
+    "E741",  # Often uses l as a variable name
+    "F403",  # Allow wildcard imports
+    "F405",  # Related to use of wildcard imports
+    "F811",  # Often uses overloads
+    "E721", # Often uses == in float and int type comparisons
+    "PLW0603", # Allow assignments to global variables
+    #
+    "B007",  # Loop control variable not used within loop body
+    "C408",  # Unnecessary `dict` call (rewrite as a literal)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = [
+    "F401",  # Module imported but unused
+    "E402",  # Module level import not at top of file
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true
+
+[tool.ruff.lint.isort]
+known-first-party = ["approximate_forl"]
