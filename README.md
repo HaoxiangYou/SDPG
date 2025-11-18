@@ -10,4 +10,5 @@ pip install .
 
 # --- Third-party physical simulators ---
 # --- rewarped ---
-pip install https://github.com/rewarped/rewarped.git
+pip install gym==0.23.1
+pip install rewarped
