@@ -23,7 +23,7 @@ dependencies = [
 dynamic = ["version", "readme"]
 
 [project.optional-dependencies]
-dev = ["ruff"]
+dev = ["ruff", "pre-commit"]
 
 [project.urls]
 GitHub = "https://github.com/yourusername/ApproximateFoRL"
