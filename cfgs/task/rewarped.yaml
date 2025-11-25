@@ -1,0 +1,4 @@
+name: rewarped
+env:
+  env_name: ant
+  num_envs: ${...num_envs}

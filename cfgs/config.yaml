@@ -1,0 +1,15 @@
+# set default task and training config
+defaults:
+  - task: rewarped
+  - agent: afrl
+  - _self_
+
+# Logging
+hydra:
+  run:
+    dir: logs/${agent.name}/${task.name}/${task.env.env_name}/${now:%Y-%m-%d_%H-%M-%S}
+
+# Deterministic
+seed: 0
+
+num_envs: ${agent.num_envs}
