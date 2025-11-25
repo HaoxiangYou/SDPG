@@ -24,11 +24,6 @@ def main(cfg: DictConfig) -> None:
     # Resolve all interpolations in the config (resolves ${...} references)
     OmegaConf.resolve(cfg)
 
-    # Add timestamp to logdir unless no_timestamp is True in config
-    # if not cfg.get("no_timestamp", False):
-    #     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    #     cfg.logdir = f"{cfg.logdir}/{timestamp}"
-
 
 if __name__ == "__main__":
     main()
