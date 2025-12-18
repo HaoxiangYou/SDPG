@@ -21,6 +21,7 @@ dependencies = [
     "torch",
     "hydra-core",
     "hydra_colorlog",
+    "pyglet"
     # Add your project dependencies here
 ]
 dynamic = ["version", "readme"]
