@@ -52,7 +52,9 @@ class BaseEnv(ABC):
         """Get the states of the environment.
 
         Returns:
-            The states of the environment.
+            The states of the environment in a dictionary with following keys:
+            - states: A dictionary containing the states of the environment.
+            - progress_buf: The progress buffer of the environment.
         """
 
     @abstractmethod
@@ -60,7 +62,9 @@ class BaseEnv(ABC):
         """Set the states of the environment.
 
         Args:
-            states: The states to set.
+            states: The states to set in a dictionary with following keys:
+            - states: A dictionary containing the states to set.
+            - progress_buf: The progress buffer to set.
         """
 
     @abstractmethod
@@ -131,7 +135,7 @@ class BaseEnv(ABC):
         """
 
     @property
-    def env(self) -> Optional[Any]:
+    def wrapped_env(self) -> Optional[Any]:
         """Get the wrapped environment.
 
         Returns:

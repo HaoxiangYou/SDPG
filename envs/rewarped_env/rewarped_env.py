@@ -18,6 +18,7 @@ class RewarpedEnv(BaseEnv):
 
     def __init__(self, _wrapped_env: WarpEnv) -> None:
         super().__init__(_wrapped_env)
+        self.state_tensors_names = self._wrapped_env.state_tensors_names
 
     def reset(self, env_ids: Optional[Sequence[int]] = None) -> Tuple[torch.Tensor, Dict[str, Any]]:
         obs = self._wrapped_env.reset(env_ids)
@@ -62,19 +63,27 @@ class RewarpedEnv(BaseEnv):
         return (
             self._wrapped_env.obs_buf,
             self._wrapped_env.rew_buf,
-            self._wrapped_env.reset_buf,
             self._wrapped_env.terminated_buf,
             self._wrapped_env.truncated_buf,
             extras,
         )
 
     def get_states(self) -> Dict[str, Any]:
-        # TODO
-        pass
+        return {
+            "states": {
+                name: wp.to_torch(getattr(self._wrapped_env.state_0, name)).view(self.num_envs, -1)
+                for name in self.state_tensors_names
+            },
+            "progress_buf": self._wrapped_env.progress_buf,
+        }
 
     def set_states(self, states: Dict[str, Any]) -> None:
-        # TODO
-        pass
+        # set states
+        for name in self.state_tensors_names:
+            getattr(self._wrapped_env.state_0, name).assign(wp.from_torch(states["states"][name]))
+
+        # set progress_buf
+        self._wrapped_env.progress_buf = states["progress_buf"].clone()
 
     def render(self) -> None:
         return self._wrapped_env.render()
