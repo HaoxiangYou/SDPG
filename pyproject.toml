@@ -33,7 +33,7 @@ dev = ["ruff", "pre-commit"]
 GitHub = "https://github.com/yourusername/ApproximateFoRL"
 
 [tool.setuptools.packages.find]
-include = ["approximate_forl*"]
+include = ["approximate_forl*", "envs*", "utils*", "scripts*"]
 
 [tool.setuptools.package-data]
 approximate_forl = ["**/*.yml", "**/*.yaml"]

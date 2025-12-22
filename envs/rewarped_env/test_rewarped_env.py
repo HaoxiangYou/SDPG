@@ -1,10 +1,6 @@
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
 import importlib
 import os
+from pathlib import Path
 
 import torch
 from rewarped_env import RewarpedEnv
