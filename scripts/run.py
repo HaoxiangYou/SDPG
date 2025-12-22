@@ -22,9 +22,9 @@ OmegaConf.register_new_resolver("compute_num_envs", compute_num_envs)
 
 
 def make_envs(config: DictConfig):
-    """Create environment based on task suite."""
-    task_suite = config.task.get("suite")
-    TaskSuite = getattr(envs, task_suite + "_env")
+    """Create environment based on task backend."""
+    task_backend = config.task.get("backend")
+    TaskSuite = getattr(envs, task_backend + "_env")
     return TaskSuite.make_envs(config)
 
 

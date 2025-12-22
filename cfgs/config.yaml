@@ -1,13 +1,13 @@
 # set default task and training config
 defaults:
-  - task: rewarped
+  - task: rewarped_default
   - agent: afrl
   - _self_
 
 # Logging
 hydra:
   run:
-    dir: logs/${agent.name}/${task.suite}/${task.env.env_name}/${now:%Y-%m-%d_%H-%M-%S}
+    dir: logs/${agent.name}/${task.backend}/${task.env.env_name}/${now:%Y-%m-%d_%H-%M-%S}
 
 # general
 seed: 0

@@ -1,5 +1,5 @@
 # backend simulator
-suite: rewarped
+backend: rewarped
 env:
   # subfolder for the task, for mujoco control tasks, rewarped put it under dflex folder
   env_suite: dflex
