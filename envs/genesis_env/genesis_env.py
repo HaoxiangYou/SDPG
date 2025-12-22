@@ -1,0 +1,211 @@
+from abc import abstractmethod
+from typing import Any, Dict, Tuple
+
+import genesis as gs
+import torch
+
+from envs.base_env import BaseEnv
+
+
+class GenesisEnv(BaseEnv):
+    """Environment wrapper for the Genesis simulator."""
+
+    _num_observations: int
+    _num_actions: int
+
+    def __init__(
+        self,
+        num_envs: int,
+        episode_length: int,
+        render: bool = False,
+        early_termination: bool = False,
+        seed: int = 0,
+        randomize_init: bool = True,
+        device: torch.device | str = "cuda",
+        sim_options: gs.options.SimOptions | None = None,
+        show_viewer: bool = False,
+    ) -> None:
+        self._device = torch.device(device)
+        self._num_envs = num_envs
+        self._episode_length = episode_length
+        self._early_termination = early_termination
+        self._randomize_init = randomize_init
+        self._seed = seed
+
+        if not gs._initialized:
+            if self._device == torch.device("cpu"):
+                gs.init(performance_mode=True, backend=gs.cpu, seed=self._seed)
+            elif self._device == torch.device("cuda"):
+                gs.init(performance_mode=True, backend=gs.cuda, seed=self._seed)
+            else:
+                raise ValueError(f"Invalid device: {self._device}")
+
+        self._renderer = gs.renderers.Rasterizer() if render else None
+        self._scene = gs.Scene(
+            sim_options=sim_options,
+            show_viewer=show_viewer,
+            renderer=self._renderer,
+        )
+
+        # Initialize the scene
+        self.init_scene()
+
+        # Initialize the camera if rendering is enabled
+        if render:
+            self.init_camera()
+
+        self._scene.build(n_envs=self._num_envs)
+
+        # Buffers
+        self._progress_buf = torch.zeros(self._num_envs, device=self._device)
+        self._obs_buf = torch.zeros(self._num_envs, self._num_observations, device=self._device)
+        self._truncated_buf = torch.zeros(self._num_envs, device=self._device)
+        self._terminated_buf = torch.zeros(self._num_envs, device=self._device)
+        self._reset_buf = torch.zeros(self._num_envs, device=self._device)
+        self._extras = {}
+
+    @abstractmethod
+    def init_scene(self) -> None:
+        """Initialize the scene."""
+        pass
+
+    @abstractmethod
+    def init_camera(self) -> None:
+        """Initialize the camera."""
+        pass
+
+    def reset(self, env_ids=None):
+        if env_ids is None:
+            env_ids = torch.arange(self._num_envs, device=self._device)
+
+        self._reset_idx(env_ids)
+
+        self._progress_buf[env_ids] = 0
+
+        states = self.get_states()
+        self._obs_buf = self.compute_observations(states)
+
+        return self._obs_buf, {}
+
+    def step(
+        self, actions: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
+        # Process actions specified by each environment.
+        self._set_actions(actions)
+
+        # Do the physics step.
+        self._scene.step()
+
+        # TODO: Not sure if we need implementing NaN check for genesis.
+
+        # TODO
+
+    def render(self) -> None:
+        # TODO
+        pass
+
+    def initialize_trajectory(self) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        # TODO
+        pass
+
+    def save_video(self) -> None:
+        # TODO
+        pass
+
+    @abstractmethod
+    def _reset_idx(self, env_ids: torch.Tensor) -> None:
+        """Reset the indices of the environment.
+        This function should be called before the reset.
+        """
+
+    @abstractmethod
+    def _set_actions(self, actions: torch.Tensor) -> None:
+        """Set the actions of the environment.
+        This function progress actions specified by each environment.
+        It should be called before the physics step.
+        """
+
+    @abstractmethod
+    def get_states(self) -> Dict[str, Any]:
+        """Get the states of the environment.
+
+        Returns:
+            The states of the environment in a dictionary with following keys:
+            - robot_states: A dictionary containing the states of the robot.
+            - progress_buf: The progress buffer of the environment.
+        """
+
+    @abstractmethod
+    def set_states(self, states: Dict[str, Any]) -> None:
+        """Set the states of the environment.
+
+        Args:
+            states: The states to set in a dictionary with following keys:
+            - robot_states: A dictionary containing the states to set.
+            - progress_buf: The progress buffer to set.
+        """
+
+    @abstractmethod
+    def compute_observations(self, states: Dict[str, Any]) -> torch.Tensor:
+        """Compute the observations of the environment.
+
+        Args:
+            states: The states of the environment in a dictionary with following keys:
+            - robot_states: A dictionary containing the states of the robot.
+            - progress_buf: The progress buffer of the environment.
+
+        Returns:
+            The observations of the environment.
+        """
+
+    @abstractmethod
+    def compute_reward(self, states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
+        """Compute the reward of the environment.
+
+        Args:
+            states: The states of the environment in a dictionary with following keys:
+            - robot_states: A dictionary containing the states of the robot.
+            - progress_buf: The progress buffer of the environment.
+
+        Returns:
+            The reward of the environment.
+        """
+
+    @abstractmethod
+    def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
+        """Compute the termination of the environment.
+
+        Args:
+            states: The states of the environment in a dictionary with following keys:
+            - robot_states: A dictionary containing the states of the robot.
+            - progress_buf: The progress buffer of the environment.
+
+        Returns:
+            The termination of the environment.
+        """
+
+    @property
+    def renderer(self):
+        # TODO
+        pass
+
+    @property
+    def device(self) -> torch.device:
+        return self._device
+
+    @property
+    def requires_grad(self) -> bool:
+        # TODO
+        pass
+
+    @property
+    def num_envs(self) -> int:
+        return self._num_envs
+
+    @property
+    def num_observations(self) -> int:
+        return self._num_observations
+
+    @property
+    def num_actions(self) -> int:
+        return self._num_actions
