@@ -59,9 +59,9 @@ class GenesisEnv(BaseEnv):
         # Buffers
         self._progress_buf = torch.zeros(self._num_envs, device=self._device)
         self._obs_buf = torch.zeros(self._num_envs, self._num_observations, device=self._device)
-        self._truncated_buf = torch.zeros(self._num_envs, device=self._device)
-        self._terminated_buf = torch.zeros(self._num_envs, device=self._device)
-        self._reset_buf = torch.zeros(self._num_envs, device=self._device)
+        self._truncated_buf = torch.zeros(self._num_envs, device=self._device, dtype=torch.bool)
+        self._terminated_buf = torch.zeros(self._num_envs, device=self._device, dtype=torch.bool)
+        self._reset_buf = torch.zeros(self._num_envs, device=self._device, dtype=torch.bool)
         self._extras = {}
 
     @abstractmethod
@@ -88,17 +88,31 @@ class GenesisEnv(BaseEnv):
         return self._obs_buf, {}
 
     def step(
-        self, actions: torch.Tensor
+        self, actions: torch.Tensor, auto_reset: bool = True
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
         # Process actions specified by each environment.
         self._set_actions(actions)
 
         # Do the physics step.
         self._scene.step()
+        self._progress_buf += 1
 
         # TODO: Not sure if we need implementing NaN check for genesis.
 
-        # TODO
+        states = self.get_states()
+        self._obs_buf = self.compute_observations(states)
+        self._reward_buf = self.compute_reward(states, actions)
+        self._terminated_buf = self.compute_termination(states)
+        self._truncated_buf = self._progress_buf >= self._episode_length
+        self._reset_buf = self._terminated_buf | self._truncated_buf
+
+        reset_env_ids = self._reset_buf.nonzero(as_tuple=False).squeeze(-1)
+        if auto_reset and len(reset_env_ids) > 0:
+            obs_buf_before_reset = self._obs_buf.clone()
+            self._extras["obs_before_reset"] = obs_buf_before_reset
+            self._obs_buf, _ = self.reset(reset_env_ids)
+
+        return self._obs_buf, self._reward_buf, self._terminated_buf, self._truncated_buf, {}
 
     def render(self) -> None:
         # TODO

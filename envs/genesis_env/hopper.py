@@ -62,21 +62,56 @@ class Hopper(GenesisEnv):
         self._default_root_dof_pos = torch.zeros(self._num_envs, len(self._root_dof_idx), device=self._device)
         self._default_motor_dof_pos = torch.zeros(self._num_envs, len(self._motors_dof_idx), device=self._device)
 
+        self._termination_height = -0.45
+        self._termination_height_tolerance = 0.15
+        self._termination_angle = torch.pi / 6.0
+        self._termination_angle_tolerance = 0.05
+        self._height_reward_scale = 1.0
+        self._angle_reward_scale = 1.0
+        self._action_penalty = -1e-1
+
     def init_camera(self) -> None:
         """Initialize the camera."""
         pass
 
     def compute_observations(self, states: Dict[str, Any]) -> torch.Tensor:
-        # TODO
-        pass
+        robot_states = states["robot_states"]
+        observations = torch.cat(
+            [
+                robot_states["root_joints_pos"][:, :1],
+                robot_states["motor_joints_pos"],
+                robot_states["root_joints_vel"][:, :1],
+                robot_states["motor_joints_vel"],
+            ],
+            dim=-1,
+        )
+        return observations
 
     def compute_reward(self, states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
-        # TODO
-        pass
+        # Jie Xu's reward function
+        height = states["robot_states"]["root_joints_pos"][:, 1]
+        height_diff = height - (self._termination_height + self._termination_height_tolerance)
+        height_reward = torch.clip(height_diff, -1.0, 3.0)
+        height_reward = torch.where(height_reward < 0.0, -200.0 * height_reward * height_reward, height_reward)
+        height_reward = torch.where(height_reward > 0.0, self._height_reward_scale * height_reward, height_reward)
+
+        angle = states["robot_states"]["root_joints_pos"][:, 2]
+        angle_reward = self._angle_reward_scale * (angle**2 / (self._termination_angle**2) + 1.0)
+
+        forward_vel = states["robot_states"]["root_joints_vel"][:, 0]
+        forward_reward = forward_vel
+
+        action_penalty = self._action_penalty * torch.sum(actions**2, dim=-1)
+
+        reward = height_reward + angle_reward + forward_reward + action_penalty
+        return reward
 
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
-        # TODO
-        pass
+        robot_states = states["robot_states"]
+        termination = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        if self._early_termination:
+            termination = robot_states["root_joints_pos"][:, 1] < self._termination_height
+        return termination
 
     def _reset_idx(self, env_ids: torch.Tensor) -> None:
         if len(env_ids) == 0:
@@ -92,11 +127,13 @@ class Hopper(GenesisEnv):
         self._robot.set_dofs_position(
             position=root_dof_pos,
             dofs_idx_local=self._root_dof_idx,
+            envs_idx=env_ids,
             zero_velocity=True,
         )
         self._robot.set_dofs_position(
             position=motor_dof_pos,
             dofs_idx_local=self._motors_dof_idx,
+            envs_idx=env_ids,
             zero_velocity=True,
         )
 
@@ -106,9 +143,46 @@ class Hopper(GenesisEnv):
         self._robot.control_dofs_force(actions, dofs_idx_local=self._motors_dof_idx)
 
     def get_states(self) -> Dict[str, Any]:
-        # TODO
-        pass
+        root_joints_pos = self._robot.get_dofs_position(self._root_dof_idx)
+        motor_joints_pos = self._robot.get_dofs_position(self._motors_dof_idx)
+        root_joints_vel = self._robot.get_dofs_velocity(self._root_dof_idx)
+        motor_joints_vel = self._robot.get_dofs_velocity(self._motors_dof_idx)
+
+        robot_states = {
+            "root_joints_pos": root_joints_pos,
+            "motor_joints_pos": motor_joints_pos,
+            "root_joints_vel": root_joints_vel,
+            "motor_joints_vel": motor_joints_vel,
+        }
+
+        states = {
+            "robot_states": robot_states,
+            "progress_buf": self._progress_buf,
+        }
+
+        return states
 
     def set_states(self, states: Dict[str, Any]) -> None:
-        # TODO
-        pass
+        robot_states = states["robot_states"]
+
+        self._robot.set_dofs_position(
+            position=robot_states["root_joints_pos"],
+            dofs_idx_local=self._root_dof_idx,
+        )
+
+        self._robot.set_dofs_position(
+            position=robot_states["motor_joints_pos"],
+            dofs_idx_local=self._motors_dof_idx,
+        )
+
+        self._robot.set_dofs_velocity(
+            velocity=robot_states["root_joints_vel"],
+            dofs_idx_local=self._root_dof_idx,
+        )
+
+        self._robot.set_dofs_velocity(
+            velocity=robot_states["motor_joints_vel"],
+            dofs_idx_local=self._motors_dof_idx,
+        )
+
+        self._progress_buf = states["progress_buf"]

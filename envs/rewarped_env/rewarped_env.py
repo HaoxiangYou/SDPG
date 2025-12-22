@@ -9,6 +9,7 @@ from omegaconf import DictConfig, OmegaConf
 from rewarped.warp_env import WarpEnv
 
 from envs.base_env import BaseEnv
+from utils.common_utils import snakecase_to_pascalcase
 
 
 class RewarpedEnv(BaseEnv):
@@ -131,10 +132,6 @@ def make_envs(config: DictConfig) -> RewarpedEnv:
             os.environ["WARP_RENDER_DIR"] = render_dir
     except (RuntimeError, AttributeError):
         pass
-
-    def snakecase_to_pascalcase(s: str) -> str:
-        components = s.split("_")
-        return "".join(word.capitalize() for word in components)
 
     ENV = importlib.import_module(f"rewarped.envs.{env_suite}.{env_name}")
     env_fn = getattr(ENV, snakecase_to_pascalcase(env_name))
