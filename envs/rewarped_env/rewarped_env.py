@@ -14,10 +14,9 @@ from envs.base_env import BaseEnv
 class RewarpedEnv(BaseEnv):
     """Environment wrapper for the rewarped simulator."""
 
-    _wrapped_env: WarpEnv
-
     def __init__(self, _wrapped_env: WarpEnv) -> None:
-        super().__init__(_wrapped_env)
+        super().__init__()
+        self._wrapped_env = _wrapped_env
         self.state_tensors_names = self._wrapped_env.state_tensors_names
 
     def reset(self, env_ids: Optional[Sequence[int]] = None) -> Tuple[torch.Tensor, Dict[str, Any]]:
@@ -106,6 +105,10 @@ class RewarpedEnv(BaseEnv):
     @property
     def num_actions(self) -> int:
         return self._wrapped_env.num_actions
+
+    @property
+    def num_envs(self) -> int:
+        return self._wrapped_env.num_envs
 
     @property
     def device(self) -> Any:

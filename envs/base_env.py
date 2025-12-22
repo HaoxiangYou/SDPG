@@ -12,14 +12,14 @@ class BaseEnv(ABC):
     This class provides a common interface for wrapping different types of physical simulators (e.g., rewarped, mujoco-warp, etc.) with unified and augmented function
     """
 
-    def __init__(self, _wrapped_env: Any, *args: Any, **kwargs: Any) -> None:
+    @abstractmethod
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize the base environment.
 
         Args:
             *args: Variable length argument list.
             **kwargs: Arbitrary keyword arguments.
         """
-        self._wrapped_env = _wrapped_env
 
     @abstractmethod
     def reset(self, env_ids: Optional[Sequence[int]] = None) -> Tuple[torch.Tensor, Dict[str, Any]]:
@@ -135,23 +135,10 @@ class BaseEnv(ABC):
         """
 
     @property
-    def wrapped_env(self) -> Optional[Any]:
-        """Get the wrapped environment.
-
-        Returns:
-            The wrapped environment object, or None if not initialized.
-        """
-        return self._wrapped_env
-
-    @property
+    @abstractmethod
     def num_envs(self) -> int:
         """Get the number of environments.
 
         Returns:
             The number of environments.
         """
-        return self._wrapped_env.num_envs
-
-    def __repr__(self) -> str:
-        """Return a string representation of the environment."""
-        return f"{self.__class__.__name__}(wrapped_env={self._wrapped_env})"
