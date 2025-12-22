@@ -53,7 +53,7 @@ class BaseEnv(ABC):
 
         Returns:
             The states of the environment in a dictionary with following keys:
-            - states: A dictionary containing the states of the environment.
+            - robot_states: A dictionary containing the states of the robot.
             - progress_buf: The progress buffer of the environment.
         """
 
@@ -63,7 +63,7 @@ class BaseEnv(ABC):
 
         Args:
             states: The states to set in a dictionary with following keys:
-            - states: A dictionary containing the states to set.
+            - robot_states: A dictionary containing the states to set.
             - progress_buf: The progress buffer to set.
         """
 

@@ -69,7 +69,7 @@ class RewarpedEnv(BaseEnv):
 
     def get_states(self) -> Dict[str, Any]:
         return {
-            "states": {
+            "robot_states": {
                 name: wp.to_torch(getattr(self._wrapped_env.state_0, name)).view(self.num_envs, -1)
                 for name in self.state_tensors_names
             },
@@ -79,7 +79,7 @@ class RewarpedEnv(BaseEnv):
     def set_states(self, states: Dict[str, Any]) -> None:
         # set states
         for name in self.state_tensors_names:
-            getattr(self._wrapped_env.state_0, name).assign(wp.from_torch(states["states"][name]))
+            getattr(self._wrapped_env.state_0, name).assign(wp.from_torch(states["robot_states"][name]))
 
         # set progress_buf
         self._wrapped_env.progress_buf = states["progress_buf"].clone()

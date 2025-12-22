@@ -182,14 +182,14 @@ def check_groups_same(
 
         >>> # Nested dictionary of tensors
         >>> nested_dict = {
-        ...     "states": {
+        ...     "robot_states": {
         ...         "joint_q": torch.tensor([[1, 2], [1, 2], [3, 4], [3, 4]]),
         ...         "body_q": torch.tensor([[5, 6], [5, 6], [7, 8], [7, 8]]),
         ...     },
         ...     "progress_buf": torch.tensor([0, 0, 1, 1]),
         ... }
         >>> result = check_groups_same(nested_dict, group_size=2, dim=0)
-        >>> # Returns {"states": {"joint_q": True, "body_q": True}, "progress_buf": True}
+        >>> # Returns {"robot_states": {"joint_q": True, "body_q": True}, "progress_buf": True}
     """
     if isinstance(tensor_input, dict):
         # If input is a dictionary, recursively apply to each value
@@ -267,12 +267,12 @@ def all_dict_values_true(bool_dict: Union[bool, Dict[str, Union[bool, Dict[str, 
         True
 
         >>> # Nested dictionary
-        >>> result = {"states": {"joint_q": True, "body_q": True}, "progress_buf": True}
+        >>> result = {"robot_states": {"joint_q": True, "body_q": True}, "progress_buf": True}
         >>> all_dict_values_true(result)
         True
 
         >>> # Returns False if any value is False
-        >>> result = {"states": {"joint_q": True, "body_q": False}, "progress_buf": True}
+        >>> result = {"robot_states": {"joint_q": True, "body_q": False}, "progress_buf": True}
         >>> all_dict_values_true(result)
         False
     """
