@@ -1,6 +1,6 @@
 # set default task and training config
 defaults:
-  - task: rewarped_default
+  - task: genesis_default
   - agent: afrl
   - _self_
 

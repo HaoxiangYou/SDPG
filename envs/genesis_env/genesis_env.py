@@ -1,10 +1,13 @@
+import importlib
 from abc import abstractmethod
 from typing import Any, Dict, Tuple
 
 import genesis as gs
 import torch
+from omegaconf import DictConfig, OmegaConf
 
 from envs.base_env import BaseEnv
+from utils.common_utils import snakecase_to_pascalcase
 
 
 class GenesisEnv(BaseEnv):
@@ -223,3 +226,14 @@ class GenesisEnv(BaseEnv):
     @property
     def num_actions(self) -> int:
         return self._num_actions
+
+
+def make_envs(config: DictConfig) -> GenesisEnv:
+    env_kwargs = OmegaConf.to_container(config.task.env, resolve=True)
+    env_name, num_envs = env_kwargs.pop("env_name"), env_kwargs.pop("num_envs")
+
+    ENV = importlib.import_module(f"envs.genesis_env.{env_name}")
+    env_fn = getattr(ENV, snakecase_to_pascalcase(env_name))
+    env = env_fn(num_envs=num_envs, device=config.device, seed=config.seed, **env_kwargs)
+
+    return env

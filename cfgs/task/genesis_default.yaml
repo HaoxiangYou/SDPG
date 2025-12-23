@@ -1,0 +1,10 @@
+# backend simulator
+backend: genesis
+env:
+  # subfolder for the task, for mujoco control tasks, rewarped put it under dflex folder
+  env_name: hopper
+  num_envs: ${...num_envs}
+
+  randomize_init: True
+  render: True
+  show_viewer: False
