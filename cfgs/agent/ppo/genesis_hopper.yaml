@@ -1,0 +1,5 @@
+name: ppo
+
+config:
+  num_envs: 4096
+

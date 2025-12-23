@@ -229,8 +229,9 @@ class GenesisEnv(BaseEnv):
 
 
 def make_envs(config: DictConfig) -> GenesisEnv:
-    env_kwargs = OmegaConf.to_container(config.task.env, resolve=True)
-    env_name, num_envs = env_kwargs.pop("env_name"), env_kwargs.pop("num_envs")
+    env_kwargs = OmegaConf.to_container(config.task.config, resolve=True)
+    env_name = config.task.name
+    num_envs = env_kwargs.pop("num_envs")
 
     ENV = importlib.import_module(f"envs.genesis_env.{env_name}")
     env_fn = getattr(ENV, snakecase_to_pascalcase(env_name))

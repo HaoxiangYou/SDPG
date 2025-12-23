@@ -1,0 +1,12 @@
+backend: genesis
+
+name: hopper
+
+config:
+  
+  num_envs: ${...num_envs}
+
+  randomize_init: True
+  render: True
+  show_viewer: False
+

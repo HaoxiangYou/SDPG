@@ -5,6 +5,7 @@ from pathlib import Path
 import torch
 from rewarped_env import RewarpedEnv
 
+from utils.common_utils import snakecase_to_pascalcase
 from utils.tensor_utils import check_groups_same, duplicate_entries, select_entries
 
 env_suite = "dflex"
@@ -15,11 +16,6 @@ env_kwargs = {"randomize": True, "no_grad": True, "render": True, "no_env_offset
 os.environ["WARP_RENDER_DIR"] = str(
     Path(__file__).parent.parent.parent / "logs" / "test_envs" / "rewarped_env" / env_name
 )
-
-
-def snakecase_to_pascalcase(s: str) -> str:
-    components = s.split("_")
-    return "".join(word.capitalize() for word in components)
 
 
 def main():

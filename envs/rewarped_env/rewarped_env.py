@@ -121,9 +121,10 @@ class RewarpedEnv(BaseEnv):
 
 
 def make_envs(config: DictConfig) -> RewarpedEnv:
-    env_kwargs = OmegaConf.to_container(config.task.env, resolve=True)
-    env_name, num_envs = env_kwargs.pop("env_name"), env_kwargs.pop("num_envs")
-    env_suite = env_kwargs.pop("env_suite")
+    env_kwargs = OmegaConf.to_container(config.task.config, resolve=True)
+    env_name = config.task.name
+    num_envs = env_kwargs.pop("num_envs")
+    suite = env_kwargs.pop("suite")
 
     try:
         hydra_cfg = HydraConfig.get()
@@ -133,7 +134,7 @@ def make_envs(config: DictConfig) -> RewarpedEnv:
     except (RuntimeError, AttributeError):
         pass
 
-    ENV = importlib.import_module(f"rewarped.envs.{env_suite}.{env_name}")
+    ENV = importlib.import_module(f"rewarped.envs.{suite}.{env_name}")
     env_fn = getattr(ENV, snakecase_to_pascalcase(env_name))
     env = env_fn(num_envs=num_envs, device=config.device, seed=config.seed, **env_kwargs)
 

@@ -1,16 +1,16 @@
-# set default task and training config
+# Set default task and training config
 defaults:
-  - task: genesis_default
-  - agent: afrl
+  - task: genesis/hopper
+  - agent: afrl/genesis_hopper
   - _self_
 
 # Logging
 hydra:
   run:
-    dir: logs/${agent.name}/${task.backend}/${task.env.env_name}/${now:%Y-%m-%d_%H-%M-%S}
+    dir: logs/${task.backend}/${task.name}/${agent.name}/${now:%Y-%m-%d_%H-%M-%S}
 
-# general
+# General
 seed: 0
 device: cuda
 
-num_envs: ${agent.num_envs}
+num_envs: ${agent.config.num_envs}

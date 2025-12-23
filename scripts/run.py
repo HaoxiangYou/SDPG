@@ -1,8 +1,6 @@
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-import envs
-
 
 def compute_num_envs(num_base_envs: int, num_action_perturbations: int) -> int:
     """Compute total number of environments for AFRl.
@@ -16,11 +14,12 @@ def compute_num_envs(num_base_envs: int, num_action_perturbations: int) -> int:
 OmegaConf.register_new_resolver("compute_num_envs", compute_num_envs)
 
 
-def make_envs(config: DictConfig):
-    """Create environment based on task backend."""
-    backend = config.task.get("backend")
-    TaskSuite = getattr(envs, backend + "_env")
-    return TaskSuite.make_envs(config)
+def make_runner(config: DictConfig):
+    """Create agent"""
+    agent_name = config.agent.get("name")
+    match agent_name:
+        case _:
+            raise ValueError(f"Invalid agent name: {agent_name}")
 
 
 @hydra.main(version_base=None, config_path="../cfgs", config_name="config")
@@ -33,8 +32,7 @@ def main(cfg: DictConfig) -> None:
     # Resolve all interpolations in the config (resolves ${...} references)
     OmegaConf.resolve(cfg)
 
-    env = make_envs(cfg)
-    env.reset()
+    # runner = make_runner(cfg)
 
 
 if __name__ == "__main__":
