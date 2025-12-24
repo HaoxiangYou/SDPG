@@ -3,7 +3,7 @@ from omegaconf import DictConfig, OmegaConf
 
 
 def compute_num_envs(num_base_envs: int, num_action_perturbations: int) -> int:
-    """Compute total number of environments for AFRl.
+    """Compute total number of environments for AFRL.
 
     Formula: num_base_envs * (num_action_perturbations + 1)
     """
@@ -36,9 +36,15 @@ def main(cfg: DictConfig) -> None:
     # Resolve all interpolations in the config (resolves ${...} references)
     OmegaConf.resolve(cfg)
 
+    # If not training, overwrite env config with the play mode
+    if not cfg.train:
+        cfg.task.config = cfg.task.play
+        cfg.num_envs = cfg.task.play.num_envs
+        cfg.agent.config.num_envs = cfg.task.play.num_envs
+
     runner = make_runner(cfg)
 
-    runner.run({"train": True, "play": False})
+    runner.run({"train": cfg.train, "play": not cfg.train, "checkpoint": cfg.checkpoint})
 
 
 if __name__ == "__main__":

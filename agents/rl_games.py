@@ -1,3 +1,4 @@
+from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from rl_games.common import env_configurations, vecenv
 from rl_games.torch_runner import Runner
@@ -60,6 +61,20 @@ def make_runner(config: DictConfig):
     agent_config = OmegaConf.to_container(config.agent.config.rl_games, resolve=True)
     # Overwrite attributes based on parents config.
     agent_config["seed"] = config.seed
+    agent_config["config"]["num_actors"] = config.agent.config.num_envs
+    agent_config["config"]["player"]["num_actors"] = config.agent.config.num_envs
+    agent_config["config"]["player"]["games_num"] = config.agent.config.num_envs
+
+    # Get Hydra's output directory - this uses the already-resolved path with timestamp
+    # from when Hydra initialized, not generating a new timestamp
+    hydra_cfg = HydraConfig.get()
+    if hydra_cfg is not None:
+        # hydra_cfg.run.dir contains the already-resolved path (with timestamp from initialization)
+        output_dir = hydra_cfg.run.dir
+        agent_config["config"]["log_path"] = output_dir
+        agent_config["config"]["train_dir"] = output_dir
+        print(f"Output directory: {output_dir}")
+        agent_config["config"]["full_experiment_name"] = "training_logs"
 
     runner = Runner()
     runner.load({"params": agent_config})

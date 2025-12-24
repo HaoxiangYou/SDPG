@@ -3,11 +3,16 @@ backend: genesis
 name: hopper
 
 config:
-  
   num_envs: ${...num_envs}
-
   randomize_init: True
-  render: True
+  render: False
   show_viewer: False
   show_FPS: False
 
+
+play:
+  num_envs: 64
+  randomize_init: True
+  render: False
+  show_viewer: True
+  show_FPS: True

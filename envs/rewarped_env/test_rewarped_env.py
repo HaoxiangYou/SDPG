@@ -13,9 +13,7 @@ env_name = "humanoid"
 num_envs = 4
 device = "cuda"
 env_kwargs = {"randomize": True, "no_grad": True, "render": True, "no_env_offset": False, "render_mode": "usd"}
-os.environ["WARP_RENDER_DIR"] = str(
-    Path(__file__).parent.parent.parent / "logs" / "test_envs" / "rewarped_env" / env_name
-)
+os.environ["WARP_RENDER_DIR"] = str(Path(__file__).parent.parent.parent / "logs" / "rewarped" / env_name / "env_test")
 
 
 def main():

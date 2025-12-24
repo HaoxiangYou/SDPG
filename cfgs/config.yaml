@@ -13,4 +13,7 @@ hydra:
 seed: 0
 device: cuda
 
+train: True # Whether to train the agent or eval the trained agent
+checkpoint: '' # Path to the checkpoint for play or resume training
+
 num_envs: ${agent.config.num_envs}
