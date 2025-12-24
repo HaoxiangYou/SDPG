@@ -15,6 +15,8 @@ class GenesisEnv(BaseEnv):
 
     _num_observations: int
     _num_actions: int
+    _action_space: Any
+    _observation_space: Any
 
     def __init__(
         self,
@@ -27,6 +29,7 @@ class GenesisEnv(BaseEnv):
         device: torch.device | str = "cuda",
         sim_options: gs.options.SimOptions | None = None,
         show_viewer: bool = False,
+        show_FPS: bool = False,
     ) -> None:
         self._device = torch.device(device)
         self._num_envs = num_envs
@@ -47,6 +50,7 @@ class GenesisEnv(BaseEnv):
         self._scene = gs.Scene(
             sim_options=sim_options,
             show_viewer=show_viewer,
+            show_FPS=show_FPS,
             renderer=self._renderer,
         )
 
@@ -226,6 +230,14 @@ class GenesisEnv(BaseEnv):
     @property
     def num_actions(self) -> int:
         return self._num_actions
+
+    @property
+    def action_space(self) -> Any:
+        return self._action_space
+
+    @property
+    def observation_space(self) -> Any:
+        return self._observation_space
 
 
 def make_envs(config: DictConfig) -> GenesisEnv:

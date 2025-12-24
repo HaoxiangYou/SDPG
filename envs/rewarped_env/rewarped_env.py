@@ -119,6 +119,14 @@ class RewarpedEnv(BaseEnv):
     def renderer(self) -> Any:
         return self._wrapped_env.renderer
 
+    @property
+    def action_space(self) -> Any:
+        return self._wrapped_env.action_space
+
+    @property
+    def observation_space(self) -> Any:
+        return self._wrapped_env.observation_space
+
 
 def make_envs(config: DictConfig) -> RewarpedEnv:
     env_kwargs = OmegaConf.to_container(config.task.config, resolve=True)

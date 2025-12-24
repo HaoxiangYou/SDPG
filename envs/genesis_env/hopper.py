@@ -3,6 +3,7 @@ from typing import Any, Dict
 
 import genesis as gs
 import torch
+from gym import spaces
 
 from envs.genesis_env.genesis_env import GenesisEnv
 
@@ -12,6 +13,8 @@ class Hopper(GenesisEnv):
 
     _num_observations = 11
     _num_actions = 3
+    _action_space = spaces.Box(low=-1.0, high=1.0, shape=(3,))
+    _observation_space = spaces.Box(low=-1.0, high=1.0, shape=(11,))
 
     def __init__(
         self,
@@ -21,6 +24,7 @@ class Hopper(GenesisEnv):
         randomize_init: bool = True,
         device: torch.device | None = None,
         show_viewer: bool = False,
+        show_FPS: bool = False,
     ) -> None:
         if device is None:
             device = torch.device("cuda")
@@ -42,6 +46,7 @@ class Hopper(GenesisEnv):
             device=device,
             show_viewer=show_viewer,
             sim_options=sim_options,
+            show_FPS=show_FPS,
         )
 
     def init_scene(self) -> None:
@@ -78,9 +83,9 @@ class Hopper(GenesisEnv):
         robot_states = states["robot_states"]
         observations = torch.cat(
             [
-                robot_states["root_joints_pos"][:, :1],
+                robot_states["root_joints_pos"][:, 1:],
                 robot_states["motor_joints_pos"],
-                robot_states["root_joints_vel"][:, :1],
+                robot_states["root_joints_vel"],
                 robot_states["motor_joints_vel"],
             ],
             dim=-1,
@@ -96,7 +101,7 @@ class Hopper(GenesisEnv):
         height_reward = torch.where(height_reward > 0.0, self._height_reward_scale * height_reward, height_reward)
 
         angle = states["robot_states"]["root_joints_pos"][:, 2]
-        angle_reward = self._angle_reward_scale * (angle**2 / (self._termination_angle**2) + 1.0)
+        angle_reward = self._angle_reward_scale * (-(angle**2) / (self._termination_angle**2) + 1.0)
 
         forward_vel = states["robot_states"]["root_joints_vel"][:, 0]
         forward_reward = forward_vel

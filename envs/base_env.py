@@ -142,3 +142,21 @@ class BaseEnv(ABC):
         Returns:
             The number of environments.
         """
+
+    @property
+    @abstractmethod
+    def action_space(self) -> Any:
+        """Get the action space.
+
+        Returns:
+            The action space.
+        """
+
+    @property
+    @abstractmethod
+    def observation_space(self) -> Any:
+        """Get the observation space.
+
+        Returns:
+            The observation space.
+        """

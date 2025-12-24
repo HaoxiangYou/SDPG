@@ -18,6 +18,10 @@ def make_runner(config: DictConfig):
     """Create agent"""
     agent_name = config.agent.get("name")
     match agent_name:
+        case "ppo" | "sac":
+            from agents.rl_games import make_runner
+
+            return make_runner(config)
         case _:
             raise ValueError(f"Invalid agent name: {agent_name}")
 
@@ -32,7 +36,9 @@ def main(cfg: DictConfig) -> None:
     # Resolve all interpolations in the config (resolves ${...} references)
     OmegaConf.resolve(cfg)
 
-    # runner = make_runner(cfg)
+    runner = make_runner(cfg)
+
+    runner.run({"train": True, "play": False})
 
 
 if __name__ == "__main__":

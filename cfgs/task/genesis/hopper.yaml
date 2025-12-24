@@ -9,4 +9,5 @@ config:
   randomize_init: True
   render: True
   show_viewer: False
+  show_FPS: False
 

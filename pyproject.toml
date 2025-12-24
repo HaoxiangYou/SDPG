@@ -21,7 +21,8 @@ dependencies = [
     "torch",
     "hydra-core",
     "hydra_colorlog",
-    "pyglet"
+    "pyglet",
+    "gymnasium",
     # Add your project dependencies here
 ]
 dynamic = ["version", "readme"]
@@ -33,7 +34,7 @@ dev = ["ruff", "pre-commit"]
 GitHub = "https://github.com/yourusername/ApproximateFoRL"
 
 [tool.setuptools.packages.find]
-include = ["approximate_forl*", "envs*", "utils*", "scripts*"]
+include = ["approximate_forl*", "envs*", "utils*", "scripts*", "agents*"]
 
 [tool.setuptools.package-data]
 approximate_forl = ["**/*.yml", "**/*.yaml"]
