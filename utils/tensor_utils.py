@@ -285,3 +285,67 @@ def all_dict_values_true(bool_dict: Union[bool, Dict[str, Union[bool, Dict[str, 
     else:
         # For non-boolean values, treat as True (or could raise an error)
         return True
+
+
+def assign_row_intervals(
+    tensor: torch.Tensor, start: torch.Tensor, end: torch.Tensor, value, row_indices: torch.Tensor | None = None
+):
+    """
+    Assign `value` to per-row intervals of a 2D tensor in-place.
+
+    For each row i (or row_indices[i] if provided):
+        tensor[row_indices[i], start[i]:end[i]] = value[i]  (if value is 1D) or value (if scalar)
+
+    Args:
+        tensor: [B_full, T] torch.Tensor (modified in-place) - full tensor
+        start:  [B] start indices for the rows being modified
+        end:    [B] end indices (exclusive) for the rows being modified
+        value:  scalar value or [B] tensor of values to assign
+        row_indices: [B] optional tensor of row indices to modify. If None, uses first B rows.
+
+    Note:
+        This function modifies the tensor in-place. Pass the full tensor and use row_indices
+        to specify which rows to modify, rather than passing a sliced view like tensor[indices].
+    """
+    assert tensor.dim() == 2, "tensor must be 2D"
+    assert start.shape == end.shape, "start and end must have same shape"
+    assert start.dim() == 1, "start/end must be 1D"
+
+    T = tensor.size(1)
+    device = tensor.device
+    B = start.size(0)
+
+    # Determine which rows to modify
+    if row_indices is None:
+        row_indices = torch.arange(B, device=device)
+    else:
+        assert row_indices.dim() == 1, "row_indices must be 1D"
+        assert row_indices.size(0) == B, "row_indices size must match start/end size"
+
+    # Handle value: scalar or 1D tensor [B]
+    if isinstance(value, torch.Tensor):
+        assert value.dim() == 1, "value must be scalar or 1D tensor"
+        assert value.size(0) == B, "value batch size must match start/end size"
+        # Expand value to [B, T] for broadcasting: value[i, :] = value[i]
+        value_expanded = value[:, None].expand(B, T)
+    else:
+        # Scalar value: use as-is (will broadcast)
+        value_expanded = value
+
+    t = torch.arange(T, device=device)
+    mask = (t >= start[:, None]) & (t < end[:, None])
+
+    # Modify the original tensor using row_indices
+    # Use advanced indexing to modify the original tensor in-place
+    # This works even when row_indices are non-contiguous
+    row_idx_expanded = row_indices[:, None].expand(B, T)
+    col_idx_expanded = t.expand(B, T)
+
+    # Extract indices where mask is True
+    row_idx_flat = row_idx_expanded[mask]
+    col_idx_flat = col_idx_expanded[mask]
+    value_flat = value_expanded[mask]
+
+    # Assign values using advanced indexing - this modifies the original tensor
+    tensor[row_idx_flat, col_idx_flat] = value_flat
+    return tensor
