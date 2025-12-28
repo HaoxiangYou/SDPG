@@ -21,7 +21,6 @@ config:
   # Total number of environments = num_base_envs  * ( num_action_perturbations + 1 )
   num_envs: ${compute_num_envs:${.num_base_envs},${.num_action_perturbations}}
 
-  # Horizon length for rollout
   horizon_length: 32
   # Action perturbation factor
   delta: 0.1
@@ -29,8 +28,13 @@ config:
   gamma: 0.99
   # TD(lambda)
   lam: 0.95
-  # Reward scale
   reward_scale: 1.0
+  target_critic_alpha: 0.2
+
+  actor_lr:  2e-3
+  critic_lr: 2e-4
+  # Adam beta
+  betas: [0.7, 0.95]
 
   # Whether to use running mean and std for the observations and reward
   obs_rms: True

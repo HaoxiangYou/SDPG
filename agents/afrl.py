@@ -1,3 +1,5 @@
+import copy
+
 import torch
 from omegaconf import DictConfig
 
@@ -29,6 +31,7 @@ class AFRLRunner:
         self.gamma = self.agent_config.gamma
         self.lam = self.agent_config.lam
         self.reward_scale = self.agent_config.reward_scale
+        self.target_critic_alpha = self.agent_config.target_critic_alpha
 
         # make the environments
         self.make_envs()
@@ -43,6 +46,11 @@ class AFRLRunner:
         self.actor = actor_fn(self.num_observations, self.num_actions, self.actor_config, device=self.device)
         critic_fn = getattr(models.critic, critic_name)
         self.critic = critic_fn(self.num_observations, self.critic_config, device=self.device)
+        self.target_critic = copy.deepcopy(self.critic)
+
+        # initialize the optimizer
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.agent_config.actor_lr)
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.agent_config.critic_lr)
 
         # Running mean and std for the observations
         if self.agent_config.obs_rms:
