@@ -104,6 +104,10 @@ class RewarpedEnv(BaseEnv):
         return self._wrapped_env.requires_grad
 
     @property
+    def num_observations(self) -> int:
+        return self._wrapped_env.num_observations
+
+    @property
     def num_actions(self) -> int:
         return self._wrapped_env.num_actions
 

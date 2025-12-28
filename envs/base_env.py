@@ -109,6 +109,15 @@ class BaseEnv(ABC):
 
     @property
     @abstractmethod
+    def num_observations(self) -> int:
+        """Get the number of observations.
+
+        Returns:
+            The number of observations.
+        """
+
+    @property
+    @abstractmethod
     def num_actions(self) -> int:
         """Get the number of actions.
 

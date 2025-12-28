@@ -22,6 +22,10 @@ def make_runner(config: DictConfig):
             from agents.rl_games import make_runner
 
             return make_runner(config)
+        case "afrl":
+            from agents.afrl import make_runner
+
+            return make_runner(config)
         case _:
             raise ValueError(f"Invalid agent name: {agent_name}")
 
