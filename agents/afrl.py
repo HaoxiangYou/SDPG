@@ -1,7 +1,9 @@
 import torch
 from omegaconf import DictConfig
 
+import models
 from utils.common_utils import make_envs
+from utils.statistic_utils import AverageMeter, RunningMeanStd
 from utils.tensor_utils import assign_row_intervals
 
 
@@ -22,22 +24,56 @@ class AFRLRunner:
             self.num_action_perturbations + 1
         )
         self.horizon_length = self.agent_config.horizon_length
+        # action perturbation factor
+        self.delta = self.agent_config.delta
         self.gamma = self.agent_config.gamma
         self.lam = self.agent_config.lam
+        self.reward_scale = self.agent_config.reward_scale
+
         # make the environments
         self.make_envs()
 
+        # make the models
+        # TODO: currently assume both actor and critic are deterministic MLPs
+        self.actor_config = self.agent_config.network.actor
+        self.critic_config = self.agent_config.network.critic
+        actor_name = self.agent_config.network.actor.name
+        critic_name = self.agent_config.network.critic.name
+        actor_fn = getattr(models.actor, actor_name)
+        self.actor = actor_fn(self.num_observations, self.num_actions, self.actor_config, device=self.device)
+        critic_fn = getattr(models.critic, critic_name)
+        self.critic = critic_fn(self.num_observations, self.critic_config, device=self.device)
+
+        # Running mean and std for the observations
+        if self.agent_config.obs_rms:
+            self.obs_rms = RunningMeanStd(shape=(self.num_observations,), device=self.device)
+        else:
+            self.obs_rms = None
+        if self.agent_config.ret_rms:
+            self.ret_rms = RunningMeanStd(shape=(1,), device=self.device)
+        else:
+            self.ret_rms = None
+
+        # Performance metrics recorder
+        self.episode_reward_meter = AverageMeter(1, 100).to(self.device)
+        self.episode_length_meter = AverageMeter(1, 100).to(self.device)
+
         # Buffer
         self.obs_buf = torch.zeros(
-            (self.horizon_length, self.num_envs, self.num_observations), dtype=torch.float32, device=self.device
+            (self.num_envs, self.horizon_length, self.num_observations), dtype=torch.float32, device=self.device
         )
-        # original rewards from the environment
-        self.raw_rewards = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
-        # rewards after processing
+        self.actions = torch.zeros(
+            (self.num_envs, self.horizon_length, self.num_actions), dtype=torch.float32, device=self.device
+        )
+        self.eps_actions = torch.zeros(
+            (self.num_envs, self.horizon_length, self.num_actions), dtype=torch.float32, device=self.device
+        )
+        # reward buffer contains the reward after processing, e.g. normalization or scale.
         self.rewards = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
         self.next_values = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
         self.target_values = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
         self.dones = torch.zeros(self.num_envs, self.horizon_length, device=self.device, dtype=torch.bool)
+        self.delta_J = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
 
     def make_envs(self):
         self.env = make_envs(self.config)
@@ -55,8 +91,7 @@ class AFRLRunner:
         This function computes the incremental trajectory rewards of each action compared to the nominal action.
         """
         # Initialize the incremental trajectory rewards
-        self.delta_J = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
-
+        self.delta_J[:] = 0.0
         # NOTE: next value is zero if done
         curr_J = self.next_values[:, -1].clone()
 
@@ -89,10 +124,30 @@ class AFRLRunner:
             - curr_J[self.get_nominal_idx_of_auxiliary_env(torch.arange(self.num_envs, device=self.device))],
         )
 
-    def compute_action_direction(self):
+    def compute_action_ascent_direction(self):
         """
-        This function computes the direction for improving the nominal action by weighting all the perturbations.
+        This function computes the ascent direction for improving the nominal action by weighting all the perturbations.
         """
+        weighted_perturbations = self.delta_J.unsqueeze(-1) * self.eps_actions / self.delta
+        # weighted_perturbations shape: [num_envs, horizon_length, num_actions]
+
+        # reshape to group environments: [num_base_envs, num_action_perturbations + 1, horizon_length, num_actions]
+        weighted_perturbations_grouped = weighted_perturbations.view(
+            self.num_base_envs, self.num_action_perturbations + 1, self.horizon_length, self.num_actions
+        )
+
+        # compute mean across each group (dimension 1)
+        ascent_direction = weighted_perturbations_grouped.mean(dim=1)
+
+        return ascent_direction
+
+    def train_actor(self):
+        pass
+
+    def train_critic(self):
+        pass
+
+    def train_epoch(self):
         pass
 
     def compute_target_values(self):

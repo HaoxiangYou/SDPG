@@ -1,6 +1,19 @@
 name: afrl
 
 config:
+
+  network:
+    actor:
+      name: ActorDeterministicMLP
+      mlp:
+        units: [128, 64, 32]
+        activation: elu
+    critic:
+      name: CriticMLP
+      mlp:
+        units: [64, 64]
+        activation: elu
+
   # Number of base environments for rollout
   num_base_envs: 32
   # Number of auxiliary environments for estimating the descent direction
@@ -10,9 +23,15 @@ config:
 
   # Horizon length for rollout
   horizon_length: 32
-  
+  # Action perturbation factor
+  delta: 0.1
   # Discount factor
   gamma: 0.99
-
   # TD(lambda)
   lam: 0.95
+  # Reward scale
+  reward_scale: 1.0
+
+  # Whether to use running mean and std for the observations and reward
+  obs_rms: True
+  ret_rms: True
