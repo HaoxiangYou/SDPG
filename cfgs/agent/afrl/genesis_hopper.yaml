@@ -21,6 +21,7 @@ config:
   # Total number of environments = num_base_envs  * ( num_action_perturbations + 1 )
   num_envs: ${compute_num_envs:${.num_base_envs},${.num_action_perturbations}}
 
+  max_epochs: 2000
   horizon_length: 32
   # Action perturbation factor
   delta: 0.1
@@ -35,6 +36,9 @@ config:
   critic_lr: 2e-4
   # Adam beta
   betas: [0.7, 0.95]
+
+  truncated_grads: True
+  grad_norm: 1.0
 
   # Whether to use running mean and std for the observations and reward
   obs_rms: True

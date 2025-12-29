@@ -1,10 +1,12 @@
 import copy
+import time
 
 import torch
+import torch.nn.functional as F
 from omegaconf import DictConfig
 
 import models
-from utils.common_utils import make_envs
+from utils.common_utils import TimeReport, make_envs
 from utils.statistic_utils import AverageMeter, RunningMeanStd
 from utils.tensor_utils import assign_row_intervals
 
@@ -25,6 +27,7 @@ class AFRLRunner:
         self.nominal_env_ids = torch.arange(self.num_base_envs, device=self.device, dtype=torch.int32) * (
             self.num_action_perturbations + 1
         )
+        self.max_epochs = self.agent_config.max_epochs
         self.horizon_length = self.agent_config.horizon_length
         # action perturbation factor
         self.delta = self.agent_config.delta
@@ -32,6 +35,8 @@ class AFRLRunner:
         self.lam = self.agent_config.lam
         self.reward_scale = self.agent_config.reward_scale
         self.target_critic_alpha = self.agent_config.target_critic_alpha
+        self.truncated_grads = self.agent_config.truncated_grads
+        self.grad_norm = self.agent_config.grad_norm
 
         # make the environments
         self.make_envs()
@@ -85,6 +90,9 @@ class AFRLRunner:
         self.target_values = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
         self.dones = torch.zeros(self.num_envs, self.horizon_length, device=self.device, dtype=torch.bool)
         self.delta_J = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
+
+        # Timer
+        self.time_report = TimeReport()
 
     def make_envs(self):
         self.env = make_envs(self.config)
@@ -142,7 +150,7 @@ class AFRLRunner:
                 # Compute the next value
                 next_values = torch.zeros(self.num_envs, device=self.device)
                 non_truncated_env_ids = (~truncated).nonzero(as_tuple=False).squeeze(-1)
-                next_values[non_truncated_env_ids] = self.critic(obs_rms.normalize(obs[non_truncated_env_ids]))
+                next_values[non_truncated_env_ids] = self.target_critic(obs_rms.normalize(obs[non_truncated_env_ids]))
                 if (next_values > 1e6).sum() > 0 or (next_values < -1e6).sum() > 0:
                     print("next value error")
                     raise ValueError("next value error")
@@ -224,18 +232,9 @@ class AFRLRunner:
         )
 
         # compute mean across each group (dimension 1)
-        ascent_direction = weighted_perturbations_grouped.mean(dim=1)
+        action_ascent_direction = weighted_perturbations_grouped.mean(dim=1)
 
-        return ascent_direction
-
-    def train_actor(self):
-        pass
-
-    def train_critic(self):
-        pass
-
-    def train_epoch(self):
-        pass
+        return action_ascent_direction
 
     def compute_target_values(self):
         """
@@ -255,6 +254,43 @@ class AFRLRunner:
             )
             Bi = self.gamma * (self.next_values[i] * self.dones[i] + Bi * (1.0 - self.dones[i])) + self.rewards[i]
             self.target_values[i] = (1.0 - self.lam) * Ai + lam * Bi
+
+    def train_actor(self):
+        # Compute the incremental trajectory rewards
+        self.compute_delta_J()
+        # Compute the action ascent direction for each nominal environment
+        action_ascent_direction = self.compute_action_ascent_direction()
+
+        target_actions = self.actions[self.nominal_env_ids] + action_ascent_direction
+        pred_actions = self.actor(self.obs_buf[self.nominal_env_ids])
+
+        # Update the actor
+        self.actor_optimizer.zero_grad()
+        actor_loss = F.mse_loss(pred_actions, target_actions)
+        actor_loss.backward()
+        if self.truncated_grads:
+            torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.grad_norm)
+        self.actor_optimizer.step()
+        return actor_loss.item()
+
+    def train_critic(self):
+        pass
+
+    def train_epoch(self, epoch: int):
+        # Rollout trajectories for training
+        self.time_report.start_timer("rollout")
+        self.rollout()
+        self.time_report.end_timer("rollout")
+
+        # Train the actor
+        self.time_report.start_timer("train_actor")
+        self.train_actor()
+        self.time_report.end_timer("train_actor")
+
+        # Train the critic
+        self.time_report.start_timer("train_critic")
+        self.train_critic()
+        self.time_report.end_timer("train_critic")
 
     def get_nominal_idx_of_auxiliary_env(self, ids: torch.Tensor) -> torch.Tensor:
         """
@@ -384,6 +420,15 @@ class AFRLRunner:
         self.env.set_states(states=nominal_states, env_ids=auxiliary_env_ids)
 
     def train(self):
+        self.start_time = time.time()
+        self.time_report.add_timer("rollout")
+        self.time_report.add_timer("train_actor")
+        self.time_report.add_timer("train_critic")
+
+        for epoch in range(self.max_epochs):
+            self.train_epoch(epoch)
+
+    def play(self):
         pass
 
     def run(self, args):
