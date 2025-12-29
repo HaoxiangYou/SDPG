@@ -1,7 +1,7 @@
 import torch.nn as nn
 
 
-def init(module, weight_init, bias_init, gain=1):
+def init_module(module, weight_init, bias_init, gain=1):
     """
     Initialize a module's weights and bias (if present).
 
