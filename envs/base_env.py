@@ -70,6 +70,19 @@ class BaseEnv(ABC):
         """
 
     @abstractmethod
+    def compute_observations(self, states: Dict[str, Any]) -> torch.Tensor:
+        """Compute the observations of the environment.
+
+        Args:
+            states: The states of the environment in a dictionary with following keys:
+            - robot_states: A dictionary containing the states of the robot.
+            - progress_buf: The progress buffer of the environment.
+
+        Returns:
+            The observations of the environment.
+        """
+
+    @abstractmethod
     def render(self) -> Union[None, torch.Tensor]:
         """Render the environment.
 
