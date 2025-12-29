@@ -1,9 +1,11 @@
 import copy
+import os
 import time
 
 import torch
 import torch.nn.functional as F
-from omegaconf import DictConfig
+from hydra.core.hydra_config import HydraConfig
+from omegaconf import DictConfig, OmegaConf
 
 import models
 from utils.common_utils import TimeReport, make_envs
@@ -37,6 +39,8 @@ class AFRLRunner:
         self.target_critic_alpha = self.agent_config.target_critic_alpha
         self.truncated_grads = self.agent_config.truncated_grads
         self.grad_norm = self.agent_config.grad_norm
+        self.mini_batch_size = self.agent_config.mini_batch_size
+        self.critic_iterations = self.agent_config.critic_iterations
 
         # make the environments
         self.make_envs()
@@ -73,6 +77,16 @@ class AFRLRunner:
         self.episode_length = torch.zeros(self.num_base_envs, device=self.device)
         self.episode_reward = torch.zeros(self.num_base_envs, device=self.device)
         self.step_count = 0
+
+        # Logger directory
+        self.log_dir = config.log_dir
+        self.train_dir = os.path.join(self.log_dir, "train")
+        self.nn_dir = os.path.join(self.log_dir, "nn")
+        self.summary_dir = os.path.join(self.log_dir, "summary")
+        if not os.path.exists(self.nn_dir):
+            os.makedirs(self.nn_dir)
+        if not os.path.exists(self.summary_dir):
+            os.makedirs(self.summary_dir)
 
         # Buffer
         self.obs_buf = torch.zeros(
@@ -274,7 +288,30 @@ class AFRLRunner:
         return actor_loss.item()
 
     def train_critic(self):
-        pass
+        self.compute_target_values()
+        obs = self.obs_buf.view(-1, self.num_observations)
+        target_values = self.target_values.view(-1, 1)
+        dataset_size = obs.shape[0]
+
+        for i in range(self.critic_iterations):
+            perm = torch.randperm(dataset_size, device=self.device)
+            obs_shuffled = obs[perm]
+            target_values_shuffled = target_values[perm]
+
+            for start_idx in range(0, dataset_size, self.mini_batch_size):
+                end_idx = min(start_idx + self.mini_batch_size, dataset_size)
+                obs_batch = obs_shuffled[start_idx:end_idx]
+                target_values_batch = target_values_shuffled[start_idx:end_idx]
+
+                self.critic_optimizer.zero_grad()
+                pred_values = self.critic(obs_batch)
+                critic_loss = F.mse_loss(pred_values, target_values_batch)
+                critic_loss.backward()
+                if self.truncated_grads:
+                    torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.grad_norm)
+                self.critic_optimizer.step()
+
+        return critic_loss.item()
 
     def train_epoch(self, epoch: int):
         # Rollout trajectories for training
@@ -284,13 +321,15 @@ class AFRLRunner:
 
         # Train the actor
         self.time_report.start_timer("train_actor")
-        self.train_actor()
+        actor_loss = self.train_actor()
         self.time_report.end_timer("train_actor")
 
         # Train the critic
         self.time_report.start_timer("train_critic")
-        self.train_critic()
+        critic_loss = self.train_critic()
         self.time_report.end_timer("train_critic")
+
+        return actor_loss, critic_loss
 
     def get_nominal_idx_of_auxiliary_env(self, ids: torch.Tensor) -> torch.Tensor:
         """
@@ -424,6 +463,7 @@ class AFRLRunner:
         self.time_report.add_timer("rollout")
         self.time_report.add_timer("train_actor")
         self.time_report.add_timer("train_critic")
+        self.save(filename="initial_policy")
 
         for epoch in range(self.max_epochs):
             self.train_epoch(epoch)
@@ -432,8 +472,39 @@ class AFRLRunner:
         pass
 
     def run(self, args):
-        pass
+        if "checkpoint" in args and args["checkpoint"] is not None and args["checkpoint"] != "":
+            self.load(args["checkpoint"])
+
+        if "train" in args and args["train"]:
+            self.train()
+        elif "play" in args and args["play"]:
+            self.play()
+
+    def load(self, path):
+        checkpoint = torch.load(path, weights_only=False)
+        self.actor = checkpoint[0].to(self.device)
+        self.critic = checkpoint[1].to(self.device)
+        self.target_critic = checkpoint[2].to(self.device)
+        self.obs_rms = checkpoint[3].to(self.device) if checkpoint[3] is not None else checkpoint[3]
+        self.ret_rms = checkpoint[4].to(self.device) if checkpoint[4] is not None else checkpoint[4]
+
+    def save(self, filename=None, save_dir=None):
+        if save_dir is None:
+            save_dir = self.nn_dir
+        if filename is None:
+            filename = "best_policy"
+        torch.save(
+            [self.actor, self.critic, self.target_critic, self.obs_rms, self.ret_rms],
+            os.path.join(save_dir, "{}.pt".format(filename)),
+        )
 
 
 def make_runner(config: DictConfig):
+    hydra_cfg = HydraConfig.get()
+    if hydra_cfg is not None:
+        output_dir = hydra_cfg.run.dir
+        OmegaConf.set_struct(config, False)
+        config.log_dir = output_dir
+        OmegaConf.set_struct(config, True)
+
     return AFRLRunner(config)

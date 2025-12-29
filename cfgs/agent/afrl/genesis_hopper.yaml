@@ -36,6 +36,9 @@ config:
   critic_lr: 2e-4
   # Adam beta
   betas: [0.7, 0.95]
+  # batch size for training the critic
+  mini_batch_size: 1024
+  critic_iterations: 16
 
   truncated_grads: True
   grad_norm: 1.0
