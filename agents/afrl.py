@@ -6,11 +6,12 @@ import torch
 import torch.nn.functional as F
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
+from tensorboardX import SummaryWriter
 
 import models
 from utils.common_utils import TimeReport, make_envs
 from utils.statistic_utils import AverageMeter, RunningMeanStd
-from utils.tensor_utils import assign_row_intervals
+from utils.tensor_utils import assign_row_intervals, compute_grad_norm
 
 
 class AFRLRunner:
@@ -77,16 +78,18 @@ class AFRLRunner:
         self.episode_length = torch.zeros(self.num_base_envs, device=self.device)
         self.episode_reward = torch.zeros(self.num_base_envs, device=self.device)
         self.step_count = 0
+        self.iter_count = 0
 
         # Logger directory
         self.log_dir = config.log_dir
         self.train_dir = os.path.join(self.log_dir, "train")
-        self.nn_dir = os.path.join(self.log_dir, "nn")
-        self.summary_dir = os.path.join(self.log_dir, "summary")
+        self.nn_dir = os.path.join(self.train_dir, "nn")
+        self.summary_dir = os.path.join(self.train_dir, "summary")
         if not os.path.exists(self.nn_dir):
             os.makedirs(self.nn_dir)
         if not os.path.exists(self.summary_dir):
             os.makedirs(self.summary_dir)
+        self.summary_writer = SummaryWriter(self.summary_dir)
 
         # Buffer
         self.obs_buf = torch.zeros(
@@ -132,6 +135,9 @@ class AFRLRunner:
                     self.obs_rms.update(obs)
                 # normalize the current obs
                 obs = obs_rms.normalize(obs)
+
+            # return of the short rollout (for logging purposes)
+            rollout_reward = 0.0
 
             for i in range(self.horizon_length):
                 self.obs_buf[:, i] = obs.clone()
@@ -182,6 +188,7 @@ class AFRLRunner:
                 # Record the performance metrics
                 self.episode_length += 1
                 self.episode_reward += raw_rewards
+                rollout_reward += raw_rewards[self.nominal_env_ids].sum().item()
                 nominal_done_env_ids = dones[self.nominal_env_ids].nonzero(as_tuple=False).squeeze(-1)
                 if len(nominal_done_env_ids) > 0:
                     self.episode_reward_meter.update(
@@ -194,6 +201,7 @@ class AFRLRunner:
                     self.episode_reward[nominal_done_env_ids] = 0.0
 
             self.step_count += self.num_envs * self.horizon_length
+            return rollout_reward / self.num_base_envs
 
     def compute_delta_J(self):
         """
@@ -282,6 +290,7 @@ class AFRLRunner:
         self.actor_optimizer.zero_grad()
         actor_loss = F.mse_loss(pred_actions, target_actions)
         actor_loss.backward()
+        self.grad_norm_before_clip = compute_grad_norm(self.actor.parameters())
         if self.truncated_grads:
             torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.grad_norm)
         self.actor_optimizer.step()
@@ -313,10 +322,10 @@ class AFRLRunner:
 
         return critic_loss.item()
 
-    def train_epoch(self, epoch: int):
+    def train_epoch(self):
         # Rollout trajectories for training
         self.time_report.start_timer("rollout")
-        self.rollout()
+        rollout_reward = self.rollout()
         self.time_report.end_timer("rollout")
 
         # Train the actor
@@ -329,7 +338,9 @@ class AFRLRunner:
         critic_loss = self.train_critic()
         self.time_report.end_timer("train_critic")
 
-        return actor_loss, critic_loss
+        self.iter_count += 1
+
+        return rollout_reward, actor_loss, critic_loss
 
     def get_nominal_idx_of_auxiliary_env(self, ids: torch.Tensor) -> torch.Tensor:
         """
@@ -459,14 +470,69 @@ class AFRLRunner:
         self.env.set_states(states=nominal_states, env_ids=auxiliary_env_ids)
 
     def train(self):
-        self.start_time = time.time()
         self.time_report.add_timer("rollout")
         self.time_report.add_timer("train_actor")
         self.time_report.add_timer("train_critic")
+
         self.save(filename="initial_policy")
 
+        self.env.reset()
+        self.episode_length = torch.zeros(self.num_base_envs, device=self.device)
+        self.episode_reward = torch.zeros(self.num_base_envs, device=self.device)
+        self.step_count = 0
+        self.iter_count = 0
+        best_policy_reward = -float("inf")
+        start_time = time.time()
+
         for epoch in range(self.max_epochs):
-            self.train_epoch(epoch)
+            time_start_epoch = time.time()
+            rollout_reward, actor_loss, critic_loss = self.train_epoch()
+            time_end_epoch = time.time()
+            time_elapse = time.time() - start_time
+
+            # Logging
+            self.summary_writer.add_scalar("actor_loss/iter", actor_loss, self.iter_count)
+            self.summary_writer.add_scalar("actor_loss/step", actor_loss, self.step_count)
+            self.summary_writer.add_scalar("actor_loss/time", actor_loss, time_elapse)
+            self.summary_writer.add_scalar("critic_loss/iter", critic_loss, self.iter_count)
+            self.summary_writer.add_scalar("critic_loss/step", critic_loss, self.step_count)
+            self.summary_writer.add_scalar("critic_loss/time", critic_loss, time_elapse)
+            self.summary_writer.add_scalar("rollout_reward/iter", rollout_reward, self.iter_count)
+            self.summary_writer.add_scalar("rollout_reward/step", rollout_reward, self.step_count)
+            self.summary_writer.add_scalar("rollout_reward/time", rollout_reward, time_elapse)
+
+            if self.episode_length_meter.current_size > 0:
+                policy_reward = self.episode_reward_meter.mean().item()
+                length = self.episode_length_meter.mean().item()
+                if policy_reward > best_policy_reward:
+                    best_policy_reward = policy_reward
+                    self.save(filename="best_policy")
+                    self.summary_writer.add_scalar("best_policy/iter", best_policy_reward, self.iter_count)
+                    self.summary_writer.add_scalar("best_policy/step", best_policy_reward, self.step_count)
+                    self.summary_writer.add_scalar("best_policy/time", best_policy_reward, time_elapse)
+                self.summary_writer.add_scalar("rewards/iter", policy_reward, self.iter_count)
+                self.summary_writer.add_scalar("rewards/step", policy_reward, self.step_count)
+                self.summary_writer.add_scalar("rewards/time", policy_reward, time_elapse)
+                self.summary_writer.add_scalar("length/iter", length, self.iter_count)
+                self.summary_writer.add_scalar("length/step", length, self.step_count)
+                self.summary_writer.add_scalar("length/time", length, time_elapse)
+            else:
+                policy_reward = float("inf")
+                length = 0
+
+            print(
+                "iter {}: ep reward {:.2f}, rollout reward {:.2f}, ep len {:.1f}, fps total {:.2f}, grad norm before clip {:.2f},".format(
+                    self.iter_count,
+                    policy_reward,
+                    rollout_reward,
+                    length,
+                    self.step_count * self.num_envs / (time_end_epoch - time_start_epoch),
+                    self.grad_norm_before_clip,
+                )
+            )
+
+            if epoch % self.save_frequency == 0:
+                self.save(filename="iter_{}_reward_{:.2f}".format(self.iter_count, policy_reward))
 
     def play(self):
         pass

@@ -349,3 +349,11 @@ def assign_row_intervals(
     # Assign values using advanced indexing - this modifies the original tensor
     tensor[row_idx_flat, col_idx_flat] = value_flat
     return tensor
+
+
+def compute_grad_norm(params):
+    grad_norm = 0.0
+    for p in params:
+        if p.grad is not None:
+            grad_norm += torch.sum(p.grad**2)
+    return torch.sqrt(grad_norm)

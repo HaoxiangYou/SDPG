@@ -46,3 +46,5 @@ config:
   # Whether to use running mean and std for the observations and reward
   obs_rms: True
   ret_rms: True
+
+  save_frequency: 400
