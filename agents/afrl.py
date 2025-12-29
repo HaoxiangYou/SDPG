@@ -65,6 +65,9 @@ class AFRLRunner:
         # Performance metrics recorder
         self.episode_reward_meter = AverageMeter(1, 100).to(self.device)
         self.episode_length_meter = AverageMeter(1, 100).to(self.device)
+        self.episode_length = torch.zeros(self.num_base_envs, device=self.device)
+        self.episode_reward = torch.zeros(self.num_base_envs, device=self.device)
+        self.step_count = 0
 
         # Buffer
         self.obs_buf = torch.zeros(
@@ -76,8 +79,8 @@ class AFRLRunner:
         self.eps_actions = torch.zeros(
             (self.num_envs, self.horizon_length, self.num_actions), dtype=torch.float32, device=self.device
         )
-        # reward buffer contains the reward after processing, e.g. normalization or scale.
         self.rewards = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
+        self.ret = torch.zeros(self.num_envs, device=self.device)
         self.next_values = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
         self.target_values = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
         self.dones = torch.zeros(self.num_envs, self.horizon_length, device=self.device, dtype=torch.bool)
@@ -92,7 +95,83 @@ class AFRLRunner:
         """
         Rollout the trajectories for training and play the training dataset.
         """
-        pass
+        with torch.no_grad():
+            if self.obs_rms is not None:
+                obs_rms = copy.deepcopy(self.obs_rms)
+
+            if self.ret_rms is not None:
+                ret_var = self.ret_rms.var.clone()
+
+            # initialize trajectory by resetting the auxiliary environments to the same state as the nominal environment
+            obs = self.initialize_trajectory()
+            if self.obs_rms is not None:
+                # update obs rms
+                with torch.no_grad():
+                    self.obs_rms.update(obs)
+                # normalize the current obs
+                obs = obs_rms.normalize(obs)
+
+            for i in range(self.horizon_length):
+                self.obs_buf[:, i] = obs.clone()
+
+                # Compute the nominal actions
+                nominal_actions = self.actor(obs[self.nominal_env_ids])
+                nominal_actions = nominal_actions.repeat_interleave(self.num_action_perturbations + 1, dim=0)
+
+                # Sample the action perturbations
+                eps_actions = torch.randn_like(nominal_actions)
+                eps_actions[self.nominal_env_ids] = 0.0
+                actions = nominal_actions + eps_actions * self.delta
+                self.actions[:, i] = actions.clone()
+                self.eps_actions[:, i] = eps_actions.clone()
+
+                # Step the environment
+                # TODO: currently assume the action is bounded by [-1, 1], and we step using tanh
+                obs, rewards, terminated, truncated, info = self.env.step(torch.tanh(actions), auto_reset=False)
+
+                # Normalize the reward
+                raw_rewards = rewards.clone()
+                rewards = rewards * self.reward_scale
+                if self.ret_rms is not None:
+                    # Coarse but simple estimation of the return
+                    self.ret = self.ret * self.gamma + rewards
+                    self.ret_rms.update(self.ret)
+                rewards = rewards / torch.sqrt(ret_var + 1e-6)
+                self.rewards[:, i] = rewards.clone()
+
+                # Compute the next value
+                next_values = torch.zeros(self.num_envs, device=self.device)
+                non_truncated_env_ids = (~truncated).nonzero(as_tuple=False).squeeze(-1)
+                next_values[non_truncated_env_ids] = self.critic(obs_rms.normalize(obs[non_truncated_env_ids]))
+                if (next_values > 1e6).sum() > 0 or (next_values < -1e6).sum() > 0:
+                    print("next value error")
+                    raise ValueError("next value error")
+                self.next_values[:, i] = next_values.clone()
+
+                # Handle the done and reset
+                dones = terminated | truncated
+                dones, obs = self.env_reset(dones)
+
+                # Normalize the observation
+                if self.obs_rms is not None:
+                    self.obs_rms.update(obs)
+                    obs = obs_rms.normalize(obs)
+
+                # Record the performance metrics
+                self.episode_length += 1
+                self.episode_reward += raw_rewards
+                nominal_done_env_ids = dones[self.nominal_env_ids].nonzero(as_tuple=False).squeeze(-1)
+                if len(nominal_done_env_ids) > 0:
+                    self.episode_reward_meter.update(
+                        self.episode_reward[nominal_done_env_ids], nominal_done_env_ids.shape[0]
+                    )
+                    self.episode_length_meter.update(
+                        self.episode_length[nominal_done_env_ids], nominal_done_env_ids.shape[0]
+                    )
+                    self.episode_length[nominal_done_env_ids] = 0.0
+                    self.episode_reward[nominal_done_env_ids] = 0.0
+
+            self.step_count += self.num_envs * self.horizon_length
 
     def compute_delta_J(self):
         """
