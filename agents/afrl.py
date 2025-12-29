@@ -9,7 +9,7 @@ from omegaconf import DictConfig, OmegaConf
 from tensorboardX import SummaryWriter
 
 import models
-from utils.common_utils import TimeReport, make_envs
+from utils.common_utils import TimeReport, make_envs, print_info
 from utils.statistic_utils import AverageMeter, RunningMeanStd
 from utils.tensor_utils import assign_row_intervals, compute_grad_norm
 
@@ -90,6 +90,7 @@ class AFRLRunner:
         if not os.path.exists(self.summary_dir):
             os.makedirs(self.summary_dir)
         self.summary_writer = SummaryWriter(self.summary_dir)
+        self.save_frequency = self.agent_config.save_frequency
 
         # Buffer
         self.obs_buf = torch.zeros(
@@ -193,12 +194,8 @@ class AFRLRunner:
                 rollout_reward += raw_rewards[self.nominal_env_ids].sum().item()
                 nominal_done_env_ids = dones[self.nominal_env_ids].nonzero(as_tuple=False).squeeze(-1)
                 if len(nominal_done_env_ids) > 0:
-                    self.episode_reward_meter.update(
-                        self.episode_reward[nominal_done_env_ids], nominal_done_env_ids.shape[0]
-                    )
-                    self.episode_length_meter.update(
-                        self.episode_length[nominal_done_env_ids], nominal_done_env_ids.shape[0]
-                    )
+                    self.episode_reward_meter.update(self.episode_reward[nominal_done_env_ids])
+                    self.episode_length_meter.update(self.episode_length[nominal_done_env_ids])
                     self.episode_length[nominal_done_env_ids] = 0.0
                     self.episode_reward[nominal_done_env_ids] = 0.0
 
@@ -271,14 +268,14 @@ class AFRLRunner:
         lam = torch.ones(self.num_envs, dtype=torch.float32, device=self.device)
         dones = self.dones.clone().to(torch.float32)
         for i in reversed(range(self.horizon_length)):
-            lam = lam * self.lam * (1.0 - dones[i]) + dones[i]
-            Ai = (1.0 - dones[i]) * (
+            lam = lam * self.lam * (1.0 - dones[:, i]) + dones[:, i]
+            Ai = (1.0 - dones[:, i]) * (
                 self.lam * self.gamma * Ai
-                + self.gamma * self.next_values[i]
-                + (1.0 - lam) / (1.0 - self.lam) * self.rewards[i]
+                + self.gamma * self.next_values[:, i]
+                + (1.0 - lam) / (1.0 - self.lam) * self.rewards[:, i]
             )
-            Bi = self.gamma * (self.next_values[i] * dones[i] + Bi * (1.0 - dones[i])) + self.rewards[i]
-            self.target_values[i] = (1.0 - self.lam) * Ai + lam * Bi
+            Bi = self.gamma * (self.next_values[:, i] * dones[:, i] + Bi * (1.0 - dones[:, i])) + self.rewards[:, i]
+            self.target_values[:, i] = (1.0 - self.lam) * Ai + lam * Bi
 
     def train_actor(self):
         # Compute the incremental trajectory rewards
@@ -323,6 +320,12 @@ class AFRLRunner:
                     torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.grad_norm)
                 self.critic_optimizer.step()
 
+        # update target critic
+        with torch.no_grad():
+            alpha = self.target_critic_alpha
+            for param, param_targ in zip(self.critic.parameters(), self.target_critic.parameters(), strict=False):
+                param_targ.data.mul_(alpha)
+                param_targ.data.add_((1.0 - alpha) * param.data)
         return critic_loss.item()
 
     def train_epoch(self):
@@ -503,10 +506,11 @@ class AFRLRunner:
             self.summary_writer.add_scalar("rollout_reward/time", rollout_reward, time_elapse)
 
             if self.episode_length_meter.current_size > 0:
-                policy_reward = self.episode_reward_meter.mean().item()
-                length = self.episode_length_meter.mean().item()
+                policy_reward = self.episode_reward_meter.get_mean().item()
+                length = self.episode_length_meter.get_mean().item()
                 if policy_reward > best_policy_reward:
                     best_policy_reward = policy_reward
+                    print_info("Save best policy with reward: {:.2f}".format(best_policy_reward))
                     self.save(filename="best_policy")
                     self.summary_writer.add_scalar("best_policy/iter", best_policy_reward, self.iter_count)
                     self.summary_writer.add_scalar("best_policy/step", best_policy_reward, self.step_count)
