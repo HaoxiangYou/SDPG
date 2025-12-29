@@ -157,15 +157,15 @@ class Hopper(GenesisEnv):
         motor_joints_vel = self._robot.get_dofs_velocity(self._motors_dof_idx, envs_idx=env_ids)
 
         robot_states = {
-            "root_joints_pos": root_joints_pos,
-            "motor_joints_pos": motor_joints_pos,
-            "root_joints_vel": root_joints_vel,
-            "motor_joints_vel": motor_joints_vel,
+            "root_joints_pos": root_joints_pos.clone(),
+            "motor_joints_pos": motor_joints_pos.clone(),
+            "root_joints_vel": root_joints_vel.clone(),
+            "motor_joints_vel": motor_joints_vel.clone(),
         }
 
         states = {
             "robot_states": robot_states,
-            "progress_buf": self._progress_buf[env_ids],
+            "progress_buf": self._progress_buf[env_ids].clone(),
         }
 
         return states
@@ -200,4 +200,4 @@ class Hopper(GenesisEnv):
             envs_idx=env_ids,
         )
 
-        self._progress_buf[env_ids] = states["progress_buf"]
+        self._progress_buf[env_ids] = states["progress_buf"].clone()
