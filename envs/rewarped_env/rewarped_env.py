@@ -68,22 +68,32 @@ class RewarpedEnv(BaseEnv):
             extras,
         )
 
-    def get_states(self) -> Dict[str, Any]:
+    def get_states(self, env_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
+        if env_ids is None:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+
         return {
             "robot_states": {
-                name: wp.to_torch(getattr(self._wrapped_env.state_0, name)).view(self.num_envs, -1)
+                name: wp.to_torch(getattr(self._wrapped_env.state_0, name)).view(self.num_envs, -1)[env_ids]
                 for name in self.state_tensors_names
             },
-            "progress_buf": self._wrapped_env.progress_buf,
+            "progress_buf": self._wrapped_env.progress_buf[env_ids],
         }
 
-    def set_states(self, states: Dict[str, Any]) -> None:
+    def set_states(self, states: Dict[str, Any], env_ids: Optional[Sequence[int]] = None) -> None:
+        if env_ids is None:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+
         # set states
         for name in self.state_tensors_names:
-            getattr(self._wrapped_env.state_0, name).assign(wp.from_torch(states["robot_states"][name]))
+            # TODO not test if this is correct
+            wp.to_torch(self._wrapped_env.state_0, name).view(self.num_envs, -1)[env_ids] = wp.from_torch(
+                states["robot_states"][name]
+            )
+            raise NotImplementedError("Set states for the rewarped env is not tested yet!")
 
         # set progress_buf
-        self._wrapped_env.progress_buf = states["progress_buf"].clone()
+        self._wrapped_env.progress_buf[env_ids] = states["progress_buf"].clone()
 
     def render(self) -> None:
         return self._wrapped_env.render()

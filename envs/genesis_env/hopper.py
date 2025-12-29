@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Sequence
 
 import genesis as gs
 import torch
@@ -147,11 +147,14 @@ class Hopper(GenesisEnv):
         actions = actions.clamp(min=-1.0, max=1.0) * self._motor_strength
         self._robot.control_dofs_force(actions, dofs_idx_local=self._motors_dof_idx)
 
-    def get_states(self) -> Dict[str, Any]:
-        root_joints_pos = self._robot.get_dofs_position(self._root_dof_idx)
-        motor_joints_pos = self._robot.get_dofs_position(self._motors_dof_idx)
-        root_joints_vel = self._robot.get_dofs_velocity(self._root_dof_idx)
-        motor_joints_vel = self._robot.get_dofs_velocity(self._motors_dof_idx)
+    def get_states(self, env_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
+        if env_ids is None:
+            env_ids = torch.arange(self._num_envs, device=self._device, dtype=torch.int32)
+
+        root_joints_pos = self._robot.get_dofs_position(self._root_dof_idx, envs_idx=env_ids)
+        motor_joints_pos = self._robot.get_dofs_position(self._motors_dof_idx, envs_idx=env_ids)
+        root_joints_vel = self._robot.get_dofs_velocity(self._root_dof_idx, envs_idx=env_ids)
+        motor_joints_vel = self._robot.get_dofs_velocity(self._motors_dof_idx, envs_idx=env_ids)
 
         robot_states = {
             "root_joints_pos": root_joints_pos,
@@ -162,32 +165,39 @@ class Hopper(GenesisEnv):
 
         states = {
             "robot_states": robot_states,
-            "progress_buf": self._progress_buf,
+            "progress_buf": self._progress_buf[env_ids],
         }
 
         return states
 
-    def set_states(self, states: Dict[str, Any]) -> None:
+    def set_states(self, states: Dict[str, Any], env_ids: Optional[Sequence[int]] = None) -> None:
+        if env_ids is None:
+            env_ids = torch.arange(self._num_envs, device=self._device, dtype=torch.int32)
+
         robot_states = states["robot_states"]
 
         self._robot.set_dofs_position(
             position=robot_states["root_joints_pos"],
             dofs_idx_local=self._root_dof_idx,
+            envs_idx=env_ids,
         )
 
         self._robot.set_dofs_position(
             position=robot_states["motor_joints_pos"],
             dofs_idx_local=self._motors_dof_idx,
+            envs_idx=env_ids,
         )
 
         self._robot.set_dofs_velocity(
             velocity=robot_states["root_joints_vel"],
             dofs_idx_local=self._root_dof_idx,
+            envs_idx=env_ids,
         )
 
         self._robot.set_dofs_velocity(
             velocity=robot_states["motor_joints_vel"],
             dofs_idx_local=self._motors_dof_idx,
+            envs_idx=env_ids,
         )
 
-        self._progress_buf = states["progress_buf"]
+        self._progress_buf[env_ids] = states["progress_buf"]

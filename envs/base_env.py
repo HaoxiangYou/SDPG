@@ -48,23 +48,25 @@ class BaseEnv(ABC):
         """
 
     @abstractmethod
-    def get_states(self) -> Dict[str, Any]:
+    def get_states(self, env_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
         """Get the states of the environment.
 
         Returns:
             The states of the environment in a dictionary with following keys:
             - robot_states: A dictionary containing the states of the robot.
             - progress_buf: The progress buffer of the environment.
+            - env_ids: The indices of the environments.
         """
 
     @abstractmethod
-    def set_states(self, states: Dict[str, Any]) -> None:
+    def set_states(self, states: Dict[str, Any], env_ids: Optional[Sequence[int]] = None) -> None:
         """Set the states of the environment.
 
         Args:
             states: The states to set in a dictionary with following keys:
             - robot_states: A dictionary containing the states to set.
             - progress_buf: The progress buffer to set.
+            - env_ids: The indices of the environments.
         """
 
     @abstractmethod

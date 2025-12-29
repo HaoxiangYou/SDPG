@@ -189,6 +189,9 @@ class AFRLRunner:
     def run(self, args):
         pass
 
+    def env_reset(self):
+        pass
+
 
 def make_runner(config: DictConfig):
     return AFRLRunner(config)
