@@ -170,7 +170,9 @@ class AFRLRunner:
                 # Compute the next value
                 next_values = torch.zeros(self.num_envs, device=self.device)
                 non_truncated_env_ids = (~truncated).nonzero(as_tuple=False).squeeze(-1)
-                next_values[non_truncated_env_ids] = self.target_critic(obs_rms.normalize(obs[non_truncated_env_ids]))
+                next_values[non_truncated_env_ids] = self.target_critic(
+                    obs_rms.normalize(obs[non_truncated_env_ids])
+                ).squeeze(-1)
                 if (next_values > 1e6).sum() > 0 or (next_values < -1e6).sum() > 0:
                     print("next value error")
                     raise ValueError("next value error")
@@ -178,7 +180,7 @@ class AFRLRunner:
 
                 # Handle the done and reset
                 dones = terminated | truncated
-                dones, obs = self.env_reset(dones)
+                obs, dones = self.env_reset(dones)
 
                 # Normalize the observation
                 if self.obs_rms is not None:
@@ -187,7 +189,7 @@ class AFRLRunner:
 
                 # Record the performance metrics
                 self.episode_length += 1
-                self.episode_reward += raw_rewards
+                self.episode_reward += raw_rewards[self.nominal_env_ids]
                 rollout_reward += raw_rewards[self.nominal_env_ids].sum().item()
                 nominal_done_env_ids = dones[self.nominal_env_ids].nonzero(as_tuple=False).squeeze(-1)
                 if len(nominal_done_env_ids) > 0:
@@ -267,14 +269,15 @@ class AFRLRunner:
         # Monte Carlo return estimated
         Bi = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         lam = torch.ones(self.num_envs, dtype=torch.float32, device=self.device)
+        dones = self.dones.clone().to(torch.float32)
         for i in reversed(range(self.horizon_length)):
-            lam = lam * self.lam * (1.0 - self.dones[i]) + self.dones[i]
-            Ai = (1.0 - self.dones[i]) * (
+            lam = lam * self.lam * (1.0 - dones[i]) + dones[i]
+            Ai = (1.0 - dones[i]) * (
                 self.lam * self.gamma * Ai
                 + self.gamma * self.next_values[i]
                 + (1.0 - lam) / (1.0 - self.lam) * self.rewards[i]
             )
-            Bi = self.gamma * (self.next_values[i] * self.dones[i] + Bi * (1.0 - self.dones[i])) + self.rewards[i]
+            Bi = self.gamma * (self.next_values[i] * dones[i] + Bi * (1.0 - dones[i])) + self.rewards[i]
             self.target_values[i] = (1.0 - self.lam) * Ai + lam * Bi
 
     def train_actor(self):
@@ -391,54 +394,52 @@ class AFRLRunner:
             dones: Boolean tensor of shape [num_envs] indicating which environments are done
         """
         done_env_ids = dones.nonzero(as_tuple=False).squeeze(-1)
-        if len(done_env_ids) == 0:
-            return
+        if len(done_env_ids) > 0:
+            # Find the nominal environment ids in the done env_ids
+            is_nominal_done = torch.isin(done_env_ids, self.nominal_env_ids)
+            done_nominal_env_ids = done_env_ids[is_nominal_done]
 
-        # Find the nominal environment ids in the done env_ids
-        is_nominal_done = torch.isin(done_env_ids, self.nominal_env_ids)
-        done_nominal_env_ids = done_env_ids[is_nominal_done]
+            # Find the corresponding auxiliary environment ids for done nominal environments
+            # These auxiliary envs will be reset to match their nominal env's state
+            auxiliary_env_ids_to_reset_to_nominal = torch.tensor([], dtype=torch.int32, device=self.device)
+            if len(done_nominal_env_ids) > 0:
+                auxiliary_env_ids_to_reset_to_nominal = self.get_auxiliary_idx_of_nominal_env(done_nominal_env_ids)
 
-        # Find the corresponding auxiliary environment ids for done nominal environments
-        # These auxiliary envs will be reset to match their nominal env's state
-        auxiliary_env_ids_to_reset_to_nominal = torch.tensor([], dtype=torch.int32, device=self.device)
-        if len(done_nominal_env_ids) > 0:
-            auxiliary_env_ids_to_reset_to_nominal = self.get_auxiliary_idx_of_nominal_env(done_nominal_env_ids)
+            # Find the done auxiliary environment ids that do not belong to done nominal environments
+            # These auxiliary envs are done but their nominal env is not done, so they need normal reset
+            done_auxiliary_env_ids = done_env_ids[~is_nominal_done]
+            # Filter out auxiliary envs that belong to done nominal envs (they're already handled above)
+            if len(done_auxiliary_env_ids) > 0:
+                nominal_ids_of_done_aux = self.get_nominal_idx_of_auxiliary_env(done_auxiliary_env_ids)
+                # Keep only auxiliary envs whose nominal env is NOT done
+                nominal_not_done_mask = ~torch.isin(nominal_ids_of_done_aux, done_nominal_env_ids)
+                done_auxiliary_env_ids_standalone = done_auxiliary_env_ids[nominal_not_done_mask]
+            else:
+                done_auxiliary_env_ids_standalone = torch.tensor([], dtype=torch.int32, device=self.device)
 
-        # Find the done auxiliary environment ids that do not belong to done nominal environments
-        # These auxiliary envs are done but their nominal env is not done, so they need normal reset
-        done_auxiliary_env_ids = done_env_ids[~is_nominal_done]
-        # Filter out auxiliary envs that belong to done nominal envs (they're already handled above)
-        if len(done_auxiliary_env_ids) > 0:
-            nominal_ids_of_done_aux = self.get_nominal_idx_of_auxiliary_env(done_auxiliary_env_ids)
-            # Keep only auxiliary envs whose nominal env is NOT done
-            nominal_not_done_mask = ~torch.isin(nominal_ids_of_done_aux, done_nominal_env_ids)
-            done_auxiliary_env_ids_standalone = done_auxiliary_env_ids[nominal_not_done_mask]
-        else:
-            done_auxiliary_env_ids_standalone = torch.tensor([], dtype=torch.int32, device=self.device)
+            # Reset the nominal environments
+            if len(done_nominal_env_ids) > 0:
+                self.env.reset(env_ids=done_nominal_env_ids)
 
-        # Reset the nominal environments
-        if len(done_nominal_env_ids) > 0:
-            self.env.reset(env_ids=done_nominal_env_ids)
+            # Reset auxiliary environments that belong to done nominal envs (to match their nominal env state)
+            if len(auxiliary_env_ids_to_reset_to_nominal) > 0:
+                self.reset_auxiliary_envs(env_ids=auxiliary_env_ids_to_reset_to_nominal)
 
-        # Reset auxiliary environments that belong to done nominal envs (to match their nominal env state)
-        if len(auxiliary_env_ids_to_reset_to_nominal) > 0:
-            self.reset_auxiliary_envs(env_ids=auxiliary_env_ids_to_reset_to_nominal)
+            # Reset standalone auxiliary environments (those done but their nominal env is not done)
+            if len(done_auxiliary_env_ids_standalone) > 0:
+                # NOTE: When an auxiliary environment terminates early but its nominal environment continues,
+                # we reset the auxiliary env independently. This creates a progress buffer mismatch:
+                # the nominal env continues with its current progress, while the auxiliary env starts from 0.
+                # This is acceptable because once the nominal environment is truncated, all the auxiliary environments will be done anyway.
+                self.env.reset(env_ids=done_auxiliary_env_ids_standalone)
 
-        # Reset standalone auxiliary environments (those done but their nominal env is not done)
-        if len(done_auxiliary_env_ids_standalone) > 0:
-            # NOTE: When an auxiliary environment terminates early but its nominal environment continues,
-            # we reset the auxiliary env independently. This creates a progress buffer mismatch:
-            # the nominal env continues with its current progress, while the auxiliary env starts from 0.
-            # This is acceptable because once the nominal environment is truncated, all the auxiliary environments will be done anyway.
-            self.env.reset(env_ids=done_auxiliary_env_ids_standalone)
+            # Update the done flags for the auxiliary environments that are reset to the nominal environment# Update the done flags for the auxiliary environments that are reset to the nominal environment
+            if len(auxiliary_env_ids_to_reset_to_nominal) > 0:
+                dones[auxiliary_env_ids_to_reset_to_nominal] = True
 
         # Update the observation
         states = self.env.get_states(env_ids=torch.arange(self.num_envs, device=self.device, dtype=torch.int32))
         obs = self.env.compute_observations(states=states)
-
-        # Update the done flags for the auxiliary environments that are reset to the nominal environment
-        if len(auxiliary_env_ids_to_reset_to_nominal) > 0:
-            dones[auxiliary_env_ids_to_reset_to_nominal] = True
 
         return obs, dones
 
