@@ -79,6 +79,9 @@ class Hopper(GenesisEnv):
         """Initialize the camera."""
         pass
 
+    def build_scene(self) -> None:
+        self._scene.build(n_envs=self._num_envs, env_spacing=(0.0, 1.0), n_envs_per_row=self._num_envs)
+
     def compute_observations(self, states: Dict[str, Any]) -> torch.Tensor:
         robot_states = states["robot_states"]
         observations = torch.cat(

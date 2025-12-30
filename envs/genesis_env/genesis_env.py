@@ -61,7 +61,8 @@ class GenesisEnv(BaseEnv):
         if render:
             self.init_camera()
 
-        self._scene.build(n_envs=self._num_envs)
+        # build the scene
+        self.build_scene()
 
         # Buffers
         self._progress_buf = torch.zeros(self._num_envs, device=self._device)
@@ -70,6 +71,10 @@ class GenesisEnv(BaseEnv):
         self._terminated_buf = torch.zeros(self._num_envs, device=self._device, dtype=torch.bool)
         self._reset_buf = torch.zeros(self._num_envs, device=self._device, dtype=torch.bool)
         self._extras = {}
+
+    @abstractmethod
+    def build_scene(self) -> None:
+        """Build the scene."""
 
     @abstractmethod
     def init_scene(self) -> None:
