@@ -182,6 +182,10 @@ class AFRLRunner:
                 # Handle the done and reset
                 dones = terminated | truncated
                 obs, dones = self.env_reset(dones)
+                if i < self.horizon_length - 1:
+                    self.dones[:, i] = dones.clone()
+                else:
+                    self.dones[:, i] = True
 
                 # Normalize the observation
                 if self.obs_rms is not None:
