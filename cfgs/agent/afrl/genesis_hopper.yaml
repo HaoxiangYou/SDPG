@@ -24,7 +24,7 @@ config:
   max_epochs: 2000
   horizon_length: 32
   # Action perturbation factor
-  delta: 1.0
+  delta: 10.0
   # Discount factor
   gamma: 0.99
   # TD(lambda)
