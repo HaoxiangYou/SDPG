@@ -28,6 +28,8 @@ class GenesisEnv(BaseEnv):
         randomize_init: bool = True,
         device: torch.device | str = "cuda",
         sim_options: gs.options.SimOptions | None = None,
+        viewer_options: gs.options.ViewerOptions | None = None,
+        vis_options: gs.options.VisOptions | None = None,
         show_viewer: bool = False,
         show_FPS: bool = False,
     ) -> None:
@@ -50,6 +52,7 @@ class GenesisEnv(BaseEnv):
         self._scene = gs.Scene(
             sim_options=sim_options,
             show_viewer=show_viewer,
+            viewer_options=viewer_options,
             show_FPS=show_FPS,
             renderer=self._renderer,
         )
@@ -254,6 +257,22 @@ def make_envs(config: DictConfig) -> GenesisEnv:
 
     ENV = importlib.import_module(f"envs.genesis_env.{env_name}")
     env_fn = getattr(ENV, snakecase_to_pascalcase(env_name))
-    env = env_fn(num_envs=num_envs, device=config.device, seed=config.seed, **env_kwargs)
+
+    sim_kwargs = env_kwargs.pop("sim_options", None)
+    sim_options = gs.options.SimOptions(**sim_kwargs) if sim_kwargs is not None else None
+    viewer_kwargs = env_kwargs.pop("viewer_options", None)
+    viewer_options = gs.options.ViewerOptions(**viewer_kwargs) if viewer_kwargs is not None else None
+    vis_kwargs = env_kwargs.pop("vis_options", None)
+    vis_options = gs.options.VisOptions(**vis_kwargs) if vis_kwargs is not None else None
+
+    env = env_fn(
+        num_envs=num_envs,
+        device=config.device,
+        seed=config.seed,
+        sim_options=sim_options,
+        viewer_options=viewer_options,
+        vis_options=vis_options,
+        **env_kwargs,
+    )
 
     return env

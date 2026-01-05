@@ -23,6 +23,9 @@ class Hopper(GenesisEnv):
         seed: int = 0,
         randomize_init: bool = True,
         device: torch.device | None = None,
+        sim_options: gs.options.SimOptions | None = None,
+        viewer_options: gs.options.ViewerOptions | None = None,
+        vis_options: gs.options.VisOptions | None = None,
         show_viewer: bool = False,
         show_FPS: bool = False,
     ) -> None:
