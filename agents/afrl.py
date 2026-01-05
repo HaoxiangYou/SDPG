@@ -562,7 +562,7 @@ class AFRLRunner:
                 )
             )
 
-            if epoch % self.save_frequency == 0:
+            if self.iter_count % self.save_frequency == 0:
                 self.save(filename="iter_{}_reward_{:.2f}".format(self.iter_count, policy_reward))
 
     def play(self):
