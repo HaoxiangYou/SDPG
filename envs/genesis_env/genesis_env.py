@@ -266,10 +266,6 @@ def make_envs(config: DictConfig) -> GenesisEnv:
     vis_kwargs = env_kwargs.pop("vis_options", None)
     vis_options = gs.options.VisOptions(**vis_kwargs) if vis_kwargs is not None else None
 
-    import pdb
-
-    pdb.set_trace()
-
     env = env_fn(
         num_envs=num_envs,
         device=config.device,
