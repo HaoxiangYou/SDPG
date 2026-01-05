@@ -165,7 +165,7 @@ class AFRLRunner:
                     # Coarse but simple estimation of the return
                     self.ret = self.ret * self.gamma + rewards
                     self.ret_rms.update(self.ret)
-                rewards = rewards / torch.sqrt(ret_var + 1e-6)
+                    rewards = rewards / torch.sqrt(ret_var + 1e-6)
                 self.rewards[:, i] = rewards.clone()
 
                 # Compute the next value

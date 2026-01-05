@@ -24,7 +24,7 @@ config:
   max_epochs: 2000
   horizon_length: 32
   # Action perturbation factor
-  delta: 10.0
+  delta: 1.0
   # Discount factor
   gamma: 0.99
   # TD(lambda)
@@ -45,6 +45,6 @@ config:
 
   # Whether to use running mean and std for the observations and reward
   obs_rms: True
-  ret_rms: True
+  ret_rms: False
 
   save_frequency: 400
