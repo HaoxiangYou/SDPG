@@ -53,6 +53,7 @@ class GenesisEnv(BaseEnv):
             sim_options=sim_options,
             show_viewer=show_viewer,
             viewer_options=viewer_options,
+            vis_options=vis_options,
             show_FPS=show_FPS,
             renderer=self._renderer,
         )
@@ -264,6 +265,10 @@ def make_envs(config: DictConfig) -> GenesisEnv:
     viewer_options = gs.options.ViewerOptions(**viewer_kwargs) if viewer_kwargs is not None else None
     vis_kwargs = env_kwargs.pop("vis_options", None)
     vis_options = gs.options.VisOptions(**vis_kwargs) if vis_kwargs is not None else None
+
+    import pdb
+
+    pdb.set_trace()
 
     env = env_fn(
         num_envs=num_envs,

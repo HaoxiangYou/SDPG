@@ -32,10 +32,6 @@ class Hopper(GenesisEnv):
         if device is None:
             device = torch.device("cuda")
 
-        sim_options = gs.options.SimOptions(
-            dt=1e-2,
-            substeps=1,
-        )
         episode_length = 1000
         early_termination = True
 
@@ -49,6 +45,8 @@ class Hopper(GenesisEnv):
             device=device,
             show_viewer=show_viewer,
             sim_options=sim_options,
+            viewer_options=viewer_options,
+            vis_options=vis_options,
             show_FPS=show_FPS,
         )
 
