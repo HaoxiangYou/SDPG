@@ -243,6 +243,10 @@ class GenesisEnv(BaseEnv):
         return self._num_actions
 
     @property
+    def episode_length(self) -> int:
+        return self._episode_length
+
+    @property
     def action_space(self) -> Any:
         return self._action_space
 

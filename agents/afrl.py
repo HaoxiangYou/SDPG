@@ -467,6 +467,38 @@ class AFRLRunner:
         nominal_states = self.env.get_states(env_ids=nominal_env_ids_for_aux)
         self.env.set_states(states=nominal_states, env_ids=auxiliary_env_ids)
 
+    @torch.no_grad()
+    def evaluate_policy(self, deterministic=False, maximum_trajectory_length=None):
+        """
+        TODO currently this function is only for play mode to evaluate the trained policy.
+        """
+        episode_length = torch.zeros(self.num_envs, device=self.device)
+        episode_length_meter = AverageMeter(1, 100).to(self.device)
+        episode_reward = torch.zeros(self.num_envs, device=self.device)
+        episode_reward_meter = AverageMeter(1, 100).to(self.device)
+        if maximum_trajectory_length is None:
+            maximum_trajectory_length = self.env.episode_length
+
+        obs, _ = self.env.reset()
+        for t in range(maximum_trajectory_length):
+            if self.obs_rms is not None:
+                obs = self.obs_rms.normalize(obs)
+            actions = self.actor(obs, deterministic=deterministic)
+            obs, rewards, terminated, truncated, info = self.env.step(actions, auto_reset=True)
+            dones = terminated | truncated
+            done_env_ids = dones.nonzero(as_tuple=False).squeeze(-1)
+            episode_length += 1
+            episode_reward += rewards
+            if len(done_env_ids) > 0:
+                episode_length_meter.update(episode_length[done_env_ids])
+                episode_reward_meter.update(episode_reward[done_env_ids])
+                episode_length[done_env_ids] = 0.0
+                episode_reward[done_env_ids] = 0.0
+
+        print_info(
+            f"Episode length: {episode_length_meter.get_mean().item()}, Episode reward: {episode_reward_meter.get_mean().item()}"
+        )
+
     def train(self):
         self.time_report.add_timer("rollout")
         self.time_report.add_timer("train_actor")
@@ -534,7 +566,7 @@ class AFRLRunner:
                 self.save(filename="iter_{}_reward_{:.2f}".format(self.iter_count, policy_reward))
 
     def play(self):
-        pass
+        self.evaluate_policy()
 
     def run(self, args):
         if "checkpoint" in args and args["checkpoint"] is not None and args["checkpoint"] != "":

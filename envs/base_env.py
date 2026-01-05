@@ -169,6 +169,15 @@ class BaseEnv(ABC):
 
     @property
     @abstractmethod
+    def episode_length(self) -> int:
+        """Get the episode length.
+
+        Returns:
+            The maximum length of the episode.
+        """
+
+    @property
+    @abstractmethod
     def action_space(self) -> Any:
         """Get the action space.
 
