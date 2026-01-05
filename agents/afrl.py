@@ -484,7 +484,7 @@ class AFRLRunner:
             if self.obs_rms is not None:
                 obs = self.obs_rms.normalize(obs)
             actions = self.actor(obs, deterministic=deterministic)
-            obs, rewards, terminated, truncated, info = self.env.step(actions, auto_reset=True)
+            obs, rewards, terminated, truncated, info = self.env.step(torch.tanh(actions), auto_reset=True)
             dones = terminated | truncated
             done_env_ids = dones.nonzero(as_tuple=False).squeeze(-1)
             episode_length += 1
