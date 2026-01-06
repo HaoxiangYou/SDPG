@@ -170,9 +170,9 @@ class AFRLRunner:
 
                 # Compute the next value
                 next_values = torch.zeros(self.num_envs, device=self.device)
-                non_truncated_env_ids = (~truncated).nonzero(as_tuple=False).squeeze(-1)
-                next_values[non_truncated_env_ids] = self.target_critic(
-                    obs_rms.normalize(obs[non_truncated_env_ids])
+                non_terminated_env_ids = (~terminated).nonzero(as_tuple=False).squeeze(-1)
+                next_values[non_terminated_env_ids] = self.target_critic(
+                    obs_rms.normalize(obs[non_terminated_env_ids])
                 ).squeeze(-1)
                 if (next_values > 1e6).sum() > 0 or (next_values < -1e6).sum() > 0:
                     print("next value error")
@@ -216,7 +216,7 @@ class AFRLRunner:
         curr_J = self.next_values[:, -1].clone()
 
         # The end of the current trajectory idx
-        traj_end_ids = torch.ones(self.num_envs, dtype=torch.int, device=self.device) * (self.horizon_length + 1)
+        traj_end_ids = torch.ones(self.num_envs, dtype=torch.int, device=self.device) * self.horizon_length
 
         for t in reversed(range(self.horizon_length)):
             dones_env_ids = self.dones[:, t].nonzero(as_tuple=False).squeeze(-1)
@@ -230,7 +230,7 @@ class AFRLRunner:
                     row_indices=dones_env_ids,
                 )
                 # Reset the trajectory end ids and curr_J
-                curr_J[dones_env_ids] = self.next_values[dones_env_ids, t + 1]  # NOTE: the next value is zero if done
+                curr_J[dones_env_ids] = self.next_values[dones_env_ids, t]  # NOTE: the next value is zero if done
                 traj_end_ids[dones_env_ids] = t + 1
 
             curr_J = self.gamma * curr_J + self.rewards[:, t]
@@ -400,7 +400,7 @@ class AFRLRunner:
         Args:
             dones: Boolean tensor of shape [num_envs] indicating which environments are done
         """
-        done_env_ids = dones.nonzero(as_tuple=False).squeeze(-1)
+        done_env_ids = dones.nonzero(as_tuple=False).squeeze(-1).to(torch.int32)
         if len(done_env_ids) > 0:
             # Find the nominal environment ids in the done env_ids
             is_nominal_done = torch.isin(done_env_ids, self.nominal_env_ids)
@@ -486,7 +486,7 @@ class AFRLRunner:
             actions = self.actor(obs, deterministic=deterministic)
             obs, rewards, terminated, truncated, info = self.env.step(torch.tanh(actions), auto_reset=True)
             dones = terminated | truncated
-            done_env_ids = dones.nonzero(as_tuple=False).squeeze(-1)
+            done_env_ids = dones.nonzero(as_tuple=False).squeeze(-1).to(torch.int32)
             episode_length += 1
             episode_reward += rewards
             if len(done_env_ids) > 0:
