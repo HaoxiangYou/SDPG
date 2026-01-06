@@ -230,7 +230,9 @@ class AFRLRunner:
                     row_indices=dones_env_ids,
                 )
                 # Reset the trajectory end ids and curr_J
-                curr_J[dones_env_ids] = self.next_values[dones_env_ids, t]  # NOTE: the next value is zero if done
+                curr_J[dones_env_ids] = self.next_values[
+                    dones_env_ids, t
+                ].clone()  # NOTE: the next value is zero if done
                 traj_end_ids[dones_env_ids] = t + 1
 
             curr_J = self.gamma * curr_J + self.rewards[:, t]
