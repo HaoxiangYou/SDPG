@@ -1,4 +1,5 @@
 import importlib
+import logging
 from abc import abstractmethod
 from typing import Any, Dict, Optional, Sequence, Tuple
 
@@ -269,6 +270,12 @@ def make_envs(config: DictConfig) -> GenesisEnv:
     viewer_options = gs.options.ViewerOptions(**viewer_kwargs) if viewer_kwargs is not None else None
     vis_kwargs = env_kwargs.pop("vis_options", None)
     vis_options = gs.options.VisOptions(**vis_kwargs) if vis_kwargs is not None else None
+
+    # Configure logging to prevent duplicate Genesis logs
+    # Genesis logs directly, so we disable Python logging for genesis logger
+    genesis_logger = logging.getLogger("genesis")
+    genesis_logger.propagate = False
+    genesis_logger.handlers = []  # Remove handlers to prevent duplicate logs
 
     env = env_fn(
         num_envs=num_envs,
