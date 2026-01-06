@@ -15,13 +15,13 @@ config:
         activation: elu
 
   # Number of base environments for rollout
-  num_base_envs: 32
+  num_base_envs: 64
   # Number of auxiliary environments for estimating the descent direction
   num_action_perturbations: 63
   # Total number of environments = num_base_envs  * ( num_action_perturbations + 1 )
   num_envs: ${compute_num_envs:${.num_base_envs},${.num_action_perturbations}}
 
-  max_epochs: 2000
+  max_epochs: 5000
   horizon_length: 32
   # Action perturbation factor
   delta: 1.0
@@ -37,7 +37,7 @@ config:
   # Adam beta
   betas: [0.7, 0.95]
   # batch size for training the critic
-  mini_batch_size: 1024
+  mini_batch_size: 4096
   critic_iterations: 16
 
   truncated_grads: True
