@@ -1,0 +1,25 @@
+backend: genesis
+
+name: humanoid
+
+config:
+  num_envs: ${...num_envs}
+  randomize_init: True
+  render: False
+  sim_options:
+    dt: 1e-2
+    substeps: 1
+  viewer_options:
+    max_FPS: 60
+  vis_options:
+    rendered_envs_idx: null
+  show_viewer: False
+  show_FPS: False
+
+
+play:
+  num_envs: 64
+  randomize_init: True
+  render: False
+  show_viewer: True
+  show_FPS: True

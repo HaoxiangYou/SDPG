@@ -1,0 +1,294 @@
+import os
+from typing import Any, Dict, Optional, Sequence
+
+import genesis as gs
+import numpy as np
+import torch
+from genesis.utils.geom import axis_angle_to_quat, transform_by_quat, transform_quat_by_quat
+from gym import spaces
+
+from envs.genesis_env.genesis_env import GenesisEnv
+
+
+class Humanoid(GenesisEnv):
+    """Humanoid environment."""
+
+    _num_observations = 76
+    _num_actions = 21
+    _action_space = spaces.Box(low=-1.0, high=1.0, shape=(21,))
+    _observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(76,))
+
+    def __init__(
+        self,
+        num_envs: int,
+        render: bool = False,
+        seed: int = 0,
+        randomize_init: bool = True,
+        device: torch.device | None = None,
+        sim_options: gs.options.SimOptions | None = None,
+        viewer_options: gs.options.ViewerOptions | None = None,
+        vis_options: gs.options.VisOptions | None = None,
+        show_viewer: bool = False,
+        show_FPS: bool = False,
+    ) -> None:
+        if device is None:
+            device = torch.device("cuda")
+
+        episode_length = 1000
+        early_termination = True
+
+        super().__init__(
+            num_envs=num_envs,
+            episode_length=episode_length,
+            early_termination=early_termination,
+            render=render,
+            seed=seed,
+            randomize_init=randomize_init,
+            device=device,
+            show_viewer=show_viewer,
+            sim_options=sim_options,
+            viewer_options=viewer_options,
+            vis_options=vis_options,
+            show_FPS=show_FPS,
+        )
+
+    def init_scene(self) -> None:
+        """Initialize the scene."""
+
+        self._robot = self._scene.add_entity(
+            gs.morphs.MJCF(file=os.path.join(os.path.dirname(__file__), "../../assets/humanoid.xml"))
+        )
+        self._plane = self._scene.add_entity(gs.morphs.Plane())
+
+        self._prev_actions = torch.zeros(self._num_envs, self._num_actions, device=self._device)
+
+        self._motor_joint_names = [
+            "abdomen_y",
+            "abdomen_z",
+            "abdomen_x",
+            "right_hip_x",
+            "right_hip_z",
+            "right_hip_y",
+            "right_knee",
+            "right_ankle_x",
+            "right_ankle_y",
+            "left_hip_x",
+            "left_hip_z",
+            "left_hip_y",
+            "left_knee",
+            "left_ankle_x",
+            "left_ankle_y",
+            "right_shoulder1",
+            "right_shoulder2",
+            "right_elbow",
+            "left_shoulder1",
+            "left_shoulder2",
+            "left_elbow",
+        ]
+
+        self._base_dof_idx = self._robot.base_joint.dofs_idx_local
+        self._motors_dof_idx = [self._robot.get_joint(name).dof_start for name in self._motor_joint_names]
+
+        self._motor_strength = torch.tensor(
+            [
+                67.5,
+                67.5,
+                67.5,
+                45.0,
+                45.0,
+                135.0,
+                90.0,
+                22.5,
+                22.5,
+                45.0,
+                45.0,
+                135.0,
+                90.0,
+                22.5,
+                22.5,
+                67.5,
+                67.5,
+                45.0,
+                67.5,
+                67.5,
+                45.0,
+            ],
+            device=self._device,
+        )
+
+        self._default_base_pos = torch.tensor([0, 0, 1.35], device=self._device).repeat(self._num_envs, 1)
+        self._default_base_quat = torch.tensor([1, 0, 0, 0], device=self._device).repeat(self._num_envs, 1)
+        self._default_motor_dof_pos = torch.zeros(self._num_envs, len(self._motors_dof_idx), device=self._device)
+
+        self._target = torch.tensor([200, 0, 0], device=self._device).repeat(self._num_envs, 1)
+        self._joint_vel_obs_scale = 0.1
+        self._height_reward_scale = 10.0
+        self._termination_height = 0.74
+        self._termination_height_tolerance = 0.1
+        self._action_penalty = -0.002
+
+    def init_camera(self) -> None:
+        """Initialize the camera."""
+        pass
+
+    def build_scene(self) -> None:
+        self._scene.build(n_envs=self._num_envs, env_spacing=(0.0, 1.0), n_envs_per_row=self._num_envs)
+
+    def compute_observations(self, states: Dict[str, Any]) -> torch.Tensor:
+        # adapt from Jie Xu's implementation
+        n_batch = states["progress_buf"].shape[0]
+        robot_states = states["robot_states"]
+
+        base_pose = robot_states["base_pose"]
+        height = base_pose[:, 2:3]
+        base_quat = base_pose[:, 3:]
+
+        base_vel = robot_states["base_vel"]
+
+        joints_pos = robot_states["motor_joints_pos"]
+        joints_vel = robot_states["motor_joints_vel"]
+
+        prev_actions = robot_states["prev_actions"]
+
+        target_dirs = self._target - base_pose[:, :3]
+        target_dirs[:, 2] = 0
+        target_dirs = torch.nn.functional.normalize(target_dirs)
+        heading_vec = transform_by_quat(torch.tensor([1, 0, 0], device=self._device).repeat(n_batch, 1), base_quat)
+        up_vec = transform_by_quat(torch.tensor([0, 1, 0], device=self._device).repeat(n_batch, 1), base_quat)
+
+        return torch.cat(
+            [
+                height,
+                base_quat,
+                base_vel,
+                joints_pos,
+                joints_vel * self._joint_vel_obs_scale,
+                up_vec[:, 1:2],
+                (heading_vec * target_dirs).sum(dim=-1).unsqueeze(-1),
+                prev_actions,
+            ],
+            dim=-1,
+        )
+
+    def compute_reward(self, states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
+        # Jie Xu's reward function
+        n_batch = states["progress_buf"].shape[0]
+
+        height = states["robot_states"]["base_pose"][:, 2]
+        height_diff = height - (self._termination_height + self._termination_height_tolerance)
+        height_reward = torch.clip(height_diff, -1.0, self._termination_height_tolerance)
+        height_reward = torch.where(height_reward < 0.0, -200.0 * height_reward * height_reward, height_reward)
+        height_reward = torch.where(height_reward > 0.0, self._height_reward_scale * height_reward, height_reward)
+
+        forward_vel = states["robot_states"]["base_vel"][:, 0]
+        forward_reward = forward_vel
+
+        base_pose = states["robot_states"]["base_pose"]
+        base_quat = base_pose[:, 3:]
+        target_dirs = self._target - base_pose[:, :3]
+        target_dirs[:, 2] = 0
+        target_dirs = torch.nn.functional.normalize(target_dirs)
+        heading_vec = transform_by_quat(torch.tensor([1, 0, 0], device=self._device).repeat(n_batch, 1), base_quat)
+        up_vec = transform_by_quat(torch.tensor([0, 1, 0], device=self._device).repeat(n_batch, 1), base_quat)
+
+        up_reward = 0.1 * up_vec[:, 1]
+        heading_reward = (heading_vec * target_dirs).sum(dim=-1)
+
+        action_penalty = self._action_penalty * torch.sum(actions**2, dim=-1)
+
+        return height_reward + forward_reward + up_reward + heading_reward + action_penalty
+
+    def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
+        robot_states = states["robot_states"]
+        termination = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        if self._early_termination:
+            termination = robot_states["base_pose"][:, 2] < self._termination_height
+        return termination
+
+    def _reset_idx(self, env_ids: torch.Tensor) -> None:
+        if len(env_ids) == 0:
+            return
+
+        base_pos = self._default_base_pos[env_ids]
+        base_quat = self._default_base_quat[env_ids]
+        motor_dof_pos = self._default_motor_dof_pos[env_ids]
+
+        if self._randomize_init:
+            base_pos = base_pos + (torch.rand_like(base_pos) - 0.5) * 0.1
+            angle = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi / 12.0
+            axis = torch.nn.functional.normalize(torch.rand(len(env_ids), 3, device=self.device) - 0.5)
+            base_quat = transform_quat_by_quat(base_quat, axis_angle_to_quat(angle, axis))
+            motor_dof_pos = motor_dof_pos + (torch.rand_like(motor_dof_pos) - 0.5) * 0.1
+
+        self._robot.set_pos(base_pos, envs_idx=env_ids, zero_velocity=True)
+        self._robot.set_quat(base_quat, envs_idx=env_ids, zero_velocity=True)
+        self._robot.set_dofs_position(
+            position=motor_dof_pos,
+            dofs_idx_local=self._motors_dof_idx,
+            envs_idx=env_ids,
+            zero_velocity=True,
+        )
+
+        self._prev_actions[env_ids] = torch.zeros(len(env_ids), self._num_actions, device=self._device)
+
+    def _set_actions(self, actions: torch.Tensor) -> None:
+        actions = actions.view(self._num_envs, self._num_actions)
+        actions = actions.clamp(min=-1.0, max=1.0) * self._motor_strength
+        self._robot.control_dofs_force(actions, dofs_idx_local=self._motors_dof_idx)
+
+    def get_states(self, env_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
+        if env_ids is None:
+            env_ids = torch.arange(self._num_envs, device=self._device, dtype=torch.int32)
+
+        base_pos = self._robot.get_pos()
+        base_quat = self._robot.get_quat()
+        base_lin_vel = self._robot.get_vel()
+        base_ang_vel = self._robot.get_ang()
+        base_pose = torch.cat([base_pos, base_quat], dim=-1)
+        base_vel = torch.cat([base_lin_vel, base_ang_vel], dim=-1)
+
+        motor_joints_pos = self._robot.get_dofs_position(self._motors_dof_idx, envs_idx=env_ids)
+        motor_joints_vel = self._robot.get_dofs_velocity(self._motors_dof_idx, envs_idx=env_ids)
+
+        robot_states = {
+            "base_pose": base_pose.clone(),
+            "base_vel": base_vel.clone(),
+            "motor_joints_pos": motor_joints_pos.clone(),
+            "motor_joints_vel": motor_joints_vel.clone(),
+            "prev_actions": self._prev_actions[env_ids].clone(),
+        }
+
+        states = {
+            "robot_states": robot_states,
+            "progress_buf": self._progress_buf[env_ids].clone(),
+        }
+
+        return states
+
+    def set_states(self, states: Dict[str, Any], env_ids: Optional[Sequence[int]] = None) -> None:
+        if env_ids is None:
+            env_ids = torch.arange(self._num_envs, device=self._device, dtype=torch.int32)
+
+        robot_states = states["robot_states"]
+
+        self._robot.set_pos(robot_states["base_pose"][:, :3], envs_idx=env_ids)
+        self._robot.set_quat(robot_states["base_pose"][:, 3:], envs_idx=env_ids)
+
+        self._robot.set_dofs_position(
+            position=robot_states["motor_joints_pos"],
+            dofs_idx_local=self._motors_dof_idx,
+            envs_idx=env_ids,
+        )
+
+        # NOTE:Modifying the velocity of other joints may affect the velocity of the base joints
+        # This bug is denoted and previsouly resolved in https://github.com/Genesis-Embodied-AI/Genesis/issues/1447
+        # but seems happening again in the latest version of Genesis.
+        self._robot.set_dofs_velocity(
+            velocity=torch.cat([robot_states["base_vel"], robot_states["motor_joints_vel"]], dim=-1),
+            dofs_idx_local=self._base_dof_idx.extend(self._motors_dof_idx),
+            envs_idx=env_ids,
+        )
+
+        self._prev_actions[env_ids] = robot_states["prev_actions"].clone()
+
+        self._progress_buf[env_ids] = states["progress_buf"].clone()

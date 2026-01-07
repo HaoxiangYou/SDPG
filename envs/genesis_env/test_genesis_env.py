@@ -7,7 +7,7 @@ from genesis_env import GenesisEnv
 from utils.common_utils import snakecase_to_pascalcase
 from utils.tensor_utils import check_groups_same, duplicate_entries, select_entries
 
-env_name = "hopper"
+env_name = "humanoid"
 num_envs = 4
 device = "cuda"
 sim_options = gs.options.SimOptions(dt=1e-2, substeps=1)
