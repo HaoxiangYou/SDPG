@@ -185,12 +185,14 @@ class Hopper(GenesisEnv):
             position=robot_states["root_joints_pos"],
             dofs_idx_local=self._root_dof_idx,
             envs_idx=env_ids,
+            zero_velocity=False,
         )
 
         self._robot.set_dofs_position(
             position=robot_states["motor_joints_pos"],
             dofs_idx_local=self._motors_dof_idx,
             envs_idx=env_ids,
+            zero_velocity=False,
         )
 
         self._robot.set_dofs_velocity(

@@ -243,11 +243,9 @@ class Humanoid(GenesisEnv):
 
         base_pos = self._robot.get_pos(envs_idx=env_ids)
         base_quat = self._robot.get_quat(envs_idx=env_ids)
-        base_lin_vel = self._robot.get_vel(envs_idx=env_ids)
-        base_ang_vel = self._robot.get_ang(envs_idx=env_ids)
         base_pose = torch.cat([base_pos, base_quat], dim=-1)
-        base_vel = torch.cat([base_lin_vel, base_ang_vel], dim=-1)
-
+        # NOTE: the angular velocity of the base is in the body frame
+        base_vel = self._robot.get_dofs_velocity(self._base_dof_idx, envs_idx=env_ids)
         motor_joints_pos = self._robot.get_dofs_position(self._motors_dof_idx, envs_idx=env_ids)
         motor_joints_vel = self._robot.get_dofs_velocity(self._motors_dof_idx, envs_idx=env_ids)
 
@@ -279,9 +277,9 @@ class Humanoid(GenesisEnv):
             position=robot_states["motor_joints_pos"],
             dofs_idx_local=self._motors_dof_idx,
             envs_idx=env_ids,
+            zero_velocity=False,
         )
 
-        # FIXME: base angular velocity is not set correctly
         self._robot.set_dofs_velocity(
             velocity=torch.cat([robot_states["base_vel"], robot_states["motor_joints_vel"]], dim=-1),
             dofs_idx_local=self._base_dof_idx + self._motors_dof_idx,
