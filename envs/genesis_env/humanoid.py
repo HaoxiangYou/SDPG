@@ -234,16 +234,17 @@ class Humanoid(GenesisEnv):
     def _set_actions(self, actions: torch.Tensor) -> None:
         actions = actions.view(self._num_envs, self._num_actions)
         actions = actions.clamp(min=-1.0, max=1.0) * self._motor_strength
+        self._prev_actions = actions.clone()
         self._robot.control_dofs_force(actions, dofs_idx_local=self._motors_dof_idx)
 
     def get_states(self, env_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
         if env_ids is None:
             env_ids = torch.arange(self._num_envs, device=self._device, dtype=torch.int32)
 
-        base_pos = self._robot.get_pos()
-        base_quat = self._robot.get_quat()
-        base_lin_vel = self._robot.get_vel()
-        base_ang_vel = self._robot.get_ang()
+        base_pos = self._robot.get_pos(envs_idx=env_ids)
+        base_quat = self._robot.get_quat(envs_idx=env_ids)
+        base_lin_vel = self._robot.get_vel(envs_idx=env_ids)
+        base_ang_vel = self._robot.get_ang(envs_idx=env_ids)
         base_pose = torch.cat([base_pos, base_quat], dim=-1)
         base_vel = torch.cat([base_lin_vel, base_ang_vel], dim=-1)
 
@@ -280,12 +281,10 @@ class Humanoid(GenesisEnv):
             envs_idx=env_ids,
         )
 
-        # NOTE:Modifying the velocity of other joints may affect the velocity of the base joints
-        # This bug is denoted and previsouly resolved in https://github.com/Genesis-Embodied-AI/Genesis/issues/1447
-        # but seems happening again in the latest version of Genesis.
+        # FIXME: base angular velocity is not set correctly
         self._robot.set_dofs_velocity(
             velocity=torch.cat([robot_states["base_vel"], robot_states["motor_joints_vel"]], dim=-1),
-            dofs_idx_local=self._base_dof_idx.extend(self._motors_dof_idx),
+            dofs_idx_local=self._base_dof_idx + self._motors_dof_idx,
             envs_idx=env_ids,
         )
 
