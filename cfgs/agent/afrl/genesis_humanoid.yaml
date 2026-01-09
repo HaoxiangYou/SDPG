@@ -30,7 +30,7 @@ config:
   # TD(lambda)
   lam: 0.95
   reward_scale: 1.0
-  target_critic_alpha: 0.995
+  target_critic_alpha: 0.005
 
   actor_lr:  2e-3
   critic_lr: 5e-4
