@@ -62,7 +62,7 @@ class AFRLRunner:
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.agent_config.actor_lr)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.agent_config.critic_lr)
 
-        # Running mean and std for the observations
+        # Running mean and std
         if self.agent_config.obs_rms:
             self.obs_rms = RunningMeanStd(shape=(self.num_observations,), device=self.device)
         else:
@@ -71,6 +71,10 @@ class AFRLRunner:
             self.ret_rms = RunningMeanStd(shape=(1,), device=self.device)
         else:
             self.ret_rms = None
+        if self.agent_config.normalize_delta_J:
+            self.normalize_delta_J = True
+        else:
+            self.normalize_delta_J = False
 
         # Performance metrics recorder
         self.episode_reward_meter = AverageMeter(1, 100).to(self.device)
@@ -250,8 +254,18 @@ class AFRLRunner:
         """
         This function computes the ascent direction for improving the nominal action by weighting all the perturbations.
         """
-        weighted_perturbations = self.delta_J.unsqueeze(-1) * self.eps_actions
+        # Normalize the delta_J for each nominal batch
+        if self.normalize_delta_J:
+            delta_J_normalized = self.delta_J.view(
+                self.num_base_envs, self.num_action_perturbations + 1, self.horizon_length
+            )
+            delta_J_normalized = delta_J_normalized / (delta_J_normalized.std(dim=1, keepdim=True) + 1e-6)
+            delta_J_normalized = delta_J_normalized.view(self.num_envs, self.horizon_length)
+        else:
+            delta_J_normalized = self.delta_J
+
         # weighted_perturbations shape: [num_envs, horizon_length, num_actions]
+        weighted_perturbations = delta_J_normalized.unsqueeze(-1) * self.eps_actions
 
         # reshape to group environments: [num_base_envs, num_action_perturbations + 1, horizon_length, num_actions]
         weighted_perturbations_grouped = weighted_perturbations.view(
