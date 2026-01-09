@@ -250,7 +250,7 @@ class AFRLRunner:
         """
         This function computes the ascent direction for improving the nominal action by weighting all the perturbations.
         """
-        weighted_perturbations = self.delta_J.unsqueeze(-1) * self.eps_actions / self.delta
+        weighted_perturbations = self.delta_J.unsqueeze(-1) * self.eps_actions
         # weighted_perturbations shape: [num_envs, horizon_length, num_actions]
 
         # reshape to group environments: [num_base_envs, num_action_perturbations + 1, horizon_length, num_actions]
