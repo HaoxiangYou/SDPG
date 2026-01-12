@@ -106,6 +106,9 @@ class Hopper(GenesisEnv):
         height_reward = torch.where(height_reward > 0.0, self._height_reward_scale * height_reward, height_reward)
 
         angle = states["robot_states"]["root_joints_pos"][:, 2]
+        # Wrap angle to [-pi, pi]
+        angle = torch.atan2(torch.sin(angle), torch.cos(angle))
+
         angle_reward = self._angle_reward_scale * (-(angle**2) / (self._termination_angle**2) + 1.0)
 
         forward_vel = states["robot_states"]["root_joints_vel"][:, 0]
