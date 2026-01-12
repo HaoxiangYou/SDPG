@@ -254,18 +254,21 @@ class AFRLRunner:
         """
         This function computes the ascent direction for improving the nominal action by weighting all the perturbations.
         """
+        delta_J_var = self.delta_J.view(self.num_base_envs, self.num_action_perturbations + 1, self.horizon_length).var(
+            dim=1
+        )
+        self.rollout_var = delta_J_var.mean()
+        self.positive_rollout_ratio = (self.delta_J > 0).sum() / self.delta_J.numel()
+
         # Normalize the delta_J for each nominal batch
+        delta_J = self.delta_J
         if self.normalize_delta_J:
-            delta_J_normalized = self.delta_J.view(
-                self.num_base_envs, self.num_action_perturbations + 1, self.horizon_length
+            delta_J = delta_J / (
+                torch.sqrt(delta_J_var).repeat_interleave(self.num_action_perturbations + 1, dim=0) + 1e-6
             )
-            delta_J_normalized = delta_J_normalized / (delta_J_normalized.std(dim=1, keepdim=True) + 1e-6)
-            delta_J_normalized = delta_J_normalized.view(self.num_envs, self.horizon_length)
-        else:
-            delta_J_normalized = self.delta_J
 
         # weighted_perturbations shape: [num_envs, horizon_length, num_actions]
-        weighted_perturbations = delta_J_normalized.unsqueeze(-1) * self.eps_actions
+        weighted_perturbations = delta_J.unsqueeze(-1) * self.eps_actions
 
         # reshape to group environments: [num_base_envs, num_action_perturbations + 1, horizon_length, num_actions]
         weighted_perturbations_grouped = weighted_perturbations.view(
@@ -310,7 +313,7 @@ class AFRLRunner:
         self.actor_optimizer.zero_grad()
         actor_loss = F.mse_loss(pred_actions, target_actions)
         actor_loss.backward()
-        self.grad_norm_before_clip = compute_grad_norm(self.actor.parameters())
+        self.actor_grad_norm = compute_grad_norm(self.actor.parameters())
         if self.truncated_grads:
             torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.grad_norm)
         self.actor_optimizer.step()
@@ -336,6 +339,7 @@ class AFRLRunner:
                 pred_values = self.critic(obs_batch)
                 critic_loss = F.mse_loss(pred_values, target_values_batch)
                 critic_loss.backward()
+                self.critic_grad_norm = compute_grad_norm(self.critic.parameters())
                 if self.truncated_grads:
                     torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.grad_norm)
                 self.critic_optimizer.step()
@@ -546,10 +550,28 @@ class AFRLRunner:
             self.summary_writer.add_scalar("rollout_reward/iter", rollout_reward, self.iter_count)
             self.summary_writer.add_scalar("rollout_reward/step", rollout_reward, self.step_count)
             self.summary_writer.add_scalar("rollout_reward/time", rollout_reward, time_elapse)
+            self.summary_writer.add_scalar("rollout_reward_var/iter", self.rollout_var, self.iter_count)
+            self.summary_writer.add_scalar("rollout_reward_var/step", self.rollout_var, self.step_count)
+            self.summary_writer.add_scalar("rollout_reward_var/time", self.rollout_var, time_elapse)
+            self.summary_writer.add_scalar(
+                "rollout_reward_positive_ratio/iter", self.positive_rollout_ratio, self.iter_count
+            )
+            self.summary_writer.add_scalar(
+                "rollout_reward_positive_ratio/step", self.positive_rollout_ratio, self.step_count
+            )
+            self.summary_writer.add_scalar(
+                "rollout_reward_positive_ratio/time", self.positive_rollout_ratio, time_elapse
+            )
+            self.summary_writer.add_scalar("actor_grad_norm/iter", self.actor_grad_norm, self.iter_count)
+            self.summary_writer.add_scalar("actor_grad_norm/step", self.actor_grad_norm, self.step_count)
+            self.summary_writer.add_scalar("actor_grad_norm/time", self.actor_grad_norm, time_elapse)
+            self.summary_writer.add_scalar("critic_grad_norm/iter", self.critic_grad_norm, self.iter_count)
+            self.summary_writer.add_scalar("critic_grad_norm/step", self.critic_grad_norm, self.step_count)
+            self.summary_writer.add_scalar("critic_grad_norm/time", self.critic_grad_norm, time_elapse)
 
             if self.episode_length_meter.current_size > 0:
                 policy_reward = self.episode_reward_meter.get_mean().item()
-                length = self.episode_length_meter.get_mean().item()
+                episode_lengths = self.episode_length_meter.get_mean().item()
                 if policy_reward > best_policy_reward:
                     best_policy_reward = policy_reward
                     print_info("Save best policy with reward: {:.2f}".format(best_policy_reward))
@@ -560,25 +582,28 @@ class AFRLRunner:
                 self.summary_writer.add_scalar("rewards/iter", policy_reward, self.iter_count)
                 self.summary_writer.add_scalar("rewards/step", policy_reward, self.step_count)
                 self.summary_writer.add_scalar("rewards/time", policy_reward, time_elapse)
-                self.summary_writer.add_scalar("length/iter", length, self.iter_count)
-                self.summary_writer.add_scalar("length/step", length, self.step_count)
-                self.summary_writer.add_scalar("length/time", length, time_elapse)
+                self.summary_writer.add_scalar("episode_lengths/iter", episode_lengths, self.iter_count)
+                self.summary_writer.add_scalar("episode_lengths/step", episode_lengths, self.step_count)
+                self.summary_writer.add_scalar("episode_lengths/time", episode_lengths, time_elapse)
             else:
                 policy_reward = float("inf")
-                length = 0
+                episode_lengths = 0
 
             print(
-                "iter {}: ep reward {:.2f}, rollout reward {:.2f}, ep len {:.1f}, fps total {:.2f}, grad norm before clip {:.2f},".format(
+                "iter {}: ep reward {:.2f}, ep len {:.1f}, rollout reward {:.2f}, rollout reward std {:.2f}, rollout reward positive ratio {:.2f}, fps total {:.3g}, actor grad norm {:.2f}, critic grad norm {:.2f},".format(
                     self.iter_count,
                     policy_reward,
+                    episode_lengths,
                     rollout_reward,
-                    length,
+                    self.rollout_var.sqrt(),
+                    self.positive_rollout_ratio,
                     self.step_count * self.num_envs / (time_end_epoch - time_start_epoch),
-                    self.grad_norm_before_clip,
+                    self.actor_grad_norm,
+                    self.critic_grad_norm,
                 )
             )
 
-            if self.iter_count % self.save_frequency == 0:
+            if self.iter_count % self.save_frequency == 0 or self.iter_count == self.max_epochs - 1:
                 self.save(filename="iter_{}_reward_{:.2f}".format(self.iter_count, policy_reward))
 
     def play(self):
