@@ -9,6 +9,7 @@ from omegaconf import DictConfig, OmegaConf
 from tensorboardX import SummaryWriter
 
 import models
+import wandb
 from utils.common_utils import TimeReport, make_envs, print_info
 from utils.statistic_utils import AverageMeter, RunningMeanStd
 from utils.tensor_utils import assign_row_intervals, compute_grad_norm
@@ -96,6 +97,9 @@ class AFRLRunner:
         self.summary_writer = SummaryWriter(self.summary_dir)
         self.save_frequency = self.agent_config.save_frequency
 
+        # Initialize wandb if enabled
+        self.use_wandb = self._init_wandb(config)
+
         # Buffer
         self.obs_buf = torch.zeros(
             (self.num_envs, self.horizon_length, self.num_observations), dtype=torch.float32, device=self.device
@@ -115,6 +119,100 @@ class AFRLRunner:
 
         # Timer
         self.time_report = TimeReport()
+
+    def _init_wandb(self, config: DictConfig) -> bool:
+        if not hasattr(config, "wandb") or not config.wandb.get("enabled", False):
+            return False
+
+        wandb_config = config.wandb
+        wandb_kwargs = {
+            "project": wandb_config.get("project", "afrl"),
+            "name": wandb_config.get("name"),
+            "tags": wandb_config.get("tags", []),
+            "notes": wandb_config.get("notes"),
+        }
+        # Remove None values
+        wandb_kwargs = {k: v for k, v in wandb_kwargs.items() if v is not None}
+        if wandb_config.get("entity"):
+            wandb_kwargs["entity"] = wandb_config.entity
+
+        wandb.init(**wandb_kwargs)
+
+        # Log config if enabled
+        if wandb_config.get("log_config", True):
+            # Convert OmegaConf to dict for wandb
+            config_dict = OmegaConf.to_container(config, resolve=True)
+            wandb.config.update(config_dict)
+
+        print_info("Wandb logging enabled")
+        return True
+
+    def write_stats(
+        self,
+        actor_loss: float,
+        critic_loss: float,
+        rollout_reward: float,
+        rollout_var: float,
+        positive_rollout_ratio: float,
+        actor_grad_norm: float,
+        critic_grad_norm: float,
+        iter: int,
+        step: int,
+        time_elapse: float | None = None,
+        policy_reward: float | None = None,
+        episode_lengths: float | None = None,
+        best_policy_reward: float | None = None,
+    ):
+        """Write training statistics to both TensorBoard and wandb.
+
+        Args:
+            actor_loss: Actor loss value
+            critic_loss: Critic loss value
+            rollout_reward: Rollout reward
+            rollout_var: Variance of rollout rewards
+            positive_rollout_ratio: Ratio of positive rollout rewards
+            actor_grad_norm: Actor gradient norm
+            critic_grad_norm: Critic gradient norm
+            iter: Iteration number
+            step: Environment step number
+            time_elapse: Elapsed time (optional)
+            policy_reward: Policy reward (optional)
+            episode_lengths: Episode lengths (optional)
+            best_policy_reward: Best policy reward (optional)
+        """
+        # Prepare metrics dictionary
+        metrics = {
+            "actor_loss": actor_loss,
+            "critic_loss": critic_loss,
+            "rollout_reward": rollout_reward,
+            "rollout_reward_var": rollout_var,
+            "rollout_reward_positive_ratio": positive_rollout_ratio,
+            "actor_grad_norm": actor_grad_norm,
+            "critic_grad_norm": critic_grad_norm,
+        }
+
+        # Add optional metrics
+        if policy_reward is not None:
+            metrics["rewards"] = policy_reward
+        if episode_lengths is not None:
+            metrics["episode_lengths"] = episode_lengths
+        if best_policy_reward is not None:
+            metrics["best_policy"] = best_policy_reward
+
+        # Log to TensorBoard with different step types
+        for metric_name, value in metrics.items():
+            self.summary_writer.add_scalar(f"{metric_name}/iter", value, iter)
+            self.summary_writer.add_scalar(f"{metric_name}/step", value, step)
+            if time_elapse is not None:
+                self.summary_writer.add_scalar(f"{metric_name}/time", value, time_elapse)
+
+        # Log to wandb
+        if self.use_wandb:
+            wandb_metrics = dict(metrics)
+            wandb_metrics["env_step"] = step
+            if time_elapse is not None:
+                wandb_metrics["time"] = time_elapse
+            wandb.log(wandb_metrics, step=iter)
 
     def make_envs(self):
         self.env = make_envs(self.config)
@@ -540,54 +638,39 @@ class AFRLRunner:
             time_end_epoch = time.time()
             time_elapse = time.time() - start_time
 
-            # Logging
-            self.summary_writer.add_scalar("actor_loss/iter", actor_loss, self.iter_count)
-            self.summary_writer.add_scalar("actor_loss/step", actor_loss, self.step_count)
-            self.summary_writer.add_scalar("actor_loss/time", actor_loss, time_elapse)
-            self.summary_writer.add_scalar("critic_loss/iter", critic_loss, self.iter_count)
-            self.summary_writer.add_scalar("critic_loss/step", critic_loss, self.step_count)
-            self.summary_writer.add_scalar("critic_loss/time", critic_loss, time_elapse)
-            self.summary_writer.add_scalar("rollout_reward/iter", rollout_reward, self.iter_count)
-            self.summary_writer.add_scalar("rollout_reward/step", rollout_reward, self.step_count)
-            self.summary_writer.add_scalar("rollout_reward/time", rollout_reward, time_elapse)
-            self.summary_writer.add_scalar("rollout_reward_var/iter", self.rollout_var, self.iter_count)
-            self.summary_writer.add_scalar("rollout_reward_var/step", self.rollout_var, self.step_count)
-            self.summary_writer.add_scalar("rollout_reward_var/time", self.rollout_var, time_elapse)
-            self.summary_writer.add_scalar(
-                "rollout_reward_positive_ratio/iter", self.positive_rollout_ratio, self.iter_count
-            )
-            self.summary_writer.add_scalar(
-                "rollout_reward_positive_ratio/step", self.positive_rollout_ratio, self.step_count
-            )
-            self.summary_writer.add_scalar(
-                "rollout_reward_positive_ratio/time", self.positive_rollout_ratio, time_elapse
-            )
-            self.summary_writer.add_scalar("actor_grad_norm/iter", self.actor_grad_norm, self.iter_count)
-            self.summary_writer.add_scalar("actor_grad_norm/step", self.actor_grad_norm, self.step_count)
-            self.summary_writer.add_scalar("actor_grad_norm/time", self.actor_grad_norm, time_elapse)
-            self.summary_writer.add_scalar("critic_grad_norm/iter", self.critic_grad_norm, self.iter_count)
-            self.summary_writer.add_scalar("critic_grad_norm/step", self.critic_grad_norm, self.step_count)
-            self.summary_writer.add_scalar("critic_grad_norm/time", self.critic_grad_norm, time_elapse)
+            # Prepare metrics for logging
+            policy_reward = None
+            episode_lengths = None
+            current_best_policy_reward = None
 
             if self.episode_length_meter.current_size > 0:
                 policy_reward = self.episode_reward_meter.get_mean().item()
                 episode_lengths = self.episode_length_meter.get_mean().item()
                 if policy_reward > best_policy_reward:
                     best_policy_reward = policy_reward
+                    current_best_policy_reward = best_policy_reward
                     print_info("Save best policy with reward: {:.2f}".format(best_policy_reward))
                     self.save(filename="best_policy")
-                    self.summary_writer.add_scalar("best_policy/iter", best_policy_reward, self.iter_count)
-                    self.summary_writer.add_scalar("best_policy/step", best_policy_reward, self.step_count)
-                    self.summary_writer.add_scalar("best_policy/time", best_policy_reward, time_elapse)
-                self.summary_writer.add_scalar("rewards/iter", policy_reward, self.iter_count)
-                self.summary_writer.add_scalar("rewards/step", policy_reward, self.step_count)
-                self.summary_writer.add_scalar("rewards/time", policy_reward, time_elapse)
-                self.summary_writer.add_scalar("episode_lengths/iter", episode_lengths, self.iter_count)
-                self.summary_writer.add_scalar("episode_lengths/step", episode_lengths, self.step_count)
-                self.summary_writer.add_scalar("episode_lengths/time", episode_lengths, time_elapse)
             else:
                 policy_reward = float("inf")
                 episode_lengths = 0
+
+            # Logging to both TensorBoard and wandb
+            self.write_stats(
+                actor_loss=actor_loss,
+                critic_loss=critic_loss,
+                rollout_reward=rollout_reward,
+                rollout_var=self.rollout_var,
+                positive_rollout_ratio=self.positive_rollout_ratio,
+                actor_grad_norm=self.actor_grad_norm,
+                critic_grad_norm=self.critic_grad_norm,
+                iter=self.iter_count,
+                step=self.step_count,
+                time_elapse=time_elapse,
+                policy_reward=policy_reward if policy_reward != float("inf") else None,
+                episode_lengths=episode_lengths if episode_lengths > 0 else None,
+                best_policy_reward=current_best_policy_reward,
+            )
 
             print(
                 "iter {}: ep reward {:.2f}, ep len {:.1f}, rollout reward {:.2f}, rollout reward std {:.2f}, rollout reward positive ratio {:.2f}, fps total {:.3g}, actor grad norm {:.2f}, critic grad norm {:.2f},".format(
@@ -605,6 +688,9 @@ class AFRLRunner:
 
             if self.iter_count % self.save_frequency == 0 or self.iter_count == self.max_epochs - 1:
                 self.save(filename="iter_{}_reward_{:.2f}".format(self.iter_count, policy_reward))
+
+        if self.use_wandb:
+            wandb.finish()
 
     def play(self):
         self.evaluate_policy()

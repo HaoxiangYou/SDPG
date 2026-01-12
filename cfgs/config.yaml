@@ -9,6 +9,16 @@ hydra:
   run:
     dir: logs/${task.backend}/${task.name}/${agent.name}/${now:%Y-%m-%d_%H-%M-%S}
 
+# Wandb configuration
+wandb:
+  enabled: False  # Set to True to enable wandb logging
+  project: afrl  # Wandb project name
+  entity: null  # Wandb entity/username (null for default)
+  name: null  # Run name (null for auto-generated name)
+  tags: []  # List of tags for the run
+  notes: null  # Notes about the run
+  log_config: True  # Whether to log the config to wandb
+
 # General
 seed: 0
 device: cuda

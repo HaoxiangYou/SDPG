@@ -23,6 +23,7 @@ dependencies = [
     "hydra_colorlog",
     "pyglet",
     "gymnasium",
+    "wandb"
     # Add your project dependencies here
 ]
 dynamic = ["version", "readme"]
