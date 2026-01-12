@@ -63,6 +63,14 @@ class AFRLRunner:
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.agent_config.actor_lr)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.agent_config.critic_lr)
 
+        # Initialize learning rate schedulers
+        self.actor_lr_scheduler = self._create_lr_scheduler(
+            self.actor_optimizer, self.agent_config.get("actor_lr_schedule", {})
+        )
+        self.critic_lr_scheduler = self._create_lr_scheduler(
+            self.critic_optimizer, self.agent_config.get("critic_lr_schedule", {})
+        )
+
         # Running mean and std
         if self.agent_config.obs_rms:
             self.obs_rms = RunningMeanStd(shape=(self.num_observations,), device=self.device)
@@ -147,6 +155,109 @@ class AFRLRunner:
         print_info("Wandb logging enabled")
         return True
 
+    def _create_lr_scheduler(
+        self, optimizer: torch.optim.Optimizer, schedule_config: dict
+    ) -> torch.optim.lr_scheduler._LRScheduler | None:
+        """Create a learning rate scheduler based on configuration.
+
+        Args:
+            optimizer: The optimizer to schedule
+            schedule_config: Dictionary containing scheduler configuration
+
+        Returns:
+            Learning rate scheduler or None if no schedule is configured
+        """
+        schedule_name = schedule_config.get("name")
+        if schedule_name is None or schedule_name == "null":
+            return None
+
+        if schedule_name == "cosine":
+            # Cosine schedule with warmup: warmup -> cosine annealing
+            warmup_epochs = schedule_config.get("warmup_epochs", 0)
+            T_max = schedule_config.get("T_max", self.max_epochs)
+            eta_min = schedule_config.get("eta_min", 1e-5)
+
+            # Get initial learning rate from optimizer
+            initial_lr = optimizer.param_groups[0]["lr"]
+            warmup_start_lr = schedule_config.get("warmup_start_lr", 0.0)
+
+            if warmup_epochs > 0:
+                # Create warmup scheduler (linear from warmup_start_lr to initial_lr)
+                if warmup_start_lr == 0.0:
+                    # Use LambdaLR for warmup from 0 (LinearLR doesn't support start_factor=0)
+                    def warmup_lambda(epoch):
+                        # Linear interpolation from 0 to 1 over warmup_epochs
+                        # epoch is 0-indexed, so after warmup_epochs steps, epoch = warmup_epochs - 1
+                        if warmup_epochs == 1:
+                            return 1.0
+                        return min(epoch / (warmup_epochs - 1), 1.0) if epoch < warmup_epochs else 1.0
+
+                    warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(
+                        optimizer,
+                        lr_lambda=warmup_lambda,
+                    )
+                else:
+                    # Use LinearLR when warmup_start_lr > 0
+                    start_factor = warmup_start_lr / initial_lr
+                    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+                        optimizer,
+                        start_factor=start_factor,
+                        end_factor=1.0,
+                        total_iters=warmup_epochs,
+                    )
+
+                # Create cosine annealing scheduler (from initial_lr to eta_min)
+                cosine_T_max = T_max - warmup_epochs
+                cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                    optimizer,
+                    T_max=cosine_T_max,
+                    eta_min=eta_min,
+                )
+
+                # Create constant scheduler to keep LR at eta_min after T_max
+                eta_min_ratio = eta_min / initial_lr
+                constant_scheduler = torch.optim.lr_scheduler.LambdaLR(
+                    optimizer,
+                    lr_lambda=lambda epoch: eta_min_ratio,
+                )
+
+                # Chain warmup, cosine, and constant schedulers
+                return torch.optim.lr_scheduler.SequentialLR(
+                    optimizer,
+                    schedulers=[warmup_scheduler, cosine_scheduler, constant_scheduler],
+                    milestones=[warmup_epochs, warmup_epochs + cosine_T_max],
+                )
+            else:
+                # No warmup, just cosine annealing
+                cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                    optimizer,
+                    T_max=T_max,
+                    eta_min=eta_min,
+                )
+
+                # Create constant scheduler to keep LR at eta_min after T_max
+                eta_min_ratio = eta_min / initial_lr
+                constant_scheduler = torch.optim.lr_scheduler.LambdaLR(
+                    optimizer,
+                    lr_lambda=lambda epoch: eta_min_ratio,
+                )
+
+                # Chain cosine and constant schedulers
+                return torch.optim.lr_scheduler.SequentialLR(
+                    optimizer,
+                    schedulers=[cosine_scheduler, constant_scheduler],
+                    milestones=[T_max],
+                )
+        elif schedule_name == "linear":
+            return torch.optim.lr_scheduler.LinearLR(
+                optimizer,
+                start_factor=schedule_config.get("start_factor", 1.0),
+                end_factor=schedule_config.get("end_factor", 0.1),
+                total_iters=schedule_config.get("T_max", self.max_epochs),
+            )
+        else:
+            raise ValueError(f"Unknown learning rate schedule: {schedule_name}. Options: null, linear, cosine")
+
     def write_stats(
         self,
         actor_loss: float,
@@ -189,6 +300,8 @@ class AFRLRunner:
             "rollout_reward_positive_ratio": positive_rollout_ratio,
             "actor_grad_norm": actor_grad_norm,
             "critic_grad_norm": critic_grad_norm,
+            "actor_lr": self.actor_optimizer.param_groups[0]["lr"],
+            "critic_lr": self.critic_optimizer.param_groups[0]["lr"],
         }
 
         # Add optional metrics
@@ -465,6 +578,11 @@ class AFRLRunner:
         self.time_report.start_timer("train_critic")
         critic_loss = self.train_critic()
         self.time_report.end_timer("train_critic")
+
+        if self.actor_lr_scheduler is not None:
+            self.actor_lr_scheduler.step()
+        if self.critic_lr_scheduler is not None:
+            self.critic_lr_scheduler.step()
 
         self.iter_count += 1
 

@@ -36,6 +36,21 @@ config:
   critic_lr: 2e-4
   # Adam beta
   betas: [0.7, 0.95]
+  
+  # Learning rate schedules
+  actor_lr_schedule:
+    name: cosine  # Options: null, linear, cosine (cosine includes warmup)
+    # CosineAnnealingLR with warmup parameters
+    T_max: 2000
+    eta_min: 1e-5
+    warmup_epochs: 100  # Number of epochs for warmup (linear increase from warmup_start_lr to actor_lr)
+    warmup_start_lr: 0  # Starting learning rate for warmup (default: 0.0)
+  
+  critic_lr_schedule:
+    name: null  # Options: null, linear, cosine
+    # start_factor: 1.0
+    # end_factor: 0.1
+  
   # batch size for training the critic
   mini_batch_size: 4096
   critic_iterations: 16
