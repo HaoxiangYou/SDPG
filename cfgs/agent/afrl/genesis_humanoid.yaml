@@ -33,7 +33,7 @@ config:
   target_critic_alpha: 0.005
 
   actor_lr:  2e-3
-  critic_lr: 2e-4
+  critic_lr: 5e-4
   # Adam beta
   betas: [0.7, 0.95]
 
