@@ -1,4 +1,5 @@
 import copy
+import math
 import os
 import time
 
@@ -181,73 +182,36 @@ class AFRLRunner:
             initial_lr = optimizer.param_groups[0]["lr"]
             warmup_start_lr = schedule_config.get("warmup_start_lr", 0.0)
 
-            if warmup_epochs > 0:
-                # Create warmup scheduler (linear from warmup_start_lr to initial_lr)
-                if warmup_start_lr == 0.0:
-                    # Use LambdaLR for warmup from 0 (LinearLR doesn't support start_factor=0)
-                    def warmup_lambda(epoch):
-                        # Linear interpolation from 0 to 1 over warmup_epochs
-                        # epoch is 0-indexed, so after warmup_epochs steps, epoch = warmup_epochs - 1
-                        if warmup_epochs == 1:
-                            return 1.0
-                        return min(epoch / (warmup_epochs - 1), 1.0) if epoch < warmup_epochs else 1.0
+            # Use a single LambdaLR to handle all phases (warmup, cosine, constant)
+            # This avoids SequentialLR overhead from checking milestones
+            eta_min_ratio = eta_min / initial_lr
+            warmup_start_ratio = warmup_start_lr / initial_lr if warmup_start_lr > 0 else 0.0
 
-                    warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(
-                        optimizer,
-                        lr_lambda=warmup_lambda,
-                    )
-                else:
-                    # Use LinearLR when warmup_start_lr > 0
-                    start_factor = warmup_start_lr / initial_lr
-                    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
-                        optimizer,
-                        start_factor=start_factor,
-                        end_factor=1.0,
-                        total_iters=warmup_epochs,
-                    )
+            def cosine_with_warmup_lambda(epoch):
+                # Phase 1: Warmup (linear from warmup_start_lr to initial_lr)
+                if warmup_epochs > 0 and epoch < warmup_epochs:
+                    if warmup_epochs == 1:
+                        return 1.0
+                    # Linear interpolation from warmup_start_ratio to 1.0
+                    return warmup_start_ratio + (1.0 - warmup_start_ratio) * epoch / (warmup_epochs - 1)
 
-                # Create cosine annealing scheduler (from initial_lr to eta_min)
+                # Phase 2: Cosine annealing (from initial_lr to eta_min)
+                cosine_start_epoch = warmup_epochs
                 cosine_T_max = T_max - warmup_epochs
-                cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                    optimizer,
-                    T_max=cosine_T_max,
-                    eta_min=eta_min,
-                )
+                cosine_epoch = epoch - cosine_start_epoch
 
-                # Create constant scheduler to keep LR at eta_min after T_max
-                eta_min_ratio = eta_min / initial_lr
-                constant_scheduler = torch.optim.lr_scheduler.LambdaLR(
-                    optimizer,
-                    lr_lambda=lambda epoch: eta_min_ratio,
-                )
+                if cosine_epoch < cosine_T_max:
+                    # Cosine annealing: eta_min + (initial_lr - eta_min) * (1 + cos(π * epoch / T_max)) / 2
+                    cosine_factor = (1 + math.cos(math.pi * cosine_epoch / cosine_T_max)) / 2
+                    return eta_min_ratio + (1.0 - eta_min_ratio) * cosine_factor
 
-                # Chain warmup, cosine, and constant schedulers
-                return torch.optim.lr_scheduler.SequentialLR(
-                    optimizer,
-                    schedulers=[warmup_scheduler, cosine_scheduler, constant_scheduler],
-                    milestones=[warmup_epochs, warmup_epochs + cosine_T_max],
-                )
-            else:
-                # No warmup, just cosine annealing
-                cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                    optimizer,
-                    T_max=T_max,
-                    eta_min=eta_min,
-                )
+                # Phase 3: Constant at eta_min
+                return eta_min_ratio
 
-                # Create constant scheduler to keep LR at eta_min after T_max
-                eta_min_ratio = eta_min / initial_lr
-                constant_scheduler = torch.optim.lr_scheduler.LambdaLR(
-                    optimizer,
-                    lr_lambda=lambda epoch: eta_min_ratio,
-                )
-
-                # Chain cosine and constant schedulers
-                return torch.optim.lr_scheduler.SequentialLR(
-                    optimizer,
-                    schedulers=[cosine_scheduler, constant_scheduler],
-                    milestones=[T_max],
-                )
+            return torch.optim.lr_scheduler.LambdaLR(
+                optimizer,
+                lr_lambda=cosine_with_warmup_lambda,
+            )
         elif schedule_name == "linear":
             return torch.optim.lr_scheduler.LinearLR(
                 optimizer,
