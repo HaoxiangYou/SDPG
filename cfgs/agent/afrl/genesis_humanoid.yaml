@@ -18,6 +18,8 @@ config:
   num_base_envs: 64
   # Number of auxiliary environments for estimating the descent direction
   num_action_perturbations: 63
+  # Number of top k perturbations to use for the ascent direction computation
+  top_k_perturbations: null
   # Total number of environments = num_base_envs  * ( num_action_perturbations + 1 )
   num_envs: ${compute_num_envs:${.num_base_envs},${.num_action_perturbations}}
 

@@ -85,6 +85,11 @@ class AFRLRunner:
             self.normalize_delta_J = True
         else:
             self.normalize_delta_J = False
+        # Top k perturbations for ascent direction computation
+        top_k_perturbations = self.agent_config.get("top_k_perturbations", None)
+        if top_k_perturbations is None:
+            top_k_perturbations = self.num_action_perturbations + 1
+        self.top_k_perturbations = top_k_perturbations
 
         # Performance metrics recorder
         self.episode_reward_meter = AverageMeter(1, 100).to(self.device)
@@ -429,9 +434,10 @@ class AFRLRunner:
         """
         This function computes the ascent direction for improving the nominal action by weighting all the perturbations.
         """
-        delta_J_var = self.delta_J.view(self.num_base_envs, self.num_action_perturbations + 1, self.horizon_length).var(
-            dim=1
-        )
+        # Reshape delta_J to group by base environments: [num_base_envs, num_action_perturbations + 1, horizon_length]
+        delta_J_grouped = self.delta_J.view(self.num_base_envs, self.num_action_perturbations + 1, self.horizon_length)
+
+        delta_J_var = delta_J_grouped.var(dim=1)
         self.rollout_var = delta_J_var.mean()
         self.positive_rollout_ratio = (self.delta_J > 0).sum() / self.delta_J.numel()
 
@@ -450,8 +456,34 @@ class AFRLRunner:
             self.num_base_envs, self.num_action_perturbations + 1, self.horizon_length, self.num_actions
         )
 
-        # compute mean across each group (dimension 1)
-        action_ascent_direction = weighted_perturbations_grouped.mean(dim=1)
+        # Reshape normalized delta_J for top-k selection: [num_base_envs, num_action_perturbations + 1, horizon_length]
+        delta_J_grouped_normalized = delta_J.view(
+            self.num_base_envs, self.num_action_perturbations + 1, self.horizon_length
+        )
+
+        # Select top k perturbations based on delta_J values (from big to small)
+        k = min(self.top_k_perturbations, self.num_action_perturbations + 1)
+
+        if k < self.num_action_perturbations + 1:
+            # Get top k indices: [num_base_envs, k, horizon_length]
+            # We want to select top k for each base env and timestep based on normalized delta_J
+            top_k_values, top_k_indices = torch.topk(delta_J_grouped_normalized, k=k, dim=1, largest=True)
+
+            # Use gather to select top k weighted perturbations
+            # top_k_indices: [num_base_envs, k, horizon_length]
+            # Expand for gather: [num_base_envs, k, horizon_length, num_actions]
+            top_k_indices_expanded = top_k_indices.unsqueeze(-1).expand(-1, -1, -1, self.num_actions)
+
+            # Gather top k weighted perturbations: [num_base_envs, k, horizon_length, num_actions]
+            top_k_weighted_perturbations = torch.gather(
+                weighted_perturbations_grouped, dim=1, index=top_k_indices_expanded
+            )
+
+            # Average across top k directions (dimension 1)
+            action_ascent_direction = top_k_weighted_perturbations.mean(dim=1)
+        else:
+            # compute mean across each group (dimension 1) - use all directions
+            action_ascent_direction = weighted_perturbations_grouped.mean(dim=1)
 
         return action_ascent_direction
 
