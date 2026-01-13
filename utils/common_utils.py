@@ -1,4 +1,6 @@
+import sys
 import time
+from pathlib import Path
 
 from omegaconf import DictConfig
 
@@ -87,3 +89,59 @@ class TimeReport:
         else:
             self.report()
             self.timers = {}
+
+
+class TeeOutput:
+    """A class that redirects stdout/stderr to both console and a log file."""
+
+    def __init__(self, log_file_path: Path, stream):
+        self.log_file = open(log_file_path, "a", buffering=1)  # Line buffered
+        self.original_stream = stream
+
+    def write(self, message):
+        """Write to both console and log file."""
+        self.original_stream.write(message)
+        self.log_file.write(message)
+        self.log_file.flush()
+
+    def flush(self):
+        """Flush both streams."""
+        self.original_stream.flush()
+        self.log_file.flush()
+
+    def close(self):
+        """Close the log file."""
+        if self.log_file:
+            self.log_file.close()
+
+    def __getattr__(self, name):
+        """Delegate other attributes to the original stream."""
+        return getattr(self.original_stream, name)
+
+
+class TeeStdoutStderr:
+    """Context manager that redirects both stdout and stderr to log file."""
+
+    def __init__(self, log_file_path: Path):
+        self.log_file_path = log_file_path
+        self.tee_stdout = None
+        self.tee_stderr = None
+        self.original_stdout = None
+        self.original_stderr = None
+
+    def __enter__(self):
+        self.original_stdout = sys.stdout
+        self.original_stderr = sys.stderr
+        self.tee_stdout = TeeOutput(self.log_file_path, sys.stdout)
+        self.tee_stderr = TeeOutput(self.log_file_path, sys.stderr)
+        sys.stdout = self.tee_stdout
+        sys.stderr = self.tee_stderr
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        sys.stdout = self.original_stdout
+        sys.stderr = self.original_stderr
+        if self.tee_stdout:
+            self.tee_stdout.close()
+        if self.tee_stderr:
+            self.tee_stderr.close()

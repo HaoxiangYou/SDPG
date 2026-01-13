@@ -1,5 +1,10 @@
+from pathlib import Path
+
 import hydra
+from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
+
+from utils.common_utils import TeeStdoutStderr
 
 
 def compute_num_envs(num_base_envs: int, num_action_perturbations: int) -> int:
@@ -37,18 +42,38 @@ def main(cfg: DictConfig) -> None:
     Args:
         cfg: Hydra configuration object.
     """
-    # Resolve all interpolations in the config (resolves ${...} references)
-    OmegaConf.resolve(cfg)
+    # Get Hydra's output directory and log file path
+    hydra_cfg = HydraConfig.get()
+    if hydra_cfg is not None:
+        output_dir = Path(hydra_cfg.runtime.output_dir)
+        log_file_path = output_dir / "run.log"
 
-    # If not training, overwrite env config with the play mode
-    if not cfg.train:
-        cfg.task.config = cfg.task.play
-        cfg.num_envs = cfg.task.play.num_envs
-        cfg.agent.config.num_envs = cfg.task.play.num_envs
+        # Redirect stdout/stderr to both console and log file
+        with TeeStdoutStderr(log_file_path):
+            # Resolve all interpolations in the config (resolves ${...} references)
+            OmegaConf.resolve(cfg)
 
-    runner = make_runner(cfg)
+            # If not training, overwrite env config with the play mode
+            if not cfg.train:
+                cfg.task.config = cfg.task.play
+                cfg.num_envs = cfg.task.play.num_envs
+                cfg.agent.config.num_envs = cfg.task.play.num_envs
 
-    runner.run({"train": cfg.train, "play": not cfg.train, "checkpoint": cfg.checkpoint})
+            runner = make_runner(cfg)
+
+            runner.run({"train": cfg.train, "play": not cfg.train, "checkpoint": cfg.checkpoint})
+    else:
+        # Fallback if Hydra is not initialized
+        OmegaConf.resolve(cfg)
+
+        if not cfg.train:
+            cfg.task.config = cfg.task.play
+            cfg.num_envs = cfg.task.play.num_envs
+            cfg.agent.config.num_envs = cfg.task.play.num_envs
+
+        runner = make_runner(cfg)
+
+        runner.run({"train": cfg.train, "play": not cfg.train, "checkpoint": cfg.checkpoint})
 
 
 if __name__ == "__main__":
