@@ -20,15 +20,6 @@ def main():
     env: GenesisEnv = env_fn(num_envs=num_envs, device=device, seed=0, sim_options=sim_options, **env_kwargs)
 
     env.reset()
-    for i in range(10):
-        obs, rew, terminated, truncated, info = env.step(
-            torch.ones(num_envs, env.num_actions).to(device), auto_reset=False
-        )
-    env._reset_idx([0])
-    obs, rew, terminated, truncated, info = env.step(torch.ones(num_envs, env.num_actions).to(device), auto_reset=False)
-    import pdb
-
-    pdb.set_trace()
 
     for i in range(32):
         actions = torch.randn(num_envs, env.num_actions).to(device)
