@@ -1,8 +1,7 @@
 ## Genesis version
-current commit id:`fae1db41e1271150a78940592fda6bf0c930f255`
-commid id before nan error handling `d74f02c08508f67fe47df17765f46ba1f0bff33c`
+commit id:`fae1db41e1271150a78940592fda6bf0c930f255`
 
-## Modification
+## Genesis Modification
 Genesis will raise error when encounter nan during simulation.
 We do not want to nan interupt our training and want to handle them explicitly during environment.
 To do so, we have modify the genesis code.
