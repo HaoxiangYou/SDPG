@@ -153,8 +153,8 @@ class Humanoid(GenesisEnv):
         target_dirs = self._target - base_pose[:, :3]
         target_dirs[:, 2] = 0
         target_dirs = torch.nn.functional.normalize(target_dirs)
-        heading_vec = transform_by_quat(torch.tensor([1, 0, 0], device=self._device).repeat(n_batch, 1), base_quat)
-        up_vec = transform_by_quat(torch.tensor([0, 1, 0], device=self._device).repeat(n_batch, 1), base_quat)
+        heading_vec = transform_by_quat(torch.tensor([1.0, 0, 0], device=self._device).repeat(n_batch, 1), base_quat)
+        up_vec = transform_by_quat(torch.tensor([0.0, 1, 0], device=self._device).repeat(n_batch, 1), base_quat)
 
         return torch.cat(
             [
@@ -188,8 +188,10 @@ class Humanoid(GenesisEnv):
         target_dirs = self._target - base_pose[:, :3]
         target_dirs[:, 2] = 0
         target_dirs = torch.nn.functional.normalize(target_dirs)
-        heading_vec = transform_by_quat(torch.tensor([1, 0, 0], device=self._device).repeat(n_batch, 1), base_quat)
-        up_vec = transform_by_quat(torch.tensor([0, 1, 0], device=self._device).repeat(n_batch, 1), base_quat)
+        heading_vec = transform_by_quat(
+            torch.tensor([1.0, 0.0, 0.0], device=self._device).repeat(n_batch, 1), base_quat
+        )
+        up_vec = transform_by_quat(torch.tensor([0.0, 1.0, 0.0], device=self._device).repeat(n_batch, 1), base_quat)
 
         up_reward = 0.1 * up_vec[:, 1]
         heading_reward = (heading_vec * target_dirs).sum(dim=-1)

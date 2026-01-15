@@ -120,6 +120,12 @@ class GenesisEnv(BaseEnv):
         self._obs_buf = self.compute_observations(states)
         self._reward_buf = self.compute_reward(states, actions)
         self._terminated_buf = self.compute_termination(states)
+
+        # set the terminated_buf and reward involved nan ids to true and zero respectively
+        nan_ids = self._find_nan_ids(states)
+        self._terminated_buf[nan_ids] = True
+        self._reward_buf[nan_ids] = 0.0
+
         self._truncated_buf = self._progress_buf >= self._episode_length
         self._reset_buf = self._terminated_buf | self._truncated_buf
 
@@ -142,6 +148,68 @@ class GenesisEnv(BaseEnv):
     def save_video(self) -> None:
         # TODO
         pass
+
+    def _find_nan_ids(self, states: Dict[str, Any]) -> torch.Tensor:
+        """Find the ids of the environments that have NaN values in the states.
+
+        Args:
+            states: The states dictionary containing "robot_states" and "progress_buf".
+                - robot_states: A dictionary containing tensors with shape (num_envs, ...).
+                - progress_buf: A tensor with shape (num_envs,).
+
+        Returns:
+            A tensor containing the environment indices that have at least one NaN value.
+        """
+        robot_states = states.get("robot_states", {})
+
+        def check_nan_recursive(obj: Any) -> torch.Tensor:
+            """Recursively check for NaN values in nested dictionaries and tensors."""
+            if isinstance(obj, torch.Tensor):
+                # Check for NaN values in the tensor
+                if obj.numel() == 0:
+                    # Empty tensor, skip
+                    return None
+                elif obj.dim() == 0:
+                    # Scalar tensor - if NaN, mark all environments as having NaN
+                    if torch.isnan(obj):
+                        return torch.ones(self._num_envs, dtype=torch.bool, device=self._device)
+                    return None
+                elif obj.shape[0] == self._num_envs:
+                    # Tensor with correct first dimension (num_envs, ...)
+                    if obj.dim() == 1:
+                        # 1D tensor: (num_envs,)
+                        return torch.isnan(obj)
+                    else:
+                        # Multi-dimensional tensor: (num_envs, ...)
+                        # Check if any element along non-first dimensions is NaN
+                        return torch.isnan(obj).any(dim=tuple(range(1, obj.dim())))
+                else:
+                    # Tensor with unexpected shape - if it contains NaN, mark all as having NaN
+                    if torch.isnan(obj).any():
+                        return torch.ones(self._num_envs, dtype=torch.bool, device=self._device)
+                    return None
+            elif isinstance(obj, dict):
+                # Recursively check all values in the dictionary
+                nan_flags = []
+                for value in obj.values():
+                    nan_flag = check_nan_recursive(value)
+                    if nan_flag is not None:
+                        nan_flags.append(nan_flag)
+                if nan_flags:
+                    # Combine all NaN flags with OR operation
+                    return torch.stack(nan_flags, dim=0).any(dim=0)
+            return None
+
+        # Check robot_states for NaN values
+        nan_mask = check_nan_recursive(robot_states)
+
+        if nan_mask is None:
+            # No NaN values found
+            return torch.tensor([], dtype=torch.int32, device=self._device)
+
+        # Return the environment indices that have NaN values
+        nan_ids = nan_mask.nonzero(as_tuple=False).squeeze(-1).to(torch.int32)
+        return nan_ids
 
     @abstractmethod
     def _reset_idx(self, env_ids: torch.Tensor) -> None:
