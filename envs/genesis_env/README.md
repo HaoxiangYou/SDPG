@@ -3,7 +3,7 @@ commit id:`7db43e4caef2b185bf691d29fc545d6480cd224d`
 
 ## Genesis Modification
 Genesis will raise error when encounter nan during simulation.
-We do not want to nan interupt our training and want to handle them explicitly during environment.
+We do not want to nan interrupt our training and want to handle them explicitly during environment.
 To do so, we have modify the genesis code.
 
 In file `genesis/engine/solvers/rigid/rigid_solver.py`,
