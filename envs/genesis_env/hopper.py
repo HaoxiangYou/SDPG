@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional, Sequence
 import genesis as gs
 import numpy as np
 import torch
+from genesis.utils.geom import pos_lookat_up_to_T
 from gym import spaces
 
 from envs.genesis_env.genesis_env import GenesisEnv
@@ -20,27 +21,26 @@ class Hopper(GenesisEnv):
     def __init__(
         self,
         num_envs: int,
-        render: bool = False,
+        vis_obs: bool = False,
         seed: int = 0,
         randomize_init: bool = True,
         device: torch.device | None = None,
+        sensors_args: Dict[str, Any] | None = None,
         sim_options: gs.options.SimOptions | None = None,
         viewer_options: gs.options.ViewerOptions | None = None,
         vis_options: gs.options.VisOptions | None = None,
         show_viewer: bool = False,
         show_FPS: bool = False,
     ) -> None:
-        if device is None:
-            device = torch.device("cuda")
-
         episode_length = 1000
         early_termination = True
+        self._vis_obs = vis_obs
 
         super().__init__(
             num_envs=num_envs,
             episode_length=episode_length,
             early_termination=early_termination,
-            render=render,
+            sensors_args=sensors_args,
             seed=seed,
             randomize_init=randomize_init,
             device=device,
@@ -77,9 +77,48 @@ class Hopper(GenesisEnv):
         self._angle_reward_scale = 1.0
         self._action_penalty = -1e-1
 
-    def init_camera(self) -> None:
-        """Initialize the camera."""
-        pass
+        # Initialize the sensors
+        if self._vis_obs:
+            # which envs_idx to acquire the rendered rgb image
+            if self._sensors_args["envs_idx"] is not None:
+                self._rendered_envs_idx = self._sensors_args["envs_idx"]
+            else:
+                self._rendered_envs_idx = torch.arange(self._num_envs, device=self._device)
+
+            # TODO: genesis at commit id 7db43e4caef2b185bf691d29fc545d6480cd224d only supports offset_T
+            offset_T = self._sensors_args["camera"].get("offset_T", None)
+            lookat = self._sensors_args["camera"].get("lookat", None)
+            if offset_T is not None:
+                offset_T = torch.tensor(offset_T, device=self._device)
+            else:
+                if lookat is not None:
+                    offset_T = pos_lookat_up_to_T(
+                        np.array(self._sensors_args["camera"]["pos"]), np.array(lookat), np.array((0.0, 0.0, 1.0))
+                    )
+                else:
+                    offset_T = np.eye(4)
+
+            self._camera = self._scene.add_sensor(
+                gs.sensors.BatchRendererCameraOptions(
+                    res=self._sensors_args["camera"]["res"],
+                    pos=self._sensors_args["camera"]["pos"],
+                    offset_T=offset_T,
+                    fov=self._sensors_args["camera"]["fov"],
+                    entity_idx=self._robot.idx,
+                    link_idx_local=self._robot.get_link("torso").idx_local,
+                    lights=[self._sensors_args["camera"]["lights"]],
+                )
+            )
+
+            self._num_image_stack = 3
+            self._image_buf = torch.zeros(
+                len(self._rendered_envs_idx),
+                self._num_image_stack,
+                self._sensors_args["camera"]["res"][0],
+                self._sensors_args["camera"]["res"][1],
+                3,
+                device=self._device,
+            )
 
     def build_scene(self) -> None:
         self._scene.build(n_envs=self._num_envs, env_spacing=(0.0, 1.0), n_envs_per_row=self._num_envs)
@@ -154,6 +193,13 @@ class Hopper(GenesisEnv):
         actions = actions.view(self._num_envs, self._num_actions)
         actions = actions.clamp(min=-1.0, max=1.0) * self._motor_strength
         self._robot.control_dofs_force(actions, dofs_idx_local=self._motors_dof_idx)
+
+    def render(self, env_ids: Optional[Sequence[int]] = None) -> None:
+        # TODO: current camera is initialized only when vis_obs is True
+        if env_ids is None:
+            env_ids = self._rendered_envs_idx
+        data = self._camera.read(envs_idx=env_ids)
+        return data.rgb
 
     def get_states(self, env_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
         if env_ids is None:
