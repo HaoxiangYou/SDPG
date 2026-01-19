@@ -101,13 +101,24 @@ class TeeOutput:
     def write(self, message):
         """Write to both console and log file."""
         self.original_stream.write(message)
-        self.log_file.write(message)
-        self.log_file.flush()
+        # Check if log file is still open before writing
+        if self.log_file and not self.log_file.closed:
+            try:
+                self.log_file.write(message)
+                self.log_file.flush()
+            except (ValueError, OSError):
+                # File is closed or other I/O error, ignore
+                pass
 
     def flush(self):
         """Flush both streams."""
         self.original_stream.flush()
-        self.log_file.flush()
+        if self.log_file and not self.log_file.closed:
+            try:
+                self.log_file.flush()
+            except (ValueError, OSError):
+                # File is closed or other I/O error, ignore
+                pass
 
     def close(self):
         """Close the log file."""
@@ -141,7 +152,6 @@ class TeeStdoutStderr:
     def __exit__(self, exc_type, exc_val, exc_tb):
         sys.stdout = self.original_stdout
         sys.stderr = self.original_stderr
-        if self.tee_stdout:
-            self.tee_stdout.close()
-        if self.tee_stderr:
-            self.tee_stderr.close()
+        # Don't close the log files - keep them open so they can receive writes
+        # during program exit (e.g., from atexit handlers)
+        # The files will be automatically closed when Python exits
