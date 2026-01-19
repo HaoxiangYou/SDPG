@@ -20,8 +20,8 @@ config:
     envs_idx: null
     camera:
       res: (84, 84)
-      pos: (0.0, -2.0, -0.5)
-      lookat: (0.0, 0.0, -0.5)
+      pos: (-3.0, 0.0, 1.0)
+      lookat: (0.0, 0.0, 0.0)
       fov: 60.0
       lights:
         pos: (0.0, 0.0, 2.0)
