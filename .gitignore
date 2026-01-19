@@ -210,3 +210,4 @@ logs/
 
 wandb/
 externals/
+.vscode/

@@ -357,3 +357,105 @@ def compute_grad_norm(params):
         if p.grad is not None:
             grad_norm += torch.sum(p.grad**2)
     return torch.sqrt(grad_norm)
+
+
+def dicts_equal(
+    dict1: Dict[str, Any],
+    dict2: Dict[str, Any],
+    atol: float = 1e-8,
+    rtol: float = 1e-5,
+) -> Union[bool, Dict[str, Union[bool, Dict[str, Any]]]]:
+    """Check if two dictionaries contain the same keys and values, recursively handling nested dictionaries.
+
+    This function recursively compares two dictionaries, checking that:
+    - Both dictionaries have the same keys
+    - For each key, the values are equal (handling nested dictionaries, tensors, and other types)
+
+    Args:
+        dict1: First dictionary to compare
+        dict2: Second dictionary to compare
+        atol: Absolute tolerance for floating-point tensor comparison. Default is 1e-8.
+              Only used when comparing torch.Tensor values.
+        rtol: Relative tolerance for floating-point tensor comparison. Default is 1e-5.
+              Only used when comparing torch.Tensor values.
+
+    Returns:
+        Returns a nested dictionary structure matching the input dictionaries:
+        - If input is a dictionary: returns {key: bool} or {key: {nested_key: bool}}
+        - Each boolean indicates whether that key-value pair is equal between the two dictionaries
+        - Returns False if inputs are not dictionaries
+
+    Example:
+        >>> # Simple dictionaries
+        >>> dict1 = {"a": 1, "b": 2}
+        >>> dict2 = {"a": 1, "b": 2}
+        >>> dicts_equal(dict1, dict2)
+        {"a": True, "b": True}
+
+        >>> # Nested dictionaries
+        >>> dict1 = {"a": {"x": 1, "y": 2}, "b": 3}
+        >>> dict2 = {"a": {"x": 1, "y": 2}, "b": 3}
+        >>> dicts_equal(dict1, dict2)
+        {"a": {"x": True, "y": True}, "b": True}
+
+        >>> # Dictionaries with tensors
+        >>> dict1 = {"tensor": torch.tensor([1.0, 2.0]), "scalar": 5}
+        >>> dict2 = {"tensor": torch.tensor([1.0, 2.0]), "scalar": 5}
+        >>> dicts_equal(dict1, dict2)
+        {"tensor": True, "scalar": True}
+
+        >>> # Different values
+        >>> dict1 = {"a": 1, "b": 2}
+        >>> dict2 = {"a": 1, "b": 3}
+        >>> dicts_equal(dict1, dict2)
+        {"a": True, "b": False}
+
+        >>> # Different keys
+        >>> dict1 = {"a": 1, "b": 2}
+        >>> dict2 = {"a": 1, "c": 2}
+        >>> result = dicts_equal(dict1, dict2)
+        >>> # Returns {"a": True, "b": False, "c": False}
+    """
+    # Check if both are dictionaries
+    if not isinstance(dict1, dict) or not isinstance(dict2, dict):
+        return False
+
+    # Get all unique keys from both dictionaries
+    all_keys = set(dict1.keys()) | set(dict2.keys())
+    result = {}
+
+    # Check each key
+    for key in all_keys:
+        # Handle missing keys
+        if key not in dict1:
+            result[key] = False
+            continue
+        if key not in dict2:
+            result[key] = False
+            continue
+
+        val1 = dict1[key]
+        val2 = dict2[key]
+
+        # If both values are dictionaries, recursively check them
+        if isinstance(val1, dict) and isinstance(val2, dict):
+            result[key] = dicts_equal(val1, val2, atol=atol, rtol=rtol)
+        # If only one is a dictionary, they're not equal
+        elif isinstance(val1, dict) or isinstance(val2, dict):
+            result[key] = False
+        # If both values are tensors, compare them with tolerance
+        elif isinstance(val1, torch.Tensor) and isinstance(val2, torch.Tensor):
+            if val1.shape != val2.shape:
+                result[key] = False
+            elif val1.is_floating_point() or val2.is_floating_point():
+                result[key] = torch.allclose(val1, val2, atol=atol, rtol=rtol)
+            else:
+                result[key] = torch.equal(val1, val2)
+        # If only one is a tensor, they're not equal
+        elif isinstance(val1, torch.Tensor) or isinstance(val2, torch.Tensor):
+            result[key] = False
+        # For other types, use standard equality comparison
+        else:
+            result[key] = val1 == val2
+
+    return result

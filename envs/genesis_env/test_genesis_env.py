@@ -5,12 +5,12 @@ import torch
 from genesis_env import GenesisEnv
 
 from utils.common_utils import snakecase_to_pascalcase
-from utils.tensor_utils import all_dict_values_true, check_groups_same, duplicate_entries, select_entries
+from utils.tensor_utils import all_dict_values_true, check_groups_same, dicts_equal, duplicate_entries, select_entries
 
 env_name = "humanoid"
 num_envs = 4
 device = "cuda"
-sim_options = gs.options.SimOptions(dt=1e-1, substeps=1)
+sim_options = gs.options.SimOptions(dt=1e-2, substeps=1)
 env_kwargs = {"render": False, "show_viewer": False, "randomize_init": True}
 
 
@@ -20,6 +20,14 @@ def main():
     env: GenesisEnv = env_fn(num_envs=num_envs, device=device, seed=0, sim_options=sim_options, **env_kwargs)
 
     env.reset()
+
+    # Test get state and set state function
+    states = env.get_states()
+
+    # set the states to the environment with the perturbed states
+    env.set_states(duplicate_entries(states, 1))
+
+    assert all_dict_values_true(dicts_equal(states, env.get_states(), atol=1e-6, rtol=1e-5))
 
     for i in range(32):
         actions = torch.randn(num_envs, env.num_actions).to(device)
