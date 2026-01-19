@@ -98,14 +98,16 @@ class Hopper(GenesisEnv):
                 else:
                     offset_T = np.eye(4)
 
+            # NOTE: A dummy link for the camera to attach to, genesis sensor camera does not support fixed rotation or axis
+            self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.01, collision=False, fixed=True))
+            self._torso_link = self._robot.get_link("torso")
             self._camera = self._scene.add_sensor(
                 gs.sensors.BatchRendererCameraOptions(
                     res=self._sensors_args["camera"]["res"],
                     pos=self._sensors_args["camera"]["pos"],
                     offset_T=offset_T,
                     fov=self._sensors_args["camera"]["fov"],
-                    entity_idx=self._robot.idx,
-                    link_idx_local=self._robot.get_link("torso").idx_local,
+                    entity_idx=self._camera_mount.idx,
                     lights=[self._sensors_args["camera"]["lights"]],
                 )
             )
@@ -198,6 +200,10 @@ class Hopper(GenesisEnv):
         # TODO: current camera is initialized only when vis_obs is True
         if env_ids is None:
             env_ids = self._rendered_envs_idx
+        # Attach the camera to the torso pose
+        pos = self._torso_link.get_pos()
+        self._camera_mount.set_pos(pos)
+
         data = self._camera.read(envs_idx=env_ids)
         return data.rgb
 
