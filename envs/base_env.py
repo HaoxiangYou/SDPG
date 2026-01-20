@@ -1,7 +1,7 @@
 """Base environment class for wrapping other environments."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import torch
 
@@ -83,14 +83,6 @@ class BaseEnv(ABC):
         """
 
     @abstractmethod
-    def render(self) -> Union[None, torch.Tensor]:
-        """Render the environment.
-
-        Returns:
-            The rendered frame as a tensor, or None if rendering is not supported.
-        """
-
-    @abstractmethod
     def initialize_trajectory(self) -> Tuple[torch.Tensor, Dict[str, Any]]:
         """
         This function is used for first-order RL.
@@ -151,15 +143,6 @@ class BaseEnv(ABC):
 
     @property
     @abstractmethod
-    def renderer(self) -> Any:
-        """Get the renderer.
-
-        Returns:
-            The renderer.
-        """
-
-    @property
-    @abstractmethod
     def num_envs(self) -> int:
         """Get the number of environments.
 
@@ -192,4 +175,14 @@ class BaseEnv(ABC):
 
         Returns:
             The observation space.
+        """
+
+    @property
+    @abstractmethod
+    def nominal_env_ids(self) -> torch.Tensor:
+        """Get the nominal environment indices.
+        Used for AFRL agent.
+
+        Returns:
+            The nominal environment indices.
         """

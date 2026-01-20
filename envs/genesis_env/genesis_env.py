@@ -18,28 +18,41 @@ class GenesisEnv(BaseEnv):
     _num_actions: int
     _action_space: Any
     _observation_space: Any
+    _nominal_env_ids: torch.Tensor
 
     def __init__(
         self,
         num_envs: int,
         episode_length: int,
-        render: bool = False,
         early_termination: bool = False,
         seed: int = 0,
         randomize_init: bool = True,
-        device: torch.device | str = "cuda",
+        nominal_env_ids: Optional[Sequence[int]] = None,
+        device: torch.device | None = None,
+        sensors_args: Dict[str, Any] | None = None,
         sim_options: gs.options.SimOptions | None = None,
         viewer_options: gs.options.ViewerOptions | None = None,
         vis_options: gs.options.VisOptions | None = None,
         show_viewer: bool = False,
         show_FPS: bool = False,
     ) -> None:
-        self._device = torch.device(device)
+        if device is None:
+            device = torch.device("cuda")
+        else:
+            device = torch.device(device)
+        self._device = device
+
         self._num_envs = num_envs
         self._episode_length = episode_length
         self._early_termination = early_termination
         self._randomize_init = randomize_init
         self._seed = seed
+        self._sensors_args = sensors_args
+        self._nominal_env_ids = (
+            torch.arange(num_envs, device=device)
+            if nominal_env_ids is None
+            else torch.tensor(nominal_env_ids, device=device)
+        )
 
         if not gs._initialized:
             if self._device == torch.device("cpu"):
@@ -49,7 +62,7 @@ class GenesisEnv(BaseEnv):
             else:
                 raise ValueError(f"Invalid device: {self._device}")
 
-        self._renderer = gs.renderers.Rasterizer() if render else None
+        self._renderer = gs.renderers.Rasterizer()
         self._scene = gs.Scene(
             sim_options=sim_options,
             show_viewer=show_viewer,
@@ -61,10 +74,6 @@ class GenesisEnv(BaseEnv):
 
         # Initialize the scene
         self.init_scene()
-
-        # Initialize the camera if rendering is enabled
-        if render:
-            self.init_camera()
 
         # build the scene
         self.build_scene()
@@ -80,16 +89,6 @@ class GenesisEnv(BaseEnv):
     @abstractmethod
     def build_scene(self) -> None:
         """Build the scene."""
-
-    @abstractmethod
-    def init_scene(self) -> None:
-        """Initialize the scene."""
-        pass
-
-    @abstractmethod
-    def init_camera(self) -> None:
-        """Initialize the camera."""
-        pass
 
     def reset(self, env_ids=None):
         if env_ids is None:
@@ -114,8 +113,6 @@ class GenesisEnv(BaseEnv):
         self._scene.step()
         self._progress_buf += 1
 
-        # TODO: Not sure if we need implementing NaN check for genesis.
-
         states = self.get_states()
         self._obs_buf = self.compute_observations(states)
         self._reward_buf = self.compute_reward(states, actions)
@@ -136,10 +133,6 @@ class GenesisEnv(BaseEnv):
             self._obs_buf, _ = self.reset(reset_env_ids)
 
         return self._obs_buf, self._reward_buf, self._terminated_buf, self._truncated_buf, {}
-
-    def render(self) -> None:
-        # TODO
-        pass
 
     def initialize_trajectory(self) -> Tuple[torch.Tensor, Dict[str, Any]]:
         # TODO
@@ -322,6 +315,10 @@ class GenesisEnv(BaseEnv):
     @property
     def observation_space(self) -> Any:
         return self._observation_space
+
+    @property
+    def nominal_env_ids(self) -> torch.Tensor:
+        return self._nominal_env_ids
 
 
 def make_envs(config: DictConfig) -> GenesisEnv:

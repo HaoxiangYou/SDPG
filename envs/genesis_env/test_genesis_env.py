@@ -11,7 +11,7 @@ env_name = "humanoid"
 num_envs = 4
 device = "cuda"
 sim_options = gs.options.SimOptions(dt=1e-2, substeps=1)
-env_kwargs = {"render": False, "show_viewer": False, "randomize_init": True}
+env_kwargs = {"show_viewer": False, "randomize_init": True}
 
 
 def main():
