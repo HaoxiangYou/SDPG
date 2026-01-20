@@ -192,6 +192,9 @@ class Hopper(GenesisEnv):
         actions = actions.clamp(min=-1.0, max=1.0) * self._motor_strength
         self._robot.control_dofs_force(actions, dofs_idx_local=self._motors_dof_idx)
 
+    def _post_physics_step(self) -> None:
+        pass
+
     def render(self, env_ids: Optional[Sequence[int]] = None) -> None:
         if env_ids is None:
             env_ids = self.nominal_env_ids
