@@ -176,3 +176,13 @@ class BaseEnv(ABC):
         Returns:
             The observation space.
         """
+
+    @property
+    @abstractmethod
+    def nominal_env_ids(self) -> torch.Tensor:
+        """Get the nominal environment indices.
+        Used for AFRL agent.
+
+        Returns:
+            The nominal environment indices.
+        """

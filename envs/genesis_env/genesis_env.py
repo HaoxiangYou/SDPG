@@ -18,6 +18,7 @@ class GenesisEnv(BaseEnv):
     _num_actions: int
     _action_space: Any
     _observation_space: Any
+    _nominal_env_ids: torch.Tensor
 
     def __init__(
         self,
@@ -26,6 +27,7 @@ class GenesisEnv(BaseEnv):
         early_termination: bool = False,
         seed: int = 0,
         randomize_init: bool = True,
+        nominal_env_ids: Optional[Sequence[int]] = None,
         device: torch.device | None = None,
         sensors_args: Dict[str, Any] | None = None,
         sim_options: gs.options.SimOptions | None = None,
@@ -46,6 +48,11 @@ class GenesisEnv(BaseEnv):
         self._randomize_init = randomize_init
         self._seed = seed
         self._sensors_args = sensors_args
+        self._nominal_env_ids = (
+            torch.arange(num_envs, device=device)
+            if nominal_env_ids is None
+            else torch.tensor(nominal_env_ids, device=device)
+        )
 
         if not gs._initialized:
             if self._device == torch.device("cpu"):
@@ -105,8 +112,6 @@ class GenesisEnv(BaseEnv):
         # Do the physics step.
         self._scene.step()
         self._progress_buf += 1
-
-        # TODO: Not sure if we need implementing NaN check for genesis.
 
         states = self.get_states()
         self._obs_buf = self.compute_observations(states)
@@ -310,6 +315,10 @@ class GenesisEnv(BaseEnv):
     @property
     def observation_space(self) -> Any:
         return self._observation_space
+
+    @property
+    def nominal_env_ids(self) -> torch.Tensor:
+        return self._nominal_env_ids
 
 
 def make_envs(config: DictConfig) -> GenesisEnv:

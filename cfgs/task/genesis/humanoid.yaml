@@ -4,6 +4,7 @@ name: humanoid
 
 config:
   num_envs: ${...num_envs}
+  nominal_env_ids: null
   randomize_init: True
   sim_options:
     dt: 1e-2
@@ -17,7 +18,6 @@ config:
   vis_obs: False
   sensors_args:
     # which envs_idx to acquire the sensor data from
-    envs_idx: null
     camera:
       res: (84, 84)
       pos: (-3.0, 0.0, 1.0)

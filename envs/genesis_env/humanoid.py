@@ -24,6 +24,7 @@ class Humanoid(GenesisEnv):
         vis_obs: bool = False,
         seed: int = 0,
         randomize_init: bool = True,
+        nominal_env_ids: Optional[Sequence[int]] = None,
         device: torch.device | None = None,
         sensors_args: Dict[str, Any] | None = None,
         sim_options: gs.options.SimOptions | None = None,
@@ -42,6 +43,7 @@ class Humanoid(GenesisEnv):
             early_termination=early_termination,
             seed=seed,
             randomize_init=randomize_init,
+            nominal_env_ids=nominal_env_ids,
             device=device,
             sensors_args=sensors_args,
             show_viewer=show_viewer,
@@ -128,42 +130,36 @@ class Humanoid(GenesisEnv):
         self._action_penalty = -0.002
 
         # Initialize the sensors
-        if self._vis_obs:
-            # which envs_idx to acquire the rendered rgb image
-            if self._sensors_args["envs_idx"] is not None:
-                self._rendered_envs_idx = self._sensors_args["envs_idx"]
-            else:
-                self._rendered_envs_idx = torch.arange(self._num_envs, device=self._device)
-
-            # TODO: genesis at commit id 7db43e4caef2b185bf691d29fc545d6480cd224d only supports offset_T
-            offset_T = self._sensors_args["camera"].get("offset_T", None)
-            lookat = self._sensors_args["camera"].get("lookat", None)
-            if offset_T is not None:
-                offset_T = torch.tensor(offset_T, device=self._device)
-            else:
-                if lookat is not None:
-                    offset_T = pos_lookat_up_to_T(
-                        np.array(self._sensors_args["camera"]["pos"]), np.array(lookat), np.array((0.0, 0.0, 1.0))
-                    )
-                else:
-                    offset_T = np.eye(4)
-            # NOTE: A dummy link for the camera to attach to, genesis sensor camera does not support fixed rotation or axis
-            self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.01, collision=False, fixed=True))
-            self._torso_link = self._robot.get_link("torso")
-            self._camera = self._scene.add_sensor(
-                gs.sensors.BatchRendererCameraOptions(
-                    res=self._sensors_args["camera"]["res"],
-                    pos=self._sensors_args["camera"]["pos"],
-                    offset_T=offset_T,
-                    fov=self._sensors_args["camera"]["fov"],
-                    entity_idx=self._camera_mount.idx,
-                    lights=[self._sensors_args["camera"]["lights"]],
+        # TODO: genesis at commit id 7db43e4caef2b185bf691d29fc545d6480cd224d only supports offset_T
+        offset_T = self._sensors_args["camera"].get("offset_T", None)
+        lookat = self._sensors_args["camera"].get("lookat", None)
+        if offset_T is not None:
+            offset_T = torch.tensor(offset_T, device=self._device)
+        else:
+            if lookat is not None:
+                offset_T = pos_lookat_up_to_T(
+                    np.array(self._sensors_args["camera"]["pos"]), np.array(lookat), np.array((0.0, 0.0, 1.0))
                 )
+            else:
+                offset_T = np.eye(4)
+        # NOTE: A dummy link for the camera to attach to, genesis sensor camera does not support fixed rotation or axis
+        self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.01, collision=False, fixed=True))
+        self._torso_link = self._robot.get_link("torso")
+        self._camera = self._scene.add_sensor(
+            gs.sensors.BatchRendererCameraOptions(
+                res=self._sensors_args["camera"]["res"],
+                pos=self._sensors_args["camera"]["pos"],
+                offset_T=offset_T,
+                fov=self._sensors_args["camera"]["fov"],
+                entity_idx=self._camera_mount.idx,
+                lights=[self._sensors_args["camera"]["lights"]],
             )
+        )
 
+        if self._vis_obs:
             self._num_image_stack = 3
             self._image_buf = torch.zeros(
-                len(self._rendered_envs_idx),
+                self.nominal_env_ids.shape[0],
                 self._num_image_stack,
                 self._sensors_args["camera"]["res"][0],
                 self._sensors_args["camera"]["res"][1],
@@ -280,9 +276,8 @@ class Humanoid(GenesisEnv):
         self._robot.control_dofs_force(actions, dofs_idx_local=self._motors_dof_idx)
 
     def render(self, env_ids: Optional[Sequence[int]] = None) -> None:
-        # TODO: current camera is initialized only when vis_obs is True
         if env_ids is None:
-            env_ids = self._rendered_envs_idx
+            env_ids = self.nominal_env_ids
         # Attach the camera to the torso pose
         pos = self._torso_link.get_pos()
         self._camera_mount.set_pos(pos)
