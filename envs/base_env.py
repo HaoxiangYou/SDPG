@@ -186,3 +186,21 @@ class BaseEnv(ABC):
         Returns:
             The nominal environment indices.
         """
+
+    @property
+    @abstractmethod
+    def num_nominal_envs(self) -> int:
+        """Get the number of nominal environments.
+        Used for AFRL agent, for general RL algorithms, all environments are nominal environments.
+
+        Returns:
+            The number of nominal environments.
+        """
+
+    @property
+    @abstractmethod
+    def num_auxiliary_envs(self) -> int:
+        """Get the number of auxiliary environments.
+        Returns:
+            The number of auxiliary environments.
+        """
