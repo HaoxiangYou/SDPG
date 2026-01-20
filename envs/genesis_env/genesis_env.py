@@ -54,6 +54,16 @@ class GenesisEnv(BaseEnv):
             else torch.tensor(nominal_env_ids, device=device)
         )
 
+        # Check if the number of environments is fully divisible by the number of nominal environments
+        # Nominal envs and auxiliary envs are for AFRL agent.
+        # For general RL algorithms, all environments are nominal environments.
+        num_nominal_envs = self._nominal_env_ids.shape[0]
+        if num_envs % num_nominal_envs != 0:
+            raise ValueError(
+                f"num_envs ({num_envs}) must be fully divisible by num_nominal_envs ({num_nominal_envs}). "
+                f"Current remainder: {num_envs % num_nominal_envs}"
+            )
+
         if not gs._initialized:
             if self._device == torch.device("cpu"):
                 gs.init(performance_mode=True, backend=gs.cpu, seed=self._seed)
@@ -341,6 +351,14 @@ class GenesisEnv(BaseEnv):
     @property
     def nominal_env_ids(self) -> torch.Tensor:
         return self._nominal_env_ids
+
+    @property
+    def num_nominal_envs(self) -> int:
+        return self._nominal_env_ids.shape[0]
+
+    @property
+    def num_auxiliary_envs(self) -> int:
+        return self.num_envs // self.num_nominal_envs - 1
 
 
 def make_envs(config: DictConfig) -> GenesisEnv:
