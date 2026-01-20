@@ -55,7 +55,8 @@ class Hopper(GenesisEnv):
         """Initialize the scene."""
 
         self._robot = self._scene.add_entity(
-            gs.morphs.MJCF(file=os.path.join(os.path.dirname(__file__), "../../assets/hopper.xml"))
+            gs.morphs.MJCF(file=os.path.join(os.path.dirname(__file__), "../../assets/hopper.xml")),
+            surface=gs.surfaces.Default(color=(1.0, 0.5, 0.0, 1.0)),  # Orange color from hopper.xml default
         )
         self._plane = self._scene.add_entity(gs.morphs.Plane())
 

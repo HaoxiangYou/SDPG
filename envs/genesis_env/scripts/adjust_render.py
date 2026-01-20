@@ -15,7 +15,7 @@ from envs.genesis_env.genesis_env import GenesisEnv
 from utils.common_utils import snakecase_to_pascalcase
 from utils.tensor_utils import select_entries
 
-env_name = "humanoid"
+env_name = "hopper"
 num_envs = 4
 device = "cuda"
 sim_options = gs.options.SimOptions(dt=1e-2, substeps=1)
@@ -27,11 +27,13 @@ env_kwargs = {
         "envs_idx": None,
         "camera": {
             "res": (84, 84),
-            "pos": (-3.0, 0.0, 1.0),
-            "lookat": (0.0, 0.0, 0.0),
+            "pos": (0.0, -2.0, -0.5),
+            "lookat": (0.0, 0.0, -0.5),
             "fov": 60.0,
             "lights": {
                 "pos": (0.0, 0.0, 2.0),
+                "intensity": 0.8,
+                "color": (1.0, 1.0, 1.0),
                 "dir": (0.0, 0.0, -1.0),
                 "cutoff": 100,
                 "directional": True,
@@ -94,7 +96,7 @@ def main(traj_path: str = None):
         n_cols = int(np.ceil(np.sqrt(n_images)))
         n_rows = int(np.ceil(n_images / n_cols))
 
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols, n_rows))
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 3, n_rows * 3))
         axes = axes.flatten()
 
         # Display each image

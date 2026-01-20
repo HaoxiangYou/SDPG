@@ -55,7 +55,8 @@ class Humanoid(GenesisEnv):
         """Initialize the scene."""
 
         self._robot = self._scene.add_entity(
-            gs.morphs.MJCF(file=os.path.join(os.path.dirname(__file__), "../../assets/humanoid.xml"))
+            gs.morphs.MJCF(file=os.path.join(os.path.dirname(__file__), "../../assets/humanoid.xml")),
+            surface=gs.surfaces.Default(color=(1.0, 0.5, 0.0, 1.0)),  # Orange color from humanoid.xml default
         )
         self._plane = self._scene.add_entity(gs.morphs.Plane())
 
