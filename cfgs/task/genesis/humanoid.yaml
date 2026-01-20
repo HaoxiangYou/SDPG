@@ -4,7 +4,10 @@ name: humanoid
 
 config:
   num_envs: ${...num_envs}
+  # which envs are treated as the nominal environments (for AFRL agent),
+  # if None, all envs are treated as nominal environments
   nominal_env_ids: null
+  
   randomize_init: True
   sim_options:
     dt: 1e-2
@@ -19,15 +22,15 @@ config:
   sensors_args:
     # which envs_idx to acquire the sensor data from
     camera:
-      res: (84, 84)
-      pos: (-3.0, 0.0, 1.0)
-      lookat: (0.0, 0.0, 0.0)
+      res: [84, 84]
+      pos: [-3.0, 0.0, 1.0]
+      lookat: [0.0, 0.0, 0.0]
       fov: 60.0
       lights:
-        pos: (0.0, 0.0, 2.0)
-        dir: (0.0, 0.0, -1.0)
+        pos: [0.0, 0.0, 2.0]
+        dir: [0.0, 0.0, -1.0]
         intensity: 0.8
-        color: (1.0, 1.0, 1.0)
+        color: [1.0, 1.0, 1.0]
         cutoff: 100
         directional: True
         castshadow: False

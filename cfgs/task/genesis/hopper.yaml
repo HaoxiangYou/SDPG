@@ -22,15 +22,15 @@ config:
   sensors_args:
     # which envs_idx to acquire the sensor data from
     camera:
-      res: (84, 84)
-      pos: (0.0, -2.0, -0.5)
-      lookat: (0.0, 0.0, -0.5)
+      res: [84, 84]
+      pos: [0.0, -2.0, -0.5]
+      lookat: [0.0, 0.0, -0.5]
       fov: 60.0
       lights:
-        pos: (0.0, 0.0, 1.3)
-        dir: (0.0, 0.0, -1.0)
+        pos: [0.0, 0.0, 1.3]
+        dir: [0.0, 0.0, -1.0]
         intensity: 0.8
-        color: (1.0, 1.0, 1.0)
+        color: [1.0, 1.0, 1.0]
         cutoff: 100
         directional: True
         castshadow: False
