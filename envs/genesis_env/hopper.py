@@ -35,7 +35,51 @@ class Hopper(GenesisEnv):
     ) -> None:
         episode_length = 1000
         early_termination = True
+
+        if sensors_args is None:
+            sensors_args = {
+                "camera": {
+                    "res": [256, 256],
+                    "pos": [0.0, -2.0, -0.5],
+                    "lookat": [0.0, 0.0, -0.5],
+                    "fov": 60.0,
+                    "lights": {
+                        "pos": [0.0, 0.0, 1.3],
+                        "dir": [0.0, 0.0, -1.0],
+                        "intensity": 0.8,
+                        "color": [1.0, 1.0, 1.0],
+                        "cutoff": 100,
+                        "directional": True,
+                        "castshadow": False,
+                    },
+                },
+                "directional": True,
+                "castshadow": False,
+            }
         self._vis_obs = vis_obs
+        if vis_obs:
+            self._num_image_stack = 3
+            self._observation_space = spaces.Dict(
+                {
+                    "previlaged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(11,)),
+                    "RGB": spaces.Box(
+                        low=0.0,
+                        high=255,
+                        dtype=torch.uint8,
+                        shape=(
+                            self._num_image_stack * 3,
+                            sensors_args["camera"]["res"][0],
+                            sensors_args["camera"]["res"][1],
+                        ),
+                    ),
+                }
+            )
+        else:
+            self._observation_space = spaces.Dict(
+                {
+                    "previlaged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(11,)),
+                }
+            )
 
         super().__init__(
             num_envs=num_envs,
@@ -108,8 +152,7 @@ class Hopper(GenesisEnv):
         )
 
         if self._vis_obs:
-            self._num_image_stack = 3
-            self._image_buf = torch.zeros(
+            self._imgs_buf = torch.zeros(
                 self.nominal_env_ids.shape[0],
                 self._num_image_stack,
                 self._sensors_args["camera"]["res"][0],
@@ -121,9 +164,10 @@ class Hopper(GenesisEnv):
     def build_scene(self) -> None:
         self._scene.build(n_envs=self._num_envs, env_spacing=(0.0, 1.0), n_envs_per_row=self._num_envs)
 
-    def compute_observations(self, states: Dict[str, Any]) -> torch.Tensor:
+    def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
+        observations = {}
         robot_states = states["robot_states"]
-        observations = torch.cat(
+        previlaged_observations = torch.cat(
             [
                 robot_states["root_joints_pos"][:, 1:],
                 robot_states["motor_joints_pos"],
@@ -132,6 +176,11 @@ class Hopper(GenesisEnv):
             ],
             dim=-1,
         )
+        observations["previlaged_observations"] = previlaged_observations
+
+        if self._vis_obs:
+            pass
+
         return observations
 
     def compute_reward(self, states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
@@ -186,6 +235,9 @@ class Hopper(GenesisEnv):
             envs_idx=env_ids,
             zero_velocity=True,
         )
+
+        if self._vis_obs:
+            pass
 
     def _set_actions(self, actions: torch.Tensor) -> None:
         actions = actions.view(self._num_envs, self._num_actions)

@@ -100,7 +100,7 @@ class GenesisEnv(BaseEnv):
     def build_scene(self) -> None:
         """Build the scene."""
 
-    def reset(self, env_ids=None):
+    def reset(self, env_ids=None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         if env_ids is None:
             env_ids = torch.arange(self._num_envs, device=self._device)
 
@@ -109,19 +109,21 @@ class GenesisEnv(BaseEnv):
         self._progress_buf[env_ids] = 0
 
         states = self.get_states()
-        self._obs_buf = self.compute_observations(states)
+        observations = self.compute_observations(states)
+        self._obs_buf = observations["previlaged_observations"]
 
-        return self._obs_buf, {}
+        return observations, {}
 
     def step(
         self, actions: torch.Tensor, auto_reset: bool = True
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
+    ) -> Tuple[Dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
         """
         Execute a timestep. The function will process in the following steps:
         1. Process the actions specified by each environment.
         2. Do the actual physics step and update the progress buffer.
         3. Compute the reward and termination.
-        4. Do post physics step operations, e.g, set the goal condition command
+        4. Do post physics step operations,
+            e.g, set the goal condition command, update the history buffer such as RGB observation.
         5. Reset the done environment if auto_reset is True.
         6. Compute the observations.
         7. Return the observations, rewards, terminated, truncated, and info.
@@ -152,12 +154,14 @@ class GenesisEnv(BaseEnv):
         if auto_reset and len(reset_env_ids) > 0:
             obs_buf_before_reset = self._obs_buf.clone()
             self._extras["obs_before_reset"] = obs_buf_before_reset
-            self._obs_buf, _ = self.reset(reset_env_ids)
+            observations, _ = self.reset(reset_env_ids)
+            self._obs_buf = observations["previlaged_observations"]
 
         # Compute the observations.
-        self._obs_buf = self.compute_observations(states)
+        observations = self.compute_observations(states)
+        self._obs_buf = observations["previlaged_observations"]
 
-        return self._obs_buf, self._reward_buf, self._terminated_buf, self._truncated_buf, {}
+        return observations, self._reward_buf, self._terminated_buf, self._truncated_buf, {}
 
     def initialize_trajectory(self) -> Tuple[torch.Tensor, Dict[str, Any]]:
         # TODO
@@ -265,7 +269,7 @@ class GenesisEnv(BaseEnv):
         """
 
     @abstractmethod
-    def compute_observations(self, states: Dict[str, Any]) -> torch.Tensor:
+    def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         """Compute the observations of the environment.
 
         Args:

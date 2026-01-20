@@ -35,7 +35,50 @@ class Humanoid(GenesisEnv):
     ) -> None:
         episode_length = 1000
         early_termination = True
+
         self._vis_obs = vis_obs
+
+        if sensors_args is None:
+            sensors_args = {
+                "camera": {
+                    "res": [256, 256],
+                    "pos": [-3.0, 0.0, 1.0],
+                    "lookat": [0.0, 0.0, 0.0],
+                    "fov": 60.0,
+                    "lights": {
+                        "pos": [0.0, 0.0, 2.0],
+                        "dir": [0.0, 0.0, -1.0],
+                        "intensity": 0.8,
+                        "color": [1.0, 1.0, 1.0],
+                    },
+                    "directional": True,
+                    "castshadow": False,
+                }
+            }
+
+        if vis_obs:
+            self._num_image_stack = 3
+            self._observation_space = spaces.Dict(
+                {
+                    "previlaged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(76,)),
+                    "RGB": spaces.Box(
+                        low=0.0,
+                        high=255,
+                        dtype=torch.uint8,
+                        shape=(
+                            self._num_image_stack * 3,
+                            sensors_args["camera"]["res"][0],
+                            sensors_args["camera"]["res"][1],
+                        ),
+                    ),
+                }
+            )
+        else:
+            self._observation_space = spaces.Dict(
+                {
+                    "previlaged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(76,)),
+                }
+            )
 
         super().__init__(
             num_envs=num_envs,
@@ -157,8 +200,7 @@ class Humanoid(GenesisEnv):
         )
 
         if self._vis_obs:
-            self._num_image_stack = 3
-            self._image_buf = torch.zeros(
+            self._imgs_buf = torch.zeros(
                 self.nominal_env_ids.shape[0],
                 self._num_image_stack,
                 self._sensors_args["camera"]["res"][0],
@@ -170,7 +212,8 @@ class Humanoid(GenesisEnv):
     def build_scene(self) -> None:
         self._scene.build(n_envs=self._num_envs, env_spacing=(0.0, 1.0), n_envs_per_row=self._num_envs)
 
-    def compute_observations(self, states: Dict[str, Any]) -> torch.Tensor:
+    def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
+        observations = {}
         # adapt from Jie Xu's implementation
         n_batch = states["progress_buf"].shape[0]
         robot_states = states["robot_states"]
@@ -192,7 +235,7 @@ class Humanoid(GenesisEnv):
         heading_vec = transform_by_quat(torch.tensor([1.0, 0, 0], device=self._device).repeat(n_batch, 1), base_quat)
         up_vec = transform_by_quat(torch.tensor([0.0, 1, 0], device=self._device).repeat(n_batch, 1), base_quat)
 
-        return torch.cat(
+        previlaged_observations = torch.cat(
             [
                 height,
                 base_quat,
@@ -205,6 +248,12 @@ class Humanoid(GenesisEnv):
             ],
             dim=-1,
         )
+        observations["previlaged_observations"] = previlaged_observations
+
+        if self._vis_obs:
+            pass
+
+        return observations
 
     def compute_reward(self, states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         # Jie Xu's reward function

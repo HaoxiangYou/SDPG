@@ -32,7 +32,7 @@ class BaseEnv(ABC):
     @abstractmethod
     def step(
         self, actions: torch.Tensor, auto_reset: bool = True
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
+    ) -> Tuple[Dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
         """Step the environment.
         Args:
             actions: The actions to take.

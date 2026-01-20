@@ -43,8 +43,8 @@ def main():
         obs, rew, terminated, truncated, info = env.step(actions, auto_reset=False)
 
     # make sure the observations, rewards, and states are the same for each group of 2 envs
-    assert check_groups_same(obs, 2)
     assert check_groups_same(rew, 2)
+    assert all_dict_values_true(check_groups_same(obs, 2))
     assert all_dict_values_true(check_groups_same(env.get_states(), 2))
 
 

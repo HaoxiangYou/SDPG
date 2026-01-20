@@ -341,6 +341,8 @@ class AFRLRunner:
                 # Step the environment
                 # TODO: currently assume the action is bounded by [-1, 1], and we step using tanh
                 obs, rewards, terminated, truncated, info = self.env.step(torch.tanh(actions), auto_reset=False)
+                # TODO: temporarily solutions, will consider which keys to use for actor and critic separation later and how to concatenate the observations later
+                obs = obs["previlaged_observations"]
 
                 # Normalize the reward
                 raw_rewards = rewards.clone()
@@ -669,6 +671,8 @@ class AFRLRunner:
         # Update the observation
         states = self.env.get_states(env_ids=torch.arange(self.num_envs, device=self.device, dtype=torch.int32))
         obs = self.env.compute_observations(states=states)
+        # TODO: temporarily solutions, will consider which keys to use for actor and critic separation later and how to concatenate the observations later
+        obs = obs["previlaged_observations"]
 
         return obs, dones
 
@@ -679,6 +683,8 @@ class AFRLRunner:
         self.reset_auxiliary_envs(env_ids=torch.arange(self.num_envs, device=self.device, dtype=torch.int32))
         states = self.env.get_states(env_ids=torch.arange(self.num_envs, device=self.device, dtype=torch.int32))
         obs = self.env.compute_observations(states=states)
+        # TODO: temporarily solutions, will consider which keys to use for actor and critic separation later and how to concatenate the observations later
+        obs = obs["previlaged_observations"]
         return obs
 
     def reset_auxiliary_envs(self, env_ids: torch.Tensor):
@@ -712,11 +718,15 @@ class AFRLRunner:
             maximum_trajectory_length = self.env.episode_length
 
         obs, _ = self.env.reset()
+        # TODO: temporarily solutions, will consider which keys to use for actor and critic separation later and how to concatenate the observations later
+        obs = obs["previlaged_observations"]
         for t in range(maximum_trajectory_length):
             if self.obs_rms is not None:
                 obs = self.obs_rms.normalize(obs)
             actions = self.actor(obs, deterministic=deterministic)
             obs, rewards, terminated, truncated, info = self.env.step(torch.tanh(actions), auto_reset=True)
+            # TODO: temporarily solutions, will consider which keys to use for actor and critic separation later and how to concatenate the observations later
+            obs = obs["previlaged_observations"]
             dones = terminated | truncated
             done_env_ids = dones.nonzero(as_tuple=False).squeeze(-1).to(torch.int32)
             episode_length += 1
