@@ -106,6 +106,16 @@ class GenesisEnv(BaseEnv):
     def step(
         self, actions: torch.Tensor, auto_reset: bool = True
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
+        """
+        Execute a timestep. The function will process in the following steps:
+        1. Process the actions specified by each environment.
+        2. Do the actual physics step and update the progress buffer.
+        3. Compute the reward and termination.
+        4. Do post physics step operations, e.g, set the goal condition command
+        5. Reset the done environment if auto_reset is True.
+        6. Compute the observations.
+        7. Return the observations, rewards, terminated, truncated, and info.
+        """
         # Process actions specified by each environment.
         self._set_actions(actions)
 
@@ -113,24 +123,29 @@ class GenesisEnv(BaseEnv):
         self._scene.step()
         self._progress_buf += 1
 
+        # Compute the reward and termination.
         states = self.get_states()
-        self._obs_buf = self.compute_observations(states)
         self._reward_buf = self.compute_reward(states, actions)
         self._terminated_buf = self.compute_termination(states)
-
         # set the terminated_buf and reward involved nan ids to true and zero respectively
         nan_ids = self._find_nan_ids(states)
         self._terminated_buf[nan_ids] = True
         self._reward_buf[nan_ids] = 0.0
-
         self._truncated_buf = self._progress_buf >= self._episode_length
         self._reset_buf = self._terminated_buf | self._truncated_buf
-
         reset_env_ids = self._reset_buf.nonzero(as_tuple=False).squeeze(-1)
+
+        # Do post step operations, e.g, set the goal condition command
+        self._post_physics_step()
+
+        # Reset the done environment if auto_reset is True.
         if auto_reset and len(reset_env_ids) > 0:
             obs_buf_before_reset = self._obs_buf.clone()
             self._extras["obs_before_reset"] = obs_buf_before_reset
             self._obs_buf, _ = self.reset(reset_env_ids)
+
+        # Compute the observations.
+        self._obs_buf = self.compute_observations(states)
 
         return self._obs_buf, self._reward_buf, self._terminated_buf, self._truncated_buf, {}
 
@@ -276,6 +291,13 @@ class GenesisEnv(BaseEnv):
 
         Returns:
             The termination of the environment.
+        """
+
+    @abstractmethod
+    def _post_physics_step(self) -> None:
+        """Do post physics step operations,
+        E.g., set the goal condition command.
+        For AFRL agent, it may need to reset the auxiliary environments to the same command as the nominal environment.
         """
 
     @property

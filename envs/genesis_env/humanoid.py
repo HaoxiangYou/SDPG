@@ -275,6 +275,9 @@ class Humanoid(GenesisEnv):
         self._prev_actions = actions.clone()
         self._robot.control_dofs_force(actions, dofs_idx_local=self._motors_dof_idx)
 
+    def _post_physics_step(self) -> None:
+        pass
+
     def render(self, env_ids: Optional[Sequence[int]] = None) -> None:
         if env_ids is None:
             env_ids = self.nominal_env_ids
