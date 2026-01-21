@@ -46,7 +46,6 @@ class Go2(GenesisEnv):
             num_envs=num_envs,
             episode_length=episode_length,
             early_termination=early_termination,
-            render=render,
             seed=seed,
             randomize_init=randomize_init,
             device=device,
@@ -180,10 +179,6 @@ class Go2(GenesisEnv):
             self._num_envs, self._command_cfg["num_commands"], device=self._device
         )  # [lin_vel_x, lin_vel_y, ang_vel]
 
-    def init_camera(self) -> None:
-        """Initialize the camera."""
-        pass
-
     def build_scene(self) -> None:
         self._scene.build(n_envs=self._num_envs, env_spacing=(0.0, 1.0), n_envs_per_row=self._num_envs)
 
@@ -213,6 +208,9 @@ class Go2(GenesisEnv):
         # Initialize DOF positions for all environments
         init_dof_pos = self._default_dof_pos.unsqueeze(0).repeat(self._num_envs, 1)
         self._robot.set_dofs_position(init_dof_pos, dofs_idx_local=self._motors_dof_idx, zero_velocity=True)
+
+    def _post_physics_step(self) -> None:
+        pass
 
     def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         """Compute observations based on go2_env.py structure."""
