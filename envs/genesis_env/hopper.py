@@ -61,7 +61,7 @@ class Hopper(GenesisEnv):
             self._num_image_stack = 3
             self._observation_space = spaces.Dict(
                 {
-                    "previlaged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(11,)),
+                    "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(11,)),
                     "RGB": spaces.Box(
                         low=0,
                         high=255,
@@ -77,7 +77,7 @@ class Hopper(GenesisEnv):
         else:
             self._observation_space = spaces.Dict(
                 {
-                    "previlaged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(11,)),
+                    "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(11,)),
                 }
             )
 
@@ -168,7 +168,7 @@ class Hopper(GenesisEnv):
     def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         observations = {}
         robot_states = states["robot_states"]
-        previlaged_observations = torch.cat(
+        privileged_observations = torch.cat(
             [
                 robot_states["root_joints_pos"][:, 1:],
                 robot_states["motor_joints_pos"],
@@ -177,11 +177,11 @@ class Hopper(GenesisEnv):
             ],
             dim=-1,
         )
-        observations["previlaged_observations"] = previlaged_observations
+        observations["privileged_observations"] = privileged_observations
 
         if self._vis_obs:
             batch_size, num_stack, height, width, rgb = self._imgs_buf.shape
-            # NOTE: for AFRL agent, RGB observation and previlaged observations may has different shapes
+            # NOTE: for AFRL agent, RGB observation and privileged observations may has different shapes
             # Reshape: (batch, num_stack, H, W, 3) -> (batch, num_stack * 3, H, W)
             observations["RGB"] = self._imgs_buf.permute(0, 1, 4, 2, 3).reshape(
                 batch_size, num_stack * rgb, height, width
