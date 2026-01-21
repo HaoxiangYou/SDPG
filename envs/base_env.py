@@ -32,7 +32,7 @@ class BaseEnv(ABC):
     @abstractmethod
     def step(
         self, actions: torch.Tensor, auto_reset: bool = True
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
+    ) -> Tuple[Dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
         """Step the environment.
         Args:
             actions: The actions to take.
@@ -70,7 +70,7 @@ class BaseEnv(ABC):
         """
 
     @abstractmethod
-    def compute_observations(self, states: Dict[str, Any]) -> torch.Tensor:
+    def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         """Compute the observations of the environment.
 
         Args:

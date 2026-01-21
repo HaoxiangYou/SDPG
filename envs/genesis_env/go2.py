@@ -214,7 +214,7 @@ class Go2(GenesisEnv):
         init_dof_pos = self._default_dof_pos.unsqueeze(0).repeat(self._num_envs, 1)
         self._robot.set_dofs_position(init_dof_pos, dofs_idx_local=self._motors_dof_idx, zero_velocity=True)
 
-    def compute_observations(self, states: Dict[str, Any]) -> torch.Tensor:
+    def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         """Compute observations based on go2_env.py structure."""
         robot_states = states["robot_states"]
 
@@ -237,8 +237,8 @@ class Go2(GenesisEnv):
         # Actions (last applied actions)
         prev_actions = robot_states["prev_actions"]
 
-        # Compute observations (matching go2_env.py structure)
-        observations = torch.cat(
+        # Compute previlaged observations (matching genesis go2_env.py structure)
+        previlaged_observations = torch.cat(
             (
                 base_ang_vel * self._obs_scales["ang_vel"],  # 3
                 projected_gravity,  # 3
@@ -249,6 +249,10 @@ class Go2(GenesisEnv):
             ),
             dim=-1,
         )
+
+        observations = {
+            "previlaged_observations": previlaged_observations,
+        }
         return observations
 
     def compute_reward(self, states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:

@@ -10,6 +10,8 @@ from utils.common_utils import make_envs
 class RlGamesGpuEnv(vecenv.IVecEnv):
     """Thin wrapper to create instance of the environment to fit RL-Games runner."""
 
+    # TODO: currently only support for full state observation
+
     def __init__(self, config_name: str, num_actors: int, **kwargs):
         """Initialize the environment.
 
@@ -19,21 +21,19 @@ class RlGamesGpuEnv(vecenv.IVecEnv):
         """
         self.env: BaseEnv = env_configurations.configurations[config_name]["env_creator"](**kwargs)
 
-        self.full_state = {}
-
-        self.full_state["obs"], _ = self.env.reset()
+        self.env.reset()
 
     def step(self, actions):
-        self.full_state["obs"], reward, terminated, truncated, info = self.env.step(actions, auto_reset=True)
+        observations, reward, terminated, truncated, info = self.env.step(actions, auto_reset=True)
 
         is_done = terminated | truncated
 
-        return self.full_state["obs"], reward, is_done, info
+        return {"obs": observations["previlaged_observations"]}, reward, is_done, info
 
     def reset(self):
-        self.full_state["obs"], _ = self.env.reset()
+        observations, _ = self.env.reset()
 
-        return self.full_state["obs"]
+        return {"obs": observations["previlaged_observations"]}
 
     def get_number_of_agents(self) -> int:
         """Returns number of actors in the environment."""
@@ -42,7 +42,7 @@ class RlGamesGpuEnv(vecenv.IVecEnv):
     def get_env_info(self):
         info = {}
         info["action_space"] = self.env.action_space
-        info["observation_space"] = self.env.observation_space
+        info["observation_space"] = self.env.observation_space["previlaged_observations"]
 
         print(info["action_space"], info["observation_space"])
 
