@@ -70,7 +70,7 @@ class BaseEnv(ABC):
         """
 
     @abstractmethod
-    def compute_observations(self, states: Dict[str, Any]) -> torch.Tensor:
+    def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         """Compute the observations of the environment.
 
         Args:
