@@ -235,8 +235,8 @@ class Go2(GenesisEnv):
         # Actions (last applied actions)
         prev_actions = robot_states["prev_actions"]
 
-        # Compute previlaged observations (matching genesis go2_env.py structure)
-        previlaged_observations = torch.cat(
+        # Compute privileged observations (matching genesis go2_env.py structure)
+        privileged_observations = torch.cat(
             (
                 base_ang_vel * self._obs_scales["ang_vel"],  # 3
                 projected_gravity,  # 3
@@ -249,7 +249,7 @@ class Go2(GenesisEnv):
         )
 
         observations = {
-            "previlaged_observations": previlaged_observations,
+            "privileged_observations": privileged_observations,
         }
         return observations
 
