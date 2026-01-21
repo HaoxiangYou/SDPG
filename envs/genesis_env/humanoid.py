@@ -207,6 +207,7 @@ class Humanoid(GenesisEnv):
                 self._sensors_args["camera"]["res"][1],
                 3,
                 device=self._device,
+                dtype=torch.uint8,
             )
 
     def build_scene(self) -> None:
@@ -251,7 +252,12 @@ class Humanoid(GenesisEnv):
         observations["previlaged_observations"] = previlaged_observations
 
         if self._vis_obs:
-            pass
+            batch_size, num_stack, height, width, rgb = self._imgs_buf.shape
+            # NOTE: for AFRL agent, RGB observation and previlaged observations may has different shapes
+            # Reshape: (batch, num_stack, H, W, 3) -> (batch, num_stack * 3, H, W)
+            observations["RGB"] = self._imgs_buf.permute(0, 1, 4, 2, 3).reshape(
+                batch_size, num_stack * rgb, height, width
+            )
 
         return observations
 
@@ -318,6 +324,21 @@ class Humanoid(GenesisEnv):
 
         self._prev_actions[env_ids] = torch.zeros(len(env_ids), self._num_actions, device=self._device)
 
+        if self._vis_obs:
+            # Find which nominal environments are being reset
+            # self.nominal_env_ids contains the global env_ids of nominal environments
+            # We need to find the indices within nominal_env_ids that match env_ids
+            mask = torch.isin(self.nominal_env_ids, env_ids)
+            nominal_idx_to_reset = torch.nonzero(mask, as_tuple=True)[0]
+
+            if len(nominal_idx_to_reset) > 0:
+                # Render fresh images for the reset nominal environments
+                reset_nominal_env_ids = self.nominal_env_ids[nominal_idx_to_reset]
+                new_img = self.render(env_ids=reset_nominal_env_ids)
+
+                # Initialize the image buffer for these environments
+                self._imgs_buf[nominal_idx_to_reset] = new_img.unsqueeze(1)
+
     def _set_actions(self, actions: torch.Tensor) -> None:
         actions = actions.view(self._num_envs, self._num_actions)
         actions = actions.clamp(min=-1.0, max=1.0) * self._motor_strength
@@ -325,7 +346,13 @@ class Humanoid(GenesisEnv):
         self._robot.control_dofs_force(actions, dofs_idx_local=self._motors_dof_idx)
 
     def _post_physics_step(self) -> None:
-        pass
+        """Update image buffer by rolling frames and appending new image."""
+        if self._vis_obs:
+            new_img = self.render(env_ids=self.nominal_env_ids)
+            # Roll the buffer to shift old frames: [t-2, t-1, t-0] -> [t-1, t-0, None]
+            # This moves older frames "to the left" and makes room for the new frame
+            self._imgs_buf = torch.roll(self._imgs_buf, shifts=-1, dims=1)
+            self._imgs_buf[:, -1] = new_img
 
     def render(self, env_ids: Optional[Sequence[int]] = None) -> None:
         if env_ids is None:
@@ -357,6 +384,9 @@ class Humanoid(GenesisEnv):
             "prev_actions": self._prev_actions[env_ids].clone(),
         }
 
+        if self._vis_obs:
+            robot_states["RGB_history"] = self._imgs_buf[env_ids].clone()
+
         states = {
             "robot_states": robot_states,
             "progress_buf": self._progress_buf[env_ids].clone(),
@@ -387,5 +417,8 @@ class Humanoid(GenesisEnv):
         )
 
         self._prev_actions[env_ids] = robot_states["prev_actions"].clone()
+
+        if self._vis_obs:
+            self._imgs_buf[env_ids] = robot_states["RGB_history"].clone()
 
         self._progress_buf[env_ids] = states["progress_buf"].clone()
