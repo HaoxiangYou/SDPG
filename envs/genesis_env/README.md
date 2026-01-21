@@ -1,5 +1,5 @@
 ## Genesis version
-commit id:`7db43e4caef2b185bf691d29fc545d6480cd224d`
+commit id:`fdb04477f3b00b693e84f7720050115cb1c8c0c8`
 
 ## Genesis Modification
 Genesis will raise error when encounter nan during simulation.
