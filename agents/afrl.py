@@ -13,7 +13,15 @@ import models
 import wandb
 from utils.common_utils import TimeReport, make_envs, print_info
 from utils.statistic_utils import AverageMeter, RunningMeanStd
-from utils.tensor_utils import assign_row_intervals, compute_grad_norm
+from utils.tensor_utils import (
+    assign_row_intervals,
+    clone_dict_tensors,
+    compute_grad_norm,
+    flatten_dict,
+    moveaxis_dict,
+    select_entries,
+    stack_dict_list,
+)
 
 
 class AFRLRunner:
@@ -49,16 +57,7 @@ class AFRLRunner:
         self.make_envs()
 
         # make the models
-        # TODO: currently assume both actor and critic are deterministic MLPs
-        self.actor_config = self.agent_config.network.actor
-        self.critic_config = self.agent_config.network.critic
-        actor_name = self.agent_config.network.actor.name
-        critic_name = self.agent_config.network.critic.name
-        actor_fn = getattr(models.actor, actor_name)
-        self.actor = actor_fn(self.num_observations, self.num_actions, self.actor_config, device=self.device)
-        critic_fn = getattr(models.critic, critic_name)
-        self.critic = critic_fn(self.num_observations, self.critic_config, device=self.device)
-        self.target_critic = copy.deepcopy(self.critic)
+        self.make_models()
 
         # initialize the optimizer
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.agent_config.actor_lr)
@@ -72,11 +71,8 @@ class AFRLRunner:
             self.critic_optimizer, self.agent_config.get("critic_lr_schedule", {})
         )
 
-        # Running mean and std
-        if self.agent_config.obs_rms:
-            self.obs_rms = RunningMeanStd(shape=(self.num_observations,), device=self.device)
-        else:
-            self.obs_rms = None
+        # Normalization
+        # NOTE: observation normalization is currently initialized during the make_models function
         if self.agent_config.ret_rms:
             self.ret_rms = RunningMeanStd(shape=(1,), device=self.device)
         else:
@@ -85,6 +81,7 @@ class AFRLRunner:
             self.normalize_delta_J = True
         else:
             self.normalize_delta_J = False
+
         # Top k perturbations for ascent direction computation
         top_k_perturbations = self.agent_config.get("top_k_perturbations", None)
         if top_k_perturbations is None:
@@ -306,6 +303,9 @@ class AFRLRunner:
         Rollout the trajectories for training and play the training dataset.
         """
         with torch.no_grad():
+            # Initialize buffer for the observations
+            obs_buf = []
+
             if self.obs_rms is not None:
                 obs_rms = copy.deepcopy(self.obs_rms)
 
@@ -317,18 +317,22 @@ class AFRLRunner:
             if self.obs_rms is not None:
                 # update obs rms
                 with torch.no_grad():
-                    self.obs_rms.update(obs)
+                    self.obs_rms["privileged_observations"].update(obs["privileged_observations"])
                 # normalize the current obs
-                obs = obs_rms.normalize(obs)
+                obs["privileged_observations"] = obs_rms["privileged_observations"].normalize(
+                    obs["privileged_observations"]
+                )
 
             # return of the short rollout (for logging purposes)
             rollout_reward = 0.0
 
             for i in range(self.horizon_length):
-                self.obs_buf[:, i] = obs.clone()
+                obs_buf.append(clone_dict_tensors(obs))
 
                 # Compute the nominal actions
-                nominal_actions = self.actor(obs[self.nominal_env_ids])
+                nominal_actions = self.actor(
+                    {"privileged_observations": obs["privileged_observations"][self.nominal_env_ids]}
+                )
                 nominal_actions = nominal_actions.repeat_interleave(self.num_action_perturbations + 1, dim=0)
 
                 # Sample the action perturbations
@@ -341,8 +345,6 @@ class AFRLRunner:
                 # Step the environment
                 # TODO: currently assume the action is bounded by [-1, 1], and we step using tanh
                 obs, rewards, terminated, truncated, info = self.env.step(torch.tanh(actions), auto_reset=False)
-                # TODO: temporarily solutions, will consider which keys to use for actor and critic separation later and how to concatenate the observations later
-                obs = obs["privileged_observations"]
 
                 # Normalize the reward
                 raw_rewards = rewards.clone()
@@ -358,7 +360,7 @@ class AFRLRunner:
                 next_values = torch.zeros(self.num_envs, device=self.device)
                 non_terminated_env_ids = (~terminated).nonzero(as_tuple=False).squeeze(-1)
                 next_values[non_terminated_env_ids] = self.target_critic(
-                    obs_rms.normalize(obs[non_terminated_env_ids])
+                    self.process_observations(select_entries(obs, non_terminated_env_ids), obs_rms)
                 ).squeeze(-1)
                 if (next_values > 1e6).sum() > 0 or (next_values < -1e6).sum() > 0:
                     print("next value error")
@@ -373,10 +375,9 @@ class AFRLRunner:
                 else:
                     self.dones[:, i] = True
 
-                # Normalize the observation
-                if self.obs_rms is not None:
-                    self.obs_rms.update(obs)
-                    obs = obs_rms.normalize(obs)
+                # process the observations with the running statistics
+                self.update_running_statistics(obs)
+                obs = self.process_observations(obs, obs_rms)
 
                 # Record the performance metrics
                 self.episode_length += 1
@@ -390,6 +391,11 @@ class AFRLRunner:
                     self.episode_reward[nominal_done_env_ids] = 0.0
 
             self.step_count += self.num_envs * self.horizon_length
+
+            # Store observation buffer for training
+            # tensors in the obs_buf are in the shape of (num_envs, horizon_length, ...)
+            self.obs_buf = moveaxis_dict(stack_dict_list(obs_buf, dim=0), source=0, destination=1)
+
             return rollout_reward / self.num_base_envs
 
     def compute_delta_J(self):
@@ -516,10 +522,13 @@ class AFRLRunner:
         action_ascent_direction = self.compute_action_ascent_direction()
 
         target_actions = self.actions[self.nominal_env_ids] + action_ascent_direction
-        pred_actions = self.actor(self.obs_buf[self.nominal_env_ids])
+        # TODO: due to mant dictionary operations, and slicing; the pred_actions is slightly different from self.actions (approx 1e-6)
+        pred_actions = self.actor(select_entries(self.obs_buf, self.nominal_env_ids))
 
         # Update the actor
         self.actor_optimizer.zero_grad()
+        # TODO: currently we use all trajectory as single batch, and update the actor once.
+        # Would be possible to use mini-batch training and run multiple updates, like PPO?
         actor_loss = F.mse_loss(pred_actions, target_actions)
         actor_loss.backward()
         self.actor_grad_norm = compute_grad_norm(self.actor.parameters())
@@ -529,19 +538,23 @@ class AFRLRunner:
         return actor_loss.item()
 
     def train_critic(self):
+        # NOTE: currently we use both nominal and auxiliary rollout for training the critic
         self.compute_target_values()
-        obs = self.obs_buf.view(-1, self.num_observations)
+        # Flatten first two dimensions (num_envs, horizon_length) for all observation keys
+        obs = flatten_dict(self.obs_buf, start_dim=0, end_dim=1)
         target_values = self.target_values.view(-1, 1)
-        dataset_size = obs.shape[0]
+        # Get dataset size from first observation key
+        dataset_size = list(obs.values())[0].shape[0]
 
         for i in range(self.critic_iterations):
             perm = torch.randperm(dataset_size, device=self.device)
-            obs_shuffled = obs[perm]
+            obs_shuffled = {key: value[perm] for key, value in obs.items()}
             target_values_shuffled = target_values[perm]
 
             for start_idx in range(0, dataset_size, self.mini_batch_size):
                 end_idx = min(start_idx + self.mini_batch_size, dataset_size)
-                obs_batch = obs_shuffled[start_idx:end_idx]
+                # Select batch for each observation key
+                obs_batch = {key: value[start_idx:end_idx] for key, value in obs_shuffled.items()}
                 target_values_batch = target_values_shuffled[start_idx:end_idx]
 
                 self.critic_optimizer.zero_grad()
@@ -671,8 +684,6 @@ class AFRLRunner:
         # Update the observation
         states = self.env.get_states(env_ids=torch.arange(self.num_envs, device=self.device, dtype=torch.int32))
         obs = self.env.compute_observations(states=states)
-        # TODO: temporarily solutions, will consider which keys to use for actor and critic separation later and how to concatenate the observations later
-        obs = obs["privileged_observations"]
 
         return obs, dones
 
@@ -683,8 +694,6 @@ class AFRLRunner:
         self.reset_auxiliary_envs(env_ids=torch.arange(self.num_envs, device=self.device, dtype=torch.int32))
         states = self.env.get_states(env_ids=torch.arange(self.num_envs, device=self.device, dtype=torch.int32))
         obs = self.env.compute_observations(states=states)
-        # TODO: temporarily solutions, will consider which keys to use for actor and critic separation later and how to concatenate the observations later
-        obs = obs["privileged_observations"]
         return obs
 
     def reset_auxiliary_envs(self, env_ids: torch.Tensor):
@@ -706,7 +715,7 @@ class AFRLRunner:
         self.env.set_states(states=nominal_states, env_ids=auxiliary_env_ids)
 
     @torch.no_grad()
-    def evaluate_policy(self, deterministic=False, maximum_trajectory_length=None):
+    def evaluate_policy(self, maximum_trajectory_length=None):
         """
         TODO currently this function is only for play mode to evaluate the trained policy.
         """
@@ -718,15 +727,11 @@ class AFRLRunner:
             maximum_trajectory_length = self.env.episode_length
 
         obs, _ = self.env.reset()
-        # TODO: temporarily solutions, will consider which keys to use for actor and critic separation later and how to concatenate the observations later
-        obs = obs["privileged_observations"]
         for t in range(maximum_trajectory_length):
-            if self.obs_rms is not None:
-                obs = self.obs_rms.normalize(obs)
-            actions = self.actor(obs, deterministic=deterministic)
+            # process the observations with the running statistics
+            obs = self.process_observations(obs, self.obs_rms)
+            actions = self.actor(obs)
             obs, rewards, terminated, truncated, info = self.env.step(torch.tanh(actions), auto_reset=True)
-            # TODO: temporarily solutions, will consider which keys to use for actor and critic separation later and how to concatenate the observations later
-            obs = obs["privileged_observations"]
             dones = terminated | truncated
             done_env_ids = dones.nonzero(as_tuple=False).squeeze(-1).to(torch.int32)
             episode_length += 1
@@ -845,6 +850,87 @@ class AFRLRunner:
             [self.actor, self.critic, self.target_critic, self.obs_rms, self.ret_rms],
             os.path.join(save_dir, "{}.pt".format(filename)),
         )
+
+    @torch.no_grad()
+    def process_observations(self, obs, obs_rms=None):
+        """
+        This function processes the observations with the running statistics.
+        """
+        if obs_rms is None:
+            obs_rms = self.obs_rms
+
+        for key in obs_rms.keys():
+            obs[key] = obs_rms[key].normalize(obs[key])
+        return obs
+
+    @torch.no_grad()
+    def update_running_statistics(self, obs):
+        """
+        This function updates the running statistics.
+        """
+        for key in self.obs_rms.keys():
+            self.obs_rms[key].update(obs[key])
+
+    def make_models(self):
+        """
+        This function makes the models for the runner.
+        """
+
+        self.model_config = self.agent_config.model
+        self.actor_config = self.model_config.actor
+        self.critic_config = self.model_config.critic
+
+        # load the input keys and dimensions
+        self.actor_input_keys = [input.name for input in self.actor_config.inputs]
+        self.critic_input_keys = [input.name for input in self.critic_config.inputs]
+        self.all_input_keys = list(dict.fromkeys(self.actor_input_keys + self.critic_input_keys))
+        self.inputs_dim = {}
+        for key in self.all_input_keys:
+            self.inputs_dim[key] = self.env.observation_space[key].shape
+
+        # Helper to find input config by name
+        def find_input(inputs_list, name):
+            return next(input for input in inputs_list if input.name == name)
+
+        # load the running statistics
+        self.obs_rms = {}
+        for key in self.all_input_keys:
+            if key in self.actor_input_keys:
+                actor_input = find_input(self.actor_config.inputs, key)
+                # sensitive checking, the running statistics for the same key should be the same for actor and critic
+                if key in self.critic_input_keys:
+                    critic_input = find_input(self.critic_config.inputs, key)
+                    if actor_input.apply_rms != critic_input.apply_rms:
+                        raise ValueError(
+                            f"The running statistics for the key {key} are not consistent between actor and critic"
+                        )
+
+                if actor_input.apply_rms:
+                    input_dim = self.inputs_dim[key]
+                    self.obs_rms[key] = RunningMeanStd(shape=input_dim, device=self.device)
+            else:
+                critic_input = find_input(self.critic_config.inputs, key)
+                if critic_input.apply_rms:
+                    input_dim = self.inputs_dim[key]
+                    self.obs_rms[key] = RunningMeanStd(shape=input_dim, device=self.device)
+
+        # Build actor and critic using factory functions
+        self.actor = models.actor.build_actor(
+            actor_config=self.actor_config,
+            inputs_dim=self.inputs_dim,
+            num_actions=self.num_actions,
+            device=self.device,
+        )
+
+        self.critic = models.critic.build_critic(
+            critic_config=self.critic_config,
+            inputs_dim=self.inputs_dim,
+            device=self.device,
+        )
+
+        # TODO: currently target critic and critic are separate instead of in the same class
+        # Also do I really need it?
+        self.target_critic = copy.deepcopy(self.critic)
 
 
 def make_runner(config: DictConfig):
