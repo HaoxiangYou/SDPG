@@ -330,9 +330,7 @@ class AFRLRunner:
                 obs_buf.append(clone_dict_tensors(obs))
 
                 # Compute the nominal actions
-                nominal_actions = self.actor(
-                    {"privileged_observations": obs["privileged_observations"][self.nominal_env_ids]}
-                )
+                nominal_actions = self.actor(select_entries(obs, self.nominal_env_ids))
                 nominal_actions = nominal_actions.repeat_interleave(self.num_action_perturbations + 1, dim=0)
 
                 # Sample the action perturbations
