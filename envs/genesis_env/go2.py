@@ -213,6 +213,13 @@ class Go2(GenesisEnv):
         init_dof_pos = self._default_dof_pos.unsqueeze(0).repeat(self._num_envs, 1)
         self._robot.set_dofs_position(init_dof_pos, dofs_idx_local=self._motors_dof_idx, zero_velocity=True)
 
+        # Get joint limits
+        self._joint_limits = np.concatenate(
+            [self._robot.get_joint(name).dofs_limit for name in self._motor_joint_names]
+        )
+        self._joint_limits_low = torch.tensor(self._joint_limits[:, 0], dtype=gs.tc_float, device=self._device)
+        self._joint_limits_high = torch.tensor(self._joint_limits[:, 1], dtype=gs.tc_float, device=self._device)
+
     def _post_physics_step(self) -> None:
         pass
 
@@ -372,6 +379,8 @@ class Go2(GenesisEnv):
 
         # Convert actions to target DOF positions
         target_dof_pos = actions * self._action_scale + self._default_dof_pos
+
+        target_dof_pos = torch.clamp(target_dof_pos, self._joint_limits_low, self._joint_limits_high)
 
         # Control DOFs using position control (PD control is set in build_scene)
         self._robot.control_dofs_position(target_dof_pos[:, self._actions_dof_idx], slice(6, 18))
