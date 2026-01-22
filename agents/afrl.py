@@ -294,6 +294,8 @@ class AFRLRunner:
             wandb.log(wandb_metrics, step=iter)
 
     def make_envs(self):
+        # rewrite the nominal env ids in env config to match the num_base_envs
+        self.config.task.config.nominal_env_ids = list(range(self.num_base_envs))
         self.env = make_envs(self.config)
         self.num_observations = self.env.num_observations
         self.num_actions = self.env.num_actions
