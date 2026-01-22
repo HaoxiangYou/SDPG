@@ -306,22 +306,15 @@ class AFRLRunner:
             # Initialize buffer for the observations
             obs_buf = []
 
-            if self.obs_rms is not None:
-                obs_rms = copy.deepcopy(self.obs_rms)
+            obs_rms = copy.deepcopy(self.obs_rms)
 
             if self.ret_rms is not None:
                 ret_var = self.ret_rms.var.clone()
 
             # initialize trajectory by resetting the auxiliary environments to the same state as the nominal environment
             obs = self.initialize_trajectory()
-            if self.obs_rms is not None:
-                # update obs rms
-                with torch.no_grad():
-                    self.obs_rms["privileged_observations"].update(obs["privileged_observations"])
-                # normalize the current obs
-                obs["privileged_observations"] = obs_rms["privileged_observations"].normalize(
-                    obs["privileged_observations"]
-                )
+            self.update_running_statistics(obs)
+            obs = self.process_observations(obs, obs_rms)
 
             # return of the short rollout (for logging purposes)
             rollout_reward = 0.0
