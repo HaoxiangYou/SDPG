@@ -28,12 +28,12 @@ class RlGamesGpuEnv(vecenv.IVecEnv):
 
         is_done = terminated | truncated
 
-        return {"obs": observations["previlaged_observations"]}, reward, is_done, info
+        return {"obs": observations["privileged_observations"]}, reward, is_done, info
 
     def reset(self):
         observations, _ = self.env.reset()
 
-        return {"obs": observations["previlaged_observations"]}
+        return {"obs": observations["privileged_observations"]}
 
     def get_number_of_agents(self) -> int:
         """Returns number of actors in the environment."""
@@ -42,7 +42,7 @@ class RlGamesGpuEnv(vecenv.IVecEnv):
     def get_env_info(self):
         info = {}
         info["action_space"] = self.env.action_space
-        info["observation_space"] = self.env.observation_space["previlaged_observations"]
+        info["observation_space"] = self.env.observation_space["privileged_observations"]
 
         print(info["action_space"], info["observation_space"])
 

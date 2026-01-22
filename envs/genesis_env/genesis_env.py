@@ -110,7 +110,7 @@ class GenesisEnv(BaseEnv):
 
         states = self.get_states()
         observations = self.compute_observations(states)
-        self._obs_buf = observations["previlaged_observations"]
+        self._obs_buf = observations["privileged_observations"]
 
         return observations, {}
 
@@ -155,11 +155,11 @@ class GenesisEnv(BaseEnv):
             obs_buf_before_reset = self._obs_buf.clone()
             self._extras["obs_before_reset"] = obs_buf_before_reset
             observations, _ = self.reset(reset_env_ids)
-            self._obs_buf = observations["previlaged_observations"]
+            self._obs_buf = observations["privileged_observations"]
 
         # Compute the observations.
         observations = self.compute_observations(states)
-        self._obs_buf = observations["previlaged_observations"]
+        self._obs_buf = observations["privileged_observations"]
 
         return observations, self._reward_buf, self._terminated_buf, self._truncated_buf, {}
 
