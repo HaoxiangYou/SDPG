@@ -21,7 +21,11 @@ class Go2(GenesisEnv):
     _num_observations = 45
     _num_actions = 12
     _action_space = spaces.Box(low=-1.0, high=1.0, shape=(12,))
-    _observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(45,))
+    _observation_space = spaces.Dict(
+        {
+            "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(45,)),
+        }
+    )
 
     def __init__(
         self,
