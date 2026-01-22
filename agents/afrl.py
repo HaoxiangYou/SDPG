@@ -5,12 +5,12 @@ import time
 
 import torch
 import torch.nn.functional as F
+import wandb
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from tensorboardX import SummaryWriter
 
 import models
-import wandb
 from utils.common_utils import TimeReport, make_envs, print_info
 from utils.statistic_utils import AverageMeter, RunningMeanStd
 from utils.tensor_utils import assign_row_intervals, compute_grad_norm
@@ -719,14 +719,14 @@ class AFRLRunner:
 
         obs, _ = self.env.reset()
         # TODO: temporarily solutions, will consider which keys to use for actor and critic separation later and how to concatenate the observations later
-        obs = obs["previlaged_observations"]
+        obs = obs["privileged_observations"]
         for t in range(maximum_trajectory_length):
             if self.obs_rms is not None:
                 obs = self.obs_rms.normalize(obs)
             actions = self.actor(obs, deterministic=deterministic)
             obs, rewards, terminated, truncated, info = self.env.step(torch.tanh(actions), auto_reset=True)
             # TODO: temporarily solutions, will consider which keys to use for actor and critic separation later and how to concatenate the observations later
-            obs = obs["previlaged_observations"]
+            obs = obs["privileged_observations"]
             dones = terminated | truncated
             done_env_ids = dones.nonzero(as_tuple=False).squeeze(-1).to(torch.int32)
             episode_length += 1
