@@ -131,7 +131,11 @@ class TeeOutput:
 
 
 class TeeStdoutStderr:
-    """Context manager that redirects both stdout and stderr to log file."""
+    """Context manager that redirects both stdout and stderr to log file.
+
+    Also configures Python's warnings and logging modules to ensure all output
+    (including warnings and errors) is captured in the log file.
+    """
 
     def __init__(self, log_file_path: Path):
         self.log_file_path = log_file_path
@@ -139,19 +143,105 @@ class TeeStdoutStderr:
         self.tee_stderr = None
         self.original_stdout = None
         self.original_stderr = None
+        self.original_excepthook = None
+        self.original_showwarning = None
+        self.original_logging_handler = None
 
     def __enter__(self):
+        import logging
+        import warnings
+
         self.original_stdout = sys.stdout
         self.original_stderr = sys.stderr
         self.tee_stdout = TeeOutput(self.log_file_path, sys.stdout)
         self.tee_stderr = TeeOutput(self.log_file_path, sys.stderr)
         sys.stdout = self.tee_stdout
         sys.stderr = self.tee_stderr
+
+        # Configure sys.excepthook to capture full tracebacks
+        self.original_excepthook = sys.excepthook
+
+        def excepthook_redirected(exc_type, exc_value, exc_traceback):
+            """Redirect exceptions to stderr (which is already redirected to log file)."""
+            # Import traceback here to avoid circular imports
+            import traceback
+
+            # Print full traceback to stderr (which is redirected to log file)
+            # This ensures the traceback is captured even if the program exits
+            traceback.print_exception(exc_type, exc_value, exc_traceback, file=sys.stderr, limit=None, chain=True)
+            # Flush to ensure it's written immediately to the log file
+            sys.stderr.flush()
+            # Also call the original excepthook for consistency (though traceback is already printed)
+            if self.original_excepthook is not None:
+                self.original_excepthook(exc_type, exc_value, exc_traceback)
+
+        sys.excepthook = excepthook_redirected
+
+        # Configure warnings to use stderr (which is now redirected)
+        self.original_showwarning = warnings.showwarning
+
+        def showwarning_redirected(message, category, filename, lineno, file=None, line=None):
+            """Redirect warnings to stderr (which is already redirected to log file)."""
+            if file is None:
+                file = sys.stderr
+            self.original_showwarning(message, category, filename, lineno, file=file, line=line)
+
+        warnings.showwarning = showwarning_redirected
+
+        # Configure logging to also write to stderr (which is redirected)
+        # Get the root logger and ensure it has a handler that writes to stderr
+        root_logger = logging.getLogger()
+        if not root_logger.handlers:
+            handler = logging.StreamHandler(sys.stderr)
+            handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+            root_logger.addHandler(handler)
+            root_logger.setLevel(logging.WARNING)  # Capture WARNING and above by default
+            self.original_logging_handler = handler
+
+        # Configure Genesis logger specifically to ensure gs.warn() output is captured
+        # Genesis logger might have propagate=False, so we need to add a handler directly
+        genesis_logger = logging.getLogger("genesis")
+        # Check if Genesis logger already has a StreamHandler to stderr
+        has_genesis_stderr = any(
+            isinstance(h, logging.StreamHandler) and h.stream == sys.stderr for h in genesis_logger.handlers
+        )
+        if not has_genesis_stderr:
+            genesis_handler = logging.StreamHandler(sys.stderr)
+            genesis_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+            genesis_logger.addHandler(genesis_handler)
+            genesis_logger.setLevel(logging.WARNING)
+        # Ensure propagation is enabled so it also goes to root logger
+        genesis_logger.propagate = True
+
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        import logging
+        import traceback
+        import warnings
+
+        # If an exception occurred, print traceback before restoring streams
+        if exc_type is not None:
+            # Print traceback to stderr (which is redirected to log file)
+            traceback.print_exception(exc_type, exc_val, exc_tb, file=sys.stderr, limit=None, chain=True)
+            sys.stderr.flush()
+
+        # Restore sys.excepthook
+        if hasattr(self, "original_excepthook") and self.original_excepthook is not None:
+            sys.excepthook = self.original_excepthook
+
         sys.stdout = self.original_stdout
         sys.stderr = self.original_stderr
+
+        # Restore original warnings.showwarning
+        if self.original_showwarning is not None:
+            warnings.showwarning = self.original_showwarning
+
+        # Restore logging if we modified it
+        if self.original_logging_handler is not None:
+            root_logger = logging.getLogger()
+            root_logger.removeHandler(self.original_logging_handler)
+
         # Don't close the log files - keep them open so they can receive writes
         # during program exit (e.g., from atexit handlers)
         # The files will be automatically closed when Python exits
