@@ -23,8 +23,8 @@ env_kwargs = {
     "show_viewer": False,
     "randomize_init": False,  # Set to False when loading states
     "vis_obs": True,
+    "nominal_env_ids": None,
     "sensors_args": {
-        "envs_idx": None,
         "camera": {
             "res": (84, 84),
             "pos": (0.0, -2.0, -0.5),

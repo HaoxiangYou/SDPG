@@ -112,9 +112,8 @@ class AFRLRunner:
         self.use_wandb = self._init_wandb(config)
 
         # Buffer
-        self.obs_buf = torch.zeros(
-            (self.num_envs, self.horizon_length, self.num_observations), dtype=torch.float32, device=self.device
-        )
+        self.actor_obs_buf = {}
+        self.critic_obs_buf = {}
         self.actions = torch.zeros(
             (self.num_envs, self.horizon_length, self.num_actions), dtype=torch.float32, device=self.device
         )
@@ -294,6 +293,9 @@ class AFRLRunner:
             wandb.log(wandb_metrics, step=iter)
 
     def make_envs(self):
+        if self.config.train:
+            # rewrite the nominal env ids in env config to match the num_base_envs if train
+            self.config.task.config.nominal_env_ids = list(range(0, self.num_envs, self.num_action_perturbations + 1))
         self.env = make_envs(self.config)
         self.num_observations = self.env.num_observations
         self.num_actions = self.env.num_actions
@@ -304,35 +306,32 @@ class AFRLRunner:
         """
         with torch.no_grad():
             # Initialize buffer for the observations
-            obs_buf = []
+            critic_obs_buf = []
+            actor_obs_buf = []
 
-            if self.obs_rms is not None:
-                obs_rms = copy.deepcopy(self.obs_rms)
+            obs_rms = copy.deepcopy(self.obs_rms)
 
             if self.ret_rms is not None:
                 ret_var = self.ret_rms.var.clone()
 
             # initialize trajectory by resetting the auxiliary environments to the same state as the nominal environment
             obs = self.initialize_trajectory()
-            if self.obs_rms is not None:
-                # update obs rms
-                with torch.no_grad():
-                    self.obs_rms["privileged_observations"].update(obs["privileged_observations"])
-                # normalize the current obs
-                obs["privileged_observations"] = obs_rms["privileged_observations"].normalize(
-                    obs["privileged_observations"]
-                )
+            # TODO: Shall we update the running statistics here? As it may be update through the rollout process?
+            self.update_running_statistics(obs)
+            # TODO: only normalize with out
+            obs = self.process_observations(obs, obs_rms)
 
             # return of the short rollout (for logging purposes)
             rollout_reward = 0.0
 
             for i in range(self.horizon_length):
-                obs_buf.append(clone_dict_tensors(obs))
+                critic_obs = self.get_critic_obs(obs)
+                actor_obs = self.get_actor_obs(obs)
+                critic_obs_buf.append(clone_dict_tensors(critic_obs))
+                actor_obs_buf.append(clone_dict_tensors(actor_obs))
 
                 # Compute the nominal actions
-                nominal_actions = self.actor(
-                    {"privileged_observations": obs["privileged_observations"][self.nominal_env_ids]}
-                )
+                nominal_actions = self.actor(actor_obs)
                 nominal_actions = nominal_actions.repeat_interleave(self.num_action_perturbations + 1, dim=0)
 
                 # Sample the action perturbations
@@ -359,8 +358,9 @@ class AFRLRunner:
                 # Compute the next value
                 next_values = torch.zeros(self.num_envs, device=self.device)
                 non_terminated_env_ids = (~terminated).nonzero(as_tuple=False).squeeze(-1)
+                # TODO: currently assume the batch size of critic observation is num_envs
                 next_values[non_terminated_env_ids] = self.target_critic(
-                    self.process_observations(select_entries(obs, non_terminated_env_ids), obs_rms)
+                    self.process_observations(select_entries(self.get_critic_obs(obs), non_terminated_env_ids), obs_rms)
                 ).squeeze(-1)
                 if (next_values > 1e6).sum() > 0 or (next_values < -1e6).sum() > 0:
                     print("next value error")
@@ -394,7 +394,8 @@ class AFRLRunner:
 
             # Store observation buffer for training
             # tensors in the obs_buf are in the shape of (num_envs, horizon_length, ...)
-            self.obs_buf = moveaxis_dict(stack_dict_list(obs_buf, dim=0), source=0, destination=1)
+            self.critic_obs_buf = moveaxis_dict(stack_dict_list(critic_obs_buf, dim=0), source=0, destination=1)
+            self.actor_obs_buf = moveaxis_dict(stack_dict_list(actor_obs_buf, dim=0), source=0, destination=1)
 
             return rollout_reward / self.num_base_envs
 
@@ -521,9 +522,12 @@ class AFRLRunner:
         # Compute the action ascent direction for each nominal environment
         action_ascent_direction = self.compute_action_ascent_direction()
 
+        obs = flatten_dict(self.actor_obs_buf, start_dim=0, end_dim=1)
+
         target_actions = self.actions[self.nominal_env_ids] + action_ascent_direction
-        # TODO: due to mant dictionary operations, and slicing; the pred_actions is slightly different from self.actions (approx 1e-6)
-        pred_actions = self.actor(select_entries(self.obs_buf, self.nominal_env_ids))
+        target_actions = target_actions.view(-1, self.num_actions)
+        # TODO: the pred_actions may be slightly different from the target_actions (in the magnitude of 1e-6)
+        pred_actions = self.actor(obs)
 
         # Update the actor
         self.actor_optimizer.zero_grad()
@@ -541,7 +545,7 @@ class AFRLRunner:
         # NOTE: currently we use both nominal and auxiliary rollout for training the critic
         self.compute_target_values()
         # Flatten first two dimensions (num_envs, horizon_length) for all observation keys
-        obs = flatten_dict(self.obs_buf, start_dim=0, end_dim=1)
+        obs = flatten_dict(self.critic_obs_buf, start_dim=0, end_dim=1)
         target_values = self.target_values.view(-1, 1)
         # Get dataset size from first observation key
         dataset_size = list(obs.values())[0].shape[0]
@@ -838,7 +842,10 @@ class AFRLRunner:
         self.actor = checkpoint[0].to(self.device)
         self.critic = checkpoint[1].to(self.device)
         self.target_critic = checkpoint[2].to(self.device)
-        self.obs_rms = checkpoint[3].to(self.device) if checkpoint[3] is not None else checkpoint[3]
+        if checkpoint[3] is not None:
+            self.obs_rms = {key: value.to(self.device) for key, value in checkpoint[3].items()}
+        else:
+            self.obs_rms = checkpoint[3]
         self.ret_rms = checkpoint[4].to(self.device) if checkpoint[4] is not None else checkpoint[4]
 
     def save(self, filename=None, save_dir=None):
@@ -870,6 +877,29 @@ class AFRLRunner:
         """
         for key in self.obs_rms.keys():
             self.obs_rms[key].update(obs[key])
+
+    def get_actor_obs(self, obs):
+        """
+        This function gets the actor observations.
+        TODO: currently the batch size of actor observation is num_base_envs
+        """
+        actor_obs = {}
+        for key in self.actor_input_keys:
+            # TODO Assume the observation batch size is either num_base_envs or num_envs
+            if obs[key].shape[0] == self.num_base_envs:
+                actor_obs[key] = obs[key]
+            else:
+                actor_obs[key] = obs[key][self.nominal_env_ids]
+        return actor_obs
+
+    def get_critic_obs(self, obs):
+        """
+        This function gets the critic observations.
+        """
+        critic_obs = {}
+        for key in self.critic_input_keys:
+            critic_obs[key] = obs[key]
+        return critic_obs
 
     def make_models(self):
         """
