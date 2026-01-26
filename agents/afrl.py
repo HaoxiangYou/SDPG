@@ -293,8 +293,9 @@ class AFRLRunner:
             wandb.log(wandb_metrics, step=iter)
 
     def make_envs(self):
-        # rewrite the nominal env ids in env config to match the num_base_envs
-        self.config.task.config.nominal_env_ids = list(range(0, self.num_envs, self.num_action_perturbations + 1))
+        if self.config.train:
+            # rewrite the nominal env ids in env config to match the num_base_envs if train
+            self.config.task.config.nominal_env_ids = list(range(0, self.num_envs, self.num_action_perturbations + 1))
         self.env = make_envs(self.config)
         self.num_observations = self.env.num_observations
         self.num_actions = self.env.num_actions
@@ -841,7 +842,10 @@ class AFRLRunner:
         self.actor = checkpoint[0].to(self.device)
         self.critic = checkpoint[1].to(self.device)
         self.target_critic = checkpoint[2].to(self.device)
-        self.obs_rms = checkpoint[3].to(self.device) if checkpoint[3] is not None else checkpoint[3]
+        if checkpoint[3] is not None:
+            self.obs_rms = {key: value.to(self.device) for key, value in checkpoint[3].items()}
+        else:
+            self.obs_rms = checkpoint[3]
         self.ret_rms = checkpoint[4].to(self.device) if checkpoint[4] is not None else checkpoint[4]
 
     def save(self, filename=None, save_dir=None):
