@@ -297,7 +297,6 @@ class AFRLRunner:
             # rewrite the nominal env ids in env config to match the num_base_envs if train
             self.config.task.config.nominal_env_ids = list(range(0, self.num_envs, self.num_action_perturbations + 1))
         self.env = make_envs(self.config)
-        self.num_observations = self.env.num_observations
         self.num_actions = self.env.num_actions
 
     def rollout(self):

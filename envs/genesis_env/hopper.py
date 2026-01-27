@@ -13,7 +13,6 @@ from envs.genesis_env.genesis_env import GenesisEnv
 class Hopper(GenesisEnv):
     """Hopper environment."""
 
-    _num_observations = 11
     _num_actions = 3
     _action_space = spaces.Box(low=-1.0, high=1.0, shape=(3,))
     _observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(11,))

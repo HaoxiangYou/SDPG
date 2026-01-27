@@ -97,14 +97,6 @@ class BaseEnv(ABC):
     Properties.
     """
 
-    @abstractmethod
-    def save_video(self) -> None:
-        """For environments like rewarped, we need actively save the recorded frames.
-
-        Returns:
-            None.
-        """
-
     @property
     @abstractmethod
     def requires_grad(self) -> bool:
@@ -112,15 +104,6 @@ class BaseEnv(ABC):
 
         Returns:
             Whether the environment requires gradients.
-        """
-
-    @property
-    @abstractmethod
-    def num_observations(self) -> int:
-        """Get the number of observations.
-
-        Returns:
-            The number of observations.
         """
 
     @property
