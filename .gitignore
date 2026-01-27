@@ -211,3 +211,4 @@ logs/
 wandb/
 externals/
 .vscode/
+go2_hardware/

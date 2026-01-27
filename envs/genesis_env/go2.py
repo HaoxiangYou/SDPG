@@ -161,12 +161,11 @@ class Go2(GenesisEnv):
         }
 
         # Command configuration
-        self._resampling_time_s = 4.0  # Resample commands every 4 seconds
         self._command_cfg = {
             "num_commands": 3,
-            "lin_vel_x_range": [0.5, 0.5],
-            "lin_vel_y_range": [0, 0],
-            "ang_vel_range": [0, 0],
+            "lin_vel_x_range": [-1.5, 1.5],
+            "lin_vel_y_range": [-0.8, 0.8],
+            "ang_vel_range": [-1.2, 1.2],
         }
         self._command_limits = [
             torch.tensor(values, dtype=gs.tc_float, device=gs.device)
