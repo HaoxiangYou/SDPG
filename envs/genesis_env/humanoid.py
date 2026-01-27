@@ -36,8 +36,6 @@ class Humanoid(GenesisEnv):
         episode_length = 1000
         early_termination = True
 
-        self._vis_obs = vis_obs
-
         if sensors_args is None:
             sensors_args = {
                 "camera": {
@@ -56,15 +54,16 @@ class Humanoid(GenesisEnv):
                 }
             }
 
+        self._vis_obs = vis_obs
         if vis_obs:
             self._num_image_stack = 3
             self._observation_space = spaces.Dict(
                 {
                     "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(76,)),
                     "RGB": spaces.Box(
-                        low=0.0,
+                        low=0,
                         high=255,
-                        dtype=torch.uint8,
+                        dtype=np.uint8,
                         shape=(
                             self._num_image_stack * 3,
                             sensors_args["camera"]["res"][0],
@@ -84,11 +83,11 @@ class Humanoid(GenesisEnv):
             num_envs=num_envs,
             episode_length=episode_length,
             early_termination=early_termination,
+            sensors_args=sensors_args,
             seed=seed,
             randomize_init=randomize_init,
             nominal_env_ids=nominal_env_ids,
             device=device,
-            sensors_args=sensors_args,
             show_viewer=show_viewer,
             sim_options=sim_options,
             viewer_options=viewer_options,
@@ -105,6 +104,7 @@ class Humanoid(GenesisEnv):
         )
         self._plane = self._scene.add_entity(gs.morphs.Plane())
 
+        # A record of the previous actions
         self._prev_actions = torch.zeros(self._num_envs, self._num_actions, device=self._device)
 
         self._motor_joint_names = [
