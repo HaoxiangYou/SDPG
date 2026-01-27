@@ -13,7 +13,6 @@ from envs.genesis_env.genesis_env import GenesisEnv
 class Humanoid(GenesisEnv):
     """Humanoid environment."""
 
-    _num_observations = 76
     _num_actions = 21
     _action_space = spaces.Box(low=-1.0, high=1.0, shape=(21,))
     _observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(76,))

@@ -14,7 +14,6 @@ from utils.common_utils import snakecase_to_pascalcase
 class GenesisEnv(BaseEnv):
     """Environment wrapper for the Genesis simulator."""
 
-    _num_observations: int
     _num_actions: int
     _action_space: Any
     _observation_space: Any
@@ -90,7 +89,9 @@ class GenesisEnv(BaseEnv):
 
         # Buffers
         self._progress_buf = torch.zeros(self._num_envs, device=self._device)
-        self._obs_buf = torch.zeros(self._num_envs, self._num_observations, device=self._device)
+        self._obs_buf = {}
+        for key in self.observation_space.keys():
+            self._obs_buf[key] = torch.zeros((self._num_envs, *self.observation_space[key].shape), device=self._device)
         self._truncated_buf = torch.zeros(self._num_envs, device=self._device, dtype=torch.bool)
         self._terminated_buf = torch.zeros(self._num_envs, device=self._device, dtype=torch.bool)
         self._reset_buf = torch.zeros(self._num_envs, device=self._device, dtype=torch.bool)
@@ -110,7 +111,8 @@ class GenesisEnv(BaseEnv):
 
         states = self.get_states()
         observations = self.compute_observations(states)
-        self._obs_buf = observations["privileged_observations"]
+        for key in observations.keys():
+            self._obs_buf[key] = observations[key]
 
         return observations, {}
 
@@ -152,22 +154,20 @@ class GenesisEnv(BaseEnv):
 
         # Reset the done environment if auto_reset is True.
         if auto_reset and len(reset_env_ids) > 0:
-            obs_buf_before_reset = self._obs_buf.clone()
+            from utils.tensor_utils import clone_dict_tensors
+
+            obs_buf_before_reset = clone_dict_tensors(self._obs_buf)
             self._extras["obs_before_reset"] = obs_buf_before_reset
             observations, _ = self.reset(reset_env_ids)
-            self._obs_buf = observations["privileged_observations"]
 
         # Compute the observations.
         observations = self.compute_observations(states)
-        self._obs_buf = observations["privileged_observations"]
+        for key in observations.keys():
+            self._obs_buf[key] = observations[key]
 
         return observations, self._reward_buf, self._terminated_buf, self._truncated_buf, {}
 
     def initialize_trajectory(self) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        # TODO
-        pass
-
-    def save_video(self) -> None:
         # TODO
         pass
 
@@ -331,10 +331,6 @@ class GenesisEnv(BaseEnv):
     @property
     def num_envs(self) -> int:
         return self._num_envs
-
-    @property
-    def num_observations(self) -> int:
-        return self._num_observations
 
     @property
     def num_actions(self) -> int:

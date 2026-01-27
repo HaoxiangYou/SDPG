@@ -18,7 +18,6 @@ def gs_rand(lower, upper, batch_shape):
 class Go2(GenesisEnv):
     """Go2 environment."""
 
-    _num_observations = 45
     _num_actions = 12
     _action_space = spaces.Box(low=-1.0, high=1.0, shape=(12,))
     _observation_space = spaces.Dict(
