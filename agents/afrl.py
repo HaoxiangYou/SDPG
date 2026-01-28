@@ -238,6 +238,7 @@ class AFRLRunner:
         policy_reward: float | None = None,
         episode_lengths: float | None = None,
         best_policy_reward: float | None = None,
+        time_report: TimeReport | None = None,
     ):
         """Write training statistics to both TensorBoard and wandb.
 
@@ -255,6 +256,7 @@ class AFRLRunner:
             policy_reward: Policy reward (optional)
             episode_lengths: Episode lengths (optional)
             best_policy_reward: Best policy reward (optional)
+            time_report: recorder for the time elapsed in each portion of the training process (optional)
         """
         # Prepare metrics dictionary
         metrics = {
@@ -284,6 +286,11 @@ class AFRLRunner:
             if time_elapse is not None:
                 self.summary_writer.add_scalar(f"{metric_name}/time", value, time_elapse)
 
+        if time_report is not None:
+            for timer_name in time_report.timers.keys():
+                self.summary_writer.add_scalar(
+                    f"performance/{timer_name}_time", time_report.timers[timer_name].time_total, iter
+                )
         # Log to wandb
         if self.use_wandb:
             wandb_metrics = dict(metrics)
@@ -802,6 +809,7 @@ class AFRLRunner:
                 policy_reward=policy_reward if policy_reward != float("inf") else None,
                 episode_lengths=episode_lengths if episode_lengths > 0 else None,
                 best_policy_reward=current_best_policy_reward,
+                time_report=self.time_report,
             )
 
             print(
@@ -820,6 +828,8 @@ class AFRLRunner:
 
             if self.iter_count % self.save_frequency == 0 or self.iter_count == self.max_epochs - 1:
                 self.save(filename="iter_{}_reward_{:.2f}".format(self.iter_count, policy_reward))
+
+        self.time_report.report()
 
         if self.use_wandb:
             wandb.finish()
