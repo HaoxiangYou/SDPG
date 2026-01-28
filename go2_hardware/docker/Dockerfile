@@ -100,7 +100,7 @@ RUN git clone https://github.com/unitreerobotics/unitree_ros2.git && \
 
 RUN cd unitree_ros2/cyclonedds_ws && \
     pip install empy==3.3.2 catkin_pkg pyparsing lark && \
-    /bin/zsh -c "source /opt/ros/humble/setup.zsh && colcon build"
+    /bin/zsh -c "source /opt/ros/humble/install/setup.zsh && colcon build"
 
 
 # RUN cd unitree_ros2/cyclonedds_ws && \

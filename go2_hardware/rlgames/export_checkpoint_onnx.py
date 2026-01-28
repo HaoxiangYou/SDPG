@@ -57,7 +57,7 @@ def main(config: DictConfig):
 
     # Get the directory where this script is located (go2_hardware/rlgames)
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    onnx_path = os.path.join(script_dir, "go2.onnx")
+    onnx_path = os.path.join(script_dir, "go2_walking.onnx")
 
     # Export to ONNX using ExportedProgram
     torch.onnx.export(

@@ -3,17 +3,7 @@ import time
 import numpy as np
 import onnxruntime as rt
 from etils import epath
-from keyboard_reader import KeyboardController
-from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
-from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelPublisher, ChannelSubscriber
-from unitree_sdk2py.go2.sport.sport_client import SportClient
-from unitree_sdk2py.idl.default import (
-    unitree_go_msg_dds__LowCmd_,
-)
-from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_, LowState_
-from unitree_sdk2py.utils.crc import CRC
-
-from utils import (
+from go2_utils import (
     RESTRICTED_JOINT_RANGE,
     Go2_NUM_MOTOR,
     Kd,
@@ -27,8 +17,17 @@ from utils import (
     joint2motor_idx,
     rest_pos,
 )
+from keyboard_reader import KeyboardController
+from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
+from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelPublisher, ChannelSubscriber
+from unitree_sdk2py.go2.sport.sport_client import SportClient
+from unitree_sdk2py.idl.default import (
+    unitree_go_msg_dds__LowCmd_,
+)
+from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_, LowState_
+from unitree_sdk2py.utils.crc import CRC
 
-NETWORK_CARD_NAME = "enp47s0"
+NETWORK_CARD_NAME = "eth0"
 _HERE = epath.Path(__file__).parent
 _ONNX_DIR = _HERE
 
@@ -41,7 +40,7 @@ class OnnxPolicy:
         policy_path: str,
     ):
         self._output_names = ["continuous_actions"]
-        self._policy = rt.InferenceSession(policy_path, providers=["CUDAExecutionProvider"])
+        self._policy = rt.InferenceSession(policy_path)
 
     def get_control(self, obs: np.ndarray) -> None:
         onnx_input = {"obs": obs.reshape(1, -1)}
@@ -96,12 +95,11 @@ class Controller:
             status, result = self.msc.CheckMode()
             time.sleep(1)
 
+        # default_pos is FR FL RR RL
         self.default_pos_array = np.array(default_pos)
 
         # wait for the subscriber to receive data
         self.wait_for_low_state()
-        self.state_record = []
-        self.ctrl_record = []
 
         # Initialize the command msg
         self.init_cmd_low_level()
@@ -139,7 +137,6 @@ class Controller:
             self.low_cmd.motor_cmd[i].kp = 0
             self.low_cmd.motor_cmd[i].dq = VelStopF
             self.low_cmd.motor_cmd[i].kd = 0
-            self.low_cmd.motor_cmd[i].tau = 0
 
     def create_damping_cmd(self):
         for i in range(12):
@@ -159,11 +156,10 @@ class Controller:
             self.low_cmd.motor_cmd[i].tau = 0
 
     def move_to_joint_pos(self, end_pos, total_time=2):
-        print("Moving to default pos.")
         # move time 2s
         num_step = int(total_time / self.control_dt)
 
-        # Init_dof_pos foot: FL FR RL RR
+        # Init_dof_pos foot: FR FL RR RL
         # low_state.motor_state: FR FL RR RL
         init_dof_pos = np.zeros(Go2_NUM_MOTOR, dtype=np.float32)
         for i in range(Go2_NUM_MOTOR):
@@ -172,8 +168,6 @@ class Controller:
         # move to default pos
         for i in range(num_step):
             alpha = i / num_step
-            state_i = np.zeros(12)
-            ctrl_i = np.zeros(12)
             for j in range(Go2_NUM_MOTOR):
                 motor_idx = joint2motor_idx[j]
                 target_pos = end_pos[j]
@@ -183,12 +177,7 @@ class Controller:
                 self.low_cmd.motor_cmd[motor_idx].kd = Kd[j]
                 self.low_cmd.motor_cmd[motor_idx].tau = 0
 
-                ctrl_i[j] = init_dof_pos[j] * (1 - alpha) + target_pos * alpha
-                state_i[j] = self.low_state.motor_state[motor_idx].q
             self.send_cmd(self.low_cmd)
-
-            self.state_record.append(state_i)
-            self.ctrl_record.append(ctrl_i)
             time.sleep(self.control_dt)
 
     def default_pos_state(self):
@@ -227,7 +216,6 @@ class Controller:
         command = self._controller.get_command()  # Original line
         obs = np.hstack(
             [
-                # lin_vel,
                 gyro,
                 gravity,
                 joint_angles,
@@ -270,17 +258,14 @@ class Controller:
 
 if __name__ == "__main__":
     print("Setting up policy...")
-    policy = OnnxPolicy((_ONNX_DIR / "go2.onnx").as_posix())
+    policy = OnnxPolicy((_ONNX_DIR / "go2_walking.onnx").as_posix())
+
     print("WARNING: Please ensure there are no obstacles around the robot while running this example.")
-    # Initial prompt doesn't need non-blocking
     input("Press Enter to acknowledge warning and proceed...")
 
     ChannelFactoryInitialize(0, NETWORK_CARD_NAME)
 
     controller = Controller(policy)
-
-    # Initial prompt doesn't need non-blocking
-    # input("Press Enter to acknowledge warning and proceed...")
 
     # Enter the zero torque state, press Enter key to continue executing
     controller.zero_torque_state()
@@ -308,7 +293,4 @@ if __name__ == "__main__":
     print("Entering damping state...")
     controller.create_damping_cmd()
     controller.send_cmd(controller.low_cmd)
-
-    np.savetxt("state_record.txt", controller.state_record)
-    np.savetxt("ctrl_record.txt", controller.ctrl_record)
     print("Exit")
