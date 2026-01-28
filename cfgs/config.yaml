@@ -23,7 +23,7 @@ wandb:
 seed: 0
 device: cuda
 
-train: False # Whether to train the agent or eval the trained agent
-checkpoint: 'logs/genesis/go2/ppo/2026-01-21_20-29-36/training_logs/nn/genesis_go2_ppo.pth' # Path to the checkpoint for play or resume training
+train: True # Whether to train the agent or eval the trained agent
+checkpoint: '' # Path to the checkpoint for play or resume training
 
 num_envs: ${agent.config.num_envs}

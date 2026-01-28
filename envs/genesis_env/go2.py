@@ -220,7 +220,8 @@ class Go2(GenesisEnv):
         self._joint_limits_high = torch.tensor(self._joint_limits[:, 1], dtype=gs.tc_float, device=self._device)
 
     def _post_physics_step(self) -> None:
-        pass
+        # resample commands when is half of the episode lenght 
+        self._resample_commands(self._progress_buf % int(self._episode_length / 2) == 0)
 
     def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         """Compute observations based on go2_env.py structure."""
