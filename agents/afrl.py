@@ -449,56 +449,39 @@ class AFRLRunner:
         """
         This function computes the ascent direction for improving the nominal action by weighting all the perturbations.
         """
-        # Reshape delta_J to group by base environments: [num_base_envs, num_action_perturbations + 1, horizon_length]
-        delta_J_grouped = self.delta_J.view(self.num_base_envs, self.num_action_perturbations + 1, self.horizon_length)
 
-        delta_J_var = delta_J_grouped.var(dim=1)
+        # Group by base environments:
+        # delta_J: [num_base_envs, num_action_perturbations + 1, horizon_length]
+        delta_J = self.delta_J.view(self.num_base_envs, self.num_action_perturbations + 1, self.horizon_length)
+
+        # Per-(base env, timestep) variance across perturbations: [B, T]
+        delta_J_var = delta_J.var(dim=1)
         self.rollout_var = delta_J_var.mean()
         self.positive_rollout_ratio = (self.delta_J > 0).sum() / self.delta_J.numel()
 
-        # Normalize the delta_J for each nominal batch
-        delta_J = self.delta_J
+        # Optional normalization (broadcast over num_action_perturbations + 1): [num_base_envs, num_action_perturbations + 1, horizon_length]
         if self.normalize_delta_J:
-            delta_J = delta_J / (
-                torch.sqrt(delta_J_var).repeat_interleave(self.num_action_perturbations + 1, dim=0) + 1e-6
-            )
+            denom = torch.sqrt(delta_J_var).unsqueeze(1) + 1e-6  # [B, 1, T]
+            delta_J = delta_J / denom
 
-        # weighted_perturbations shape: [num_envs, horizon_length, num_actions]
-        weighted_perturbations = delta_J.unsqueeze(-1) * self.eps_actions
-
-        # reshape to group environments: [num_base_envs, num_action_perturbations + 1, horizon_length, num_actions]
-        weighted_perturbations_grouped = weighted_perturbations.view(
+        # Group eps_actions: [num_base_envs, num_action_perturbations + 1, horizon_length, num_actions]
+        eps_grouped = self.eps_actions.view(
             self.num_base_envs, self.num_action_perturbations + 1, self.horizon_length, self.num_actions
         )
+        weighted_grouped = (
+            delta_J.unsqueeze(-1) * eps_grouped
+        )  # [num_base_envs, num_action_perturbations + 1, horizon_length, num_actions]
 
-        # Reshape normalized delta_J for top-k selection: [num_base_envs, num_action_perturbations + 1, horizon_length]
-        delta_J_grouped_normalized = delta_J.view(
-            self.num_base_envs, self.num_action_perturbations + 1, self.horizon_length
-        )
-
-        # Select top k perturbations based on delta_J values (from big to small)
         k = min(self.top_k_perturbations, self.num_action_perturbations + 1)
-
         if k < self.num_action_perturbations + 1:
-            # Get top k indices: [num_base_envs, k, horizon_length]
-            # We want to select top k for each base env and timestep based on normalized delta_J
-            top_k_values, top_k_indices = torch.topk(delta_J_grouped_normalized, k=k, dim=1, largest=True)
-
-            # Use gather to select top k weighted perturbations
-            # top_k_indices: [num_base_envs, k, horizon_length]
-            # Expand for gather: [num_base_envs, k, horizon_length, num_actions]
-            top_k_indices_expanded = top_k_indices.unsqueeze(-1).expand(-1, -1, -1, self.num_actions)
-
-            # Gather top k weighted perturbations: [num_base_envs, k, horizon_length, num_actions]
-            top_k_weighted_perturbations = torch.gather(
-                weighted_perturbations_grouped, dim=1, index=top_k_indices_expanded
-            )
-
-            # Average across top k directions (dimension 1)
-            action_ascent_direction = top_k_weighted_perturbations.mean(dim=1)
+            # topk over perturbations dimension (dim=1): indices [B, k, T]
+            _, topk_idx = torch.topk(delta_J, k=k, dim=1, largest=True)
+            topk_idx = topk_idx.unsqueeze(-1).expand(
+                -1, -1, -1, self.num_actions
+            )  # [num_base_envs, k, horizon_length, num_actions]
+            action_ascent_direction = torch.gather(weighted_grouped, dim=1, index=topk_idx).mean(dim=1)
         else:
-            # compute mean across each group (dimension 1) - use all directions
-            action_ascent_direction = weighted_perturbations_grouped.mean(dim=1)
+            action_ascent_direction = weighted_grouped.mean(dim=1)
 
         return action_ascent_direction
 
@@ -820,7 +803,7 @@ class AFRLRunner:
                     rollout_reward,
                     self.rollout_var.sqrt(),
                     self.positive_rollout_ratio,
-                    self.step_count * self.num_envs / (time_end_epoch - time_start_epoch),
+                    1 / (time_end_epoch - time_start_epoch),
                     self.actor_grad_norm,
                     self.critic_grad_norm,
                 )
