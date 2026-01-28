@@ -45,6 +45,7 @@ class Go2(GenesisEnv):
 
         episode_length = 1000  # Will be converted based on dt in reference
         early_termination = True
+        self._sim_dt = 0.02  # sim_options.dt
 
         super().__init__(
             num_envs=num_envs,
@@ -77,6 +78,8 @@ class Go2(GenesisEnv):
         self._robot = self._scene.add_entity(
             gs.morphs.URDF(
                 file="urdf/go2/urdf/go2.urdf",
+                merge_fixed_links=True,
+                links_to_keep=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
                 pos=base_init_pos,
                 quat=base_init_quat,
             ),
@@ -98,14 +101,35 @@ class Go2(GenesisEnv):
             "RL_calf_joint",
         ]
 
+        self._penalized_contact_link_names = ["base", "thigh", "calf"]
+        self._feet_link_names = ["foot"]
+        self._base_link_name = "base"
+
         # Get DOF indices - need to build scene first or get joint info after adding
         # Will be set after scene is built
         self._base_dof_idx = None  # Base joint DOFs (6 DOFs: 3 translation + 3 rotation)
         self._motors_dof_idx = None
         self._actions_dof_idx = None
 
+        def find_link_indices(names):
+            link_indices = list()
+            for link in self._robot.links:
+                flag = False
+                for name in names:
+                    if name in link.name:
+                        flag = True
+                if flag:
+                    link_indices.append(link.idx - self._robot.link_start)
+            return link_indices
+
+        self._penalized_contact_link_indices = find_link_indices(self._penalized_contact_link_names)
+        self._feet_link_indices = find_link_indices(self._feet_link_names)
+
+        assert len(self._penalized_contact_link_indices) > 0
+        assert len(self._feet_link_indices) > 0
+
         # PD control parameters
-        self._kp = 20.0
+        self._kp = 30.0
         self._kd = 0.5
 
         # Default joint angles [rad]
@@ -153,10 +177,15 @@ class Go2(GenesisEnv):
         self._reward_base_height_target = 0.3
         self._reward_scales = {
             "tracking_lin_vel": 1.0,
-            "tracking_ang_vel": 0.2,
-            "lin_vel_z": -1.0,
+            "tracking_ang_vel": 0.5,
+            "lin_vel_z": -2.0,
+            "ang_vel_xy": -0.05,
+            "orientation": -10,
             "base_height": -50.0,
-            "action_rate": -0.005,
+            "collision": -1.0,
+            "dof_acc": -2.5e-7,
+            "feet_air_time": 1.0,
+            "action_rate": -0.01,
             "similar_to_default": -0.1,
         }
 
@@ -176,11 +205,34 @@ class Go2(GenesisEnv):
                 strict=False,
             )
         ]
+
+        # prepare list of functions
+        self._reward_functions = []
+        self._reward_names = []
+        for name, scale in self._reward_scales.items():
+            self._reward_names.append(name)
+            name = "_reward_" + name
+            self._reward_functions.append(getattr(self, name))
+
         # Buffers for observation computation
         self._prev_actions = torch.zeros(self._num_envs, self._num_actions, device=self._device)
+        self._last_motor_joints_vel = torch.zeros(self._num_envs, self._num_actions, device=self._device)
         self._commands = torch.zeros(
             self._num_envs, self._command_cfg["num_commands"], device=self._device
         )  # [lin_vel_x, lin_vel_y, ang_vel]
+        self._link_contact_forces = torch.zeros(
+            (self._num_envs, self._robot.n_links, 3), device=self._device, dtype=gs.tc_float
+        )
+        self._feet_air_time = torch.zeros(
+            (self._num_envs, len(self._feet_link_indices)),
+            device=self._device,
+            dtype=gs.tc_float,
+        )
+        self._last_contacts = torch.zeros(
+            (self._num_envs, len(self._feet_link_indices)),
+            device=self._device,
+            dtype=gs.tc_int,
+        )
 
     def build_scene(self) -> None:
         self._scene.build(n_envs=self._num_envs, env_spacing=(0.0, 1.0), n_envs_per_row=self._num_envs)
@@ -220,8 +272,13 @@ class Go2(GenesisEnv):
         self._joint_limits_high = torch.tensor(self._joint_limits[:, 1], dtype=gs.tc_float, device=self._device)
 
     def _post_physics_step(self) -> None:
-        # resample commands when is half of the episode lenght 
+        # resample commands when is half of the episode lenght
         self._resample_commands(self._progress_buf % int(self._episode_length / 2) == 0)
+        self._link_contact_forces[:] = torch.tensor(
+            self._robot.get_links_net_contact_force(),
+            device=self._device,
+            dtype=gs.tc_float,
+        )
 
     def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         """Compute observations based on go2_env.py structure."""
@@ -271,33 +328,37 @@ class Go2(GenesisEnv):
         # Compute all reward components
         reward = torch.zeros(self._num_envs, device=self._device)
 
-        # Tracking rewards (positive)
-        if "tracking_lin_vel" in self._reward_scales:
-            tracking_lin_vel = self._reward_tracking_lin_vel(robot_states)
-            reward += tracking_lin_vel * self._reward_scales["tracking_lin_vel"]
+        for i in range(len(self._reward_functions)):
+            name = self._reward_names[i]
+            reward += self._reward_functions[i](robot_states, actions) * self._reward_scales[name]
 
-        if "tracking_ang_vel" in self._reward_scales:
-            tracking_ang_vel = self._reward_tracking_ang_vel(robot_states)
-            reward += tracking_ang_vel * self._reward_scales["tracking_ang_vel"]
+        # # Tracking rewards (positive)
+        # if "tracking_lin_vel" in self._reward_scales:
+        #     tracking_lin_vel = self._reward_tracking_lin_vel(robot_states)
+        #     reward += tracking_lin_vel * self._reward_scales["tracking_lin_vel"]
 
-        # Penalty rewards (negative scales)
-        if "lin_vel_z" in self._reward_scales:
-            lin_vel_z_penalty = self._reward_lin_vel_z(robot_states)
-            reward += lin_vel_z_penalty * self._reward_scales["lin_vel_z"]
+        # if "tracking_ang_vel" in self._reward_scales:
+        #     tracking_ang_vel = self._reward_tracking_ang_vel(robot_states)
+        #     reward += tracking_ang_vel * self._reward_scales["tracking_ang_vel"]
 
-        if "base_height" in self._reward_scales:
-            base_height_penalty = self._reward_base_height(robot_states)
-            reward += base_height_penalty * self._reward_scales["base_height"]
+        # # Penalty rewards (negative scales)
+        # if "lin_vel_z" in self._reward_scales:
+        #     lin_vel_z_penalty = self._reward_lin_vel_z(robot_states)
+        #     reward += lin_vel_z_penalty * self._reward_scales["lin_vel_z"]
 
-        if "action_rate" in self._reward_scales:
-            action_rate_penalty = self._reward_action_rate(robot_states, actions)
-            reward += action_rate_penalty * self._reward_scales["action_rate"]
+        # if "base_height" in self._reward_scales:
+        #     base_height_penalty = self._reward_base_height(robot_states)
+        #     reward += base_height_penalty * self._reward_scales["base_height"]
 
-        if "similar_to_default" in self._reward_scales:
-            similar_to_default_penalty = self._reward_similar_to_default(robot_states)
-            reward += similar_to_default_penalty * self._reward_scales["similar_to_default"]
+        # if "action_rate" in self._reward_scales:
+        #     action_rate_penalty = self._reward_action_rate(robot_states, actions)
+        #     reward += action_rate_penalty * self._reward_scales["action_rate"]
 
-        return reward * 0.02
+        # if "similar_to_default" in self._reward_scales:
+        #     similar_to_default_penalty = self._reward_similar_to_default(robot_states)
+        #     reward += similar_to_default_penalty * self._reward_scales["similar_to_default"]
+
+        return reward  # * 0.02
 
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
         """Compute termination based on roll/pitch angles."""
@@ -368,6 +429,7 @@ class Go2(GenesisEnv):
 
         # Reset previous actions
         self._prev_actions[env_ids] = torch.zeros(len(env_ids), self._num_actions, device=self._device)
+        self._last_motor_joints_vel[env_ids] = torch.zeros(len(env_ids), self._num_actions, device=self._device)
 
         # Resample commands for reset environments
         self._resample_commands(env_ids)
@@ -387,6 +449,7 @@ class Go2(GenesisEnv):
 
         # Store actions for observation
         self._prev_actions = actions.clone()
+        self._last_motor_joints_vel = self._robot.get_dofs_velocity(self._motors_dof_idx)
 
     def get_states(self, env_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
         """Get robot states for computing observations and rewards."""
@@ -419,6 +482,7 @@ class Go2(GenesisEnv):
             "motor_joints_pos": motor_joints_pos.clone(),
             "motor_joints_vel": motor_joints_vel.clone(),
             "prev_actions": self._prev_actions[env_ids].clone(),
+            "last_motor_joints_vel": self._last_motor_joints_vel[env_ids].clone(),
             "commands": self._commands[env_ids].clone(),
         }
 
@@ -471,35 +535,84 @@ class Go2(GenesisEnv):
 
         # Update previous actions if provided
         self._prev_actions[env_ids] = robot_states["prev_actions"].clone()
+        self._last_motor_joints_vel[env_ids] = robot_states["motor_joints_vel"].clone()
 
-    def _reward_tracking_lin_vel(self, robot_states: Dict[str, Any]) -> torch.Tensor:
+    def _reward_tracking_lin_vel(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         """Tracking of linear velocity commands (xy axes)."""
         base_lin_vel = robot_states["base_lin_vel"]
         lin_vel_error = torch.sum(torch.square(self._commands[:, :2] - base_lin_vel[:, :2]), dim=1)
         return torch.exp(-lin_vel_error / self._reward_tracking_sigma)
 
-    def _reward_tracking_ang_vel(self, robot_states: Dict[str, Any]) -> torch.Tensor:
+    def _reward_tracking_ang_vel(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         """Tracking of angular velocity commands (yaw)."""
         base_ang_vel = robot_states["base_ang_vel"]
         ang_vel_error = torch.square(self._commands[:, 2] - base_ang_vel[:, 2])
         return torch.exp(-ang_vel_error / self._reward_tracking_sigma)
 
-    def _reward_lin_vel_z(self, robot_states: Dict[str, Any]) -> torch.Tensor:
+    def _reward_lin_vel_z(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         """Penalize z axis base linear velocity."""
         base_lin_vel = robot_states["base_lin_vel"]
         return torch.square(base_lin_vel[:, 2])
+
+    def _reward_ang_vel_xy(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
+        """Penalize xy axis base angular velocity."""
+        base_ang_vel = robot_states["base_ang_vel"]
+        return torch.sum(torch.square(base_ang_vel[:, :2]), dim=1)
+
+    def _reward_orientation(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
+        """Penalize projected gravity."""
+        projected_gravity = robot_states["projected_gravity"]
+        return torch.sum(torch.square(projected_gravity[:, :2]), dim=1)
+
+    def _reward_dof_vel(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
+        """Penalize DOF velocities."""
+        dof_vel = robot_states["motor_joints_vel"]
+        return torch.sum(torch.square(dof_vel), dim=1)
+
+    def _reward_dof_acc(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
+        """Penalize DOF accelerations."""
+        dof_acc = (robot_states["last_motor_joints_vel"] - robot_states["motor_joints_vel"]) / self._sim_dt
+        return torch.sum(torch.square(dof_acc), dim=1)
 
     def _reward_action_rate(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         """Penalize changes in actions."""
         prev_actions = robot_states["prev_actions"]
         return torch.sum(torch.square(prev_actions - actions), dim=1)
 
-    def _reward_similar_to_default(self, robot_states: Dict[str, Any]) -> torch.Tensor:
+    def _reward_similar_to_default(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         """Penalize joint poses far away from default pose."""
         dof_pos = robot_states["motor_joints_pos"]
         return torch.sum(torch.abs(dof_pos - self._default_dof_pos), dim=1)
 
-    def _reward_base_height(self, robot_states: Dict[str, Any]) -> torch.Tensor:
+    def _reward_base_height(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         """Penalize base height away from target."""
         base_pos = robot_states["base_pos"]
         return torch.square(base_pos[:, 2] - self._reward_base_height_target)
+
+    def _reward_collision(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
+        """Penalize collisions."""
+        return torch.sum(
+            1.0
+            * (
+                torch.norm(
+                    self._link_contact_forces[:, self._penalized_contact_link_indices, :],
+                    dim=-1,
+                )
+                > 0.1
+            ),
+            dim=1,
+        )
+
+    def _reward_feet_air_time(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
+        # Reward long steps
+        contact = self._link_contact_forces[:, self._feet_link_indices, 2] > 1.0
+        contact_filt = torch.logical_or(contact, self._last_contacts)
+        self._last_contacts = contact
+        first_contact = (self._feet_air_time > 0.0) * contact_filt
+        self._feet_air_time += self._sim_dt
+        rew_airTime = torch.sum(
+            (self._feet_air_time - 0.5) * first_contact, dim=1
+        )  # reward only on first contact with the ground
+        rew_airTime *= torch.norm(self._commands[:, :2], dim=1) > 0.1  # no reward for zero command
+        self._feet_air_time *= ~contact_filt
+        return rew_airTime
