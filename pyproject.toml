@@ -1,0 +1,185 @@
+[build-system]
+requires = ["setuptools", "wheel", "cython>=3.0.0", "numpy>=1.26.4"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "genesis-world"
+version = "0.3.12"
+description = "A universal and generative physics engine"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "psutil",
+    "gstaichi==4.6.0",
+    "pydantic>=2.11.0",
+    "numpy>=1.26.4",
+    "trimesh",
+    "libigl",
+    # Cross-platform library to get various kind of CPU information such as model name
+    "py-cpuinfo",
+    "mujoco>=3.2.5",
+    "moviepy>=2.0.0",
+    # Used by `pyrender` to manage onscreen graphical windows
+    # * 2.1.8 breaks headless windowing, which is used in unit tests of the interactive viewer.
+    "pyglet>=1.5,!=2.1.8",
+    # Used by `pyrender` to load fonts
+    "freetype-py",
+    # Used by `pyrender` to write low-level OpenGL rendering pipeline
+    "PyOpenGL>=3.1.4",
+    # Use by `pyrender` to compile low-level OpenGL rendering pipeline
+    "numba",
+    # Use by `Mesh.remesh`, which is involve in `PBDTetEntity.sample`
+    "pymeshlab",
+    # Optional `trimesh` dependency for loading `.dae` mesh files
+    "pycollada",
+    # Used for parsing `.glb` mesh files
+    "pygltflib==1.16.0",
+    # Use by `PBD3DEntity.sample` to tetrahedralize a mesh
+    "tetgen>=0.6.4,<0.7.0; platform_machine!='aarch64'",
+    # Used for some advanced mesh processing such as `skeletonization`
+    "PyGEL3D",
+    # Used to convert VTK output to numpy when converting volume to particles for PBS
+    "vtk",
+    # Used here and there to load and export images
+    # * 11.0 dramatically improves performance when exporting images to PNG
+    "Pillow>11.0",
+    # Use to display camera images and export images
+    "opencv-python",
+    # Use by `RigidGeom.visualize_sdf` to render SDF as level 0 marching cubes
+    "scikit-image",
+    # Convex decomposition library
+    "coacd",
+    # Ray casting used in mesh to height field conversion
+    "rtree",
+    # Constraint Satisfaction Solver.
+    # Used to compute contype and conaffinity bitmasks from complete list of excluded collision pairs.
+    "z3-solver",
+    # Used for loading raytracing special texture images used by LuisaRender
+    "OpenEXR",
+    # Native batch renderer specifically designed for Genesis
+    "gs-madrona==0.0.7.post2; platform_system=='Linux' and (platform_machine=='x86_64' or platform_machine=='AMD64')",
+    # Used for mesh simplification
+    "fast_simplification>=0.1.12",
+    # Surface reconstruction library for particle data from SPH simulations
+    "pysplashsurf==0.14.*",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "pytest",
+    "pytest-xdist",
+    "pytest-forked",
+    "pytest-random-order",
+    "pytest-print",
+    # - 16.0 is causing pytest-xdist to crash in case of failure or skipped tests
+    "pytest-rerunfailures!=16.0",
+    "setproctitle", # allows renaming the test processes on the cluster
+    "syrupy",
+    "huggingface_hub[hf_xet]",
+    "wandb",
+    "ipython",
+    # * Mujoco 3.3.6 made contact islands an opt-out option instead of opt-in,
+    #   which requires setting the disableflags 'mjDSBL_ISLAND'.
+    "mujoco>=3.3.6,<3.4.0",
+    # Used internally by 'MPLPlotter'
+    # * 3.7.0: introduces Button blitting and 'outside' keyword legend location
+    "matplotlib>=3.7.0",
+    # Used internally by 'VideoFileWriter'
+    "av",
+    # Used for validating polar decomposition in unit tests
+    "scipy",
+]
+docs = [
+    # Note that currently sphinx 7 does not work, so we must use v6.2.1. Once fixed we can use a later version.
+    # See https://github.com/kivy/kivy/issues/8230 which tracks this issue.
+    "sphinx==6.2.1",
+    "sphinx-autobuild",
+    "pydata_sphinx_theme",
+    # For spelling
+    "sphinxcontrib.spelling",
+    # Type hints support
+    "sphinx-autodoc-typehints",
+    # Copy button for code snippets
+    "sphinx_copybutton",
+    # Markdown parser
+    "myst-parser",
+    "sphinx-subfigure",
+    "sphinxcontrib-video",
+    "sphinx-togglebutton",
+    "sphinx_design",
+]
+render = [
+    "pybind11[global]",
+    "open3d",
+]
+usd = [
+    # Used for parsing `.usd` mesh files
+    "usd-core<25.11",
+    # import stubs to static code analysis
+    "types-usd==24.5.2",
+]
+
+[project.scripts]
+gs = "genesis._main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["genesis", "genesis.*"]
+
+[tool.setuptools.package-data]
+genesis = [
+    "assets/*",
+    "ext/pyrender/fonts/*",
+    "ext/pyrender/shaders/*",
+    "ext/VolumeSampling",
+]
+
+[tool.black]
+line-length = 120
+force-exclude = '''
+/(
+    genesis/ext
+)/
+'''
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# Ignore the specific errors currently present in the codebase
+ignore = [
+    "F405", # undefined-local-with-import-star-usage
+    "F401", # unused-import
+    "F841", # unused-variable
+    "E741", # ambiguous-variable-name
+    "E402", # module-import-not-at-top-of-file
+    "F403", # undefined-local-with-import-star
+    "E712", # true-false-comparison
+]
+
+[tool.pytest.ini_options]
+addopts = [
+    "--color=yes",
+    "--import-mode=importlib",
+    "--pdbcls=IPython.terminal.debugger:TerminalPdb",
+    # "--exitfirst",
+    "--numprocesses=auto",
+    "--dist=worksteal",
+    # "--max-worker-restart=0",
+    "--durations=0",
+    "--durations-min=100.0",
+    # Note that the retry mechanism is not compatible with "--forked".
+    "-m not (benchmarks or examples)",
+]
+filterwarnings = [
+    "ignore::_pytest.warning_types.PytestUnknownMarkWarning",
+    "ignore::DeprecationWarning",
+]
+markers = [
+    "examples: example scripts.",
+    "benchmarks: benchmarks for profiling and monitoring.",
+    "required: minimal test set that must pass systematically on any environment before merging.",
+    "slow: tests that are slow to run (> 100s).",
+]
+log_cli_level = "WARNING"
