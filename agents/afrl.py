@@ -438,11 +438,9 @@ class AFRLRunner:
             value=curr_J - curr_J[self.get_nominal_idx_of_auxiliary_env(torch.arange(self.num_envs, device=device))],
         )
 
-    def _compute_delta_J_causal(self) -> None:
-        """Causal delta_J: per-timestep return-to-go difference; optionally TD(lambda) eligibility trace."""
-        # TD-style return estimated
+    def _compute_return_to_go(self, use_eligibility_trace: bool) -> None:
+        """Compute the return-to-go for each environment."""
         Ai = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
-        # Monte Carlo return estimated
         Bi = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         lam = torch.ones(self.num_envs, dtype=torch.float32, device=self.device)
         dones = self.dones.clone().to(torch.float32)
@@ -455,10 +453,15 @@ class AFRLRunner:
                 + (1.0 - lam) / (1.0 - self.lam) * self.rewards[:, i]
             )
             Bi = self.gamma * (self.next_values[:, i] * dones[:, i] + Bi * (1.0 - dones[:, i])) + self.rewards[:, i]
-            if self.eligibility_trace:
+            if use_eligibility_trace:
                 J[:, i] = (1.0 - self.lam) * Ai + lam * Bi
             else:
                 J[:, i] = Bi
+        return J
+
+    def _compute_delta_J_causal(self) -> None:
+        """Causal delta_J: per-timestep return-to-go difference; optionally TD(lambda) eligibility trace."""
+        J = self._compute_return_to_go(self.eligibility_trace)
 
         nominal_ids = self.get_nominal_idx_of_auxiliary_env(torch.arange(self.num_envs, device=self.device))
         self.delta_J[:] = J - J[nominal_ids]
@@ -523,21 +526,7 @@ class AFRLRunner:
         """
         This function computes the target values using TD(lambda) method.
         """
-        # TD-style return estimated
-        Ai = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
-        # Monte Carlo return estimated
-        Bi = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
-        lam = torch.ones(self.num_envs, dtype=torch.float32, device=self.device)
-        dones = self.dones.clone().to(torch.float32)
-        for i in reversed(range(self.horizon_length)):
-            lam = lam * self.lam * (1.0 - dones[:, i]) + dones[:, i]
-            Ai = (1.0 - dones[:, i]) * (
-                self.lam * self.gamma * Ai
-                + self.gamma * self.next_values[:, i]
-                + (1.0 - lam) / (1.0 - self.lam) * self.rewards[:, i]
-            )
-            Bi = self.gamma * (self.next_values[:, i] * dones[:, i] + Bi * (1.0 - dones[:, i])) + self.rewards[:, i]
-            self.target_values[:, i] = (1.0 - self.lam) * Ai + lam * Bi
+        self.target_values = self._compute_return_to_go(use_eligibility_trace=True)
 
     def train_actor(self):
         # Compute the incremental trajectory rewards
