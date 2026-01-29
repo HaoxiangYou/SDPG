@@ -10,7 +10,7 @@ pip install .
 pip install gym==0.23.1
 
 # In externals/Genesis
-pip install -e "[.dev]"
+pip install -e ".[dev]"
 ```
 
 ## Third-party packages
