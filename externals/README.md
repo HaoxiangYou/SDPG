@@ -40,6 +40,16 @@ Changes in `externals/Genesis/genesis/engine/solvers/rigid/rigid_solver.py`:
 
 If you update Genesis in the future, re-apply (or rebase) this patch to keep NaN handling centralized in the env.
 
+#### Patch 02: fix camera dimension mismatch (may be fixed upstream)
+
+Fixes a dimension mismatch in the batch-renderer camera wrapper when `self._pos` / `self.transform` are not already batched.
+
+Changes in `externals/Genesis/genesis/engine/sensors/camera.py`:
+- `get_pos`: use `self._pos.dim()` to decide whether to `unsqueeze(0)` vs return the already-batched tensor (instead of branching on `n_envs`).
+- `get_quat`: ensure `transform` is 3D by conditionally `unsqueeze(0)` before calling `T_to_trans_quat(...)`.
+
+Note: this is a bug-fix and **may be resolved by future Genesis updates**. If it gets fixed upstream, this patch can be dropped.
+
 Example update command (adjust ref as needed):
 
 ```bash

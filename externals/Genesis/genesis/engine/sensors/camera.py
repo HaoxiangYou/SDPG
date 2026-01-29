@@ -114,19 +114,20 @@ class BatchRendererCameraWrapper(BaseCameraWrapper):
     def get_pos(self):
         """Get camera position (for batch renderer)."""
         n_envs = self.sensor._manager._sim._B
-        if n_envs == 0:
+        if self._pos.dim() < 2:
             return self._pos.unsqueeze(0)
         else:
-            return self._pos.unsqueeze(0).expand(n_envs, -1)
+            return self._pos
 
     def get_quat(self):
         """Get camera quaternion (for batch renderer)."""
         from genesis.utils.geom import T_to_trans_quat
 
-        _, quat = T_to_trans_quat(self.transform.unsqueeze(0))
-        n_envs = self.sensor._manager._sim._B
-        if n_envs > 0:
-            return quat.expand(n_envs, -1)
+        if self.transform.dim() < 3:
+            transform = self.transform.unsqueeze(0)
+        else:
+            transform = self.transform
+        _, quat = T_to_trans_quat(transform)
         return quat
 
 
