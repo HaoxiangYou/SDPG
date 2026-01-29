@@ -1,19 +1,18 @@
-import rl_games.algos_torch.layers
-import numpy as np
-import torch.nn as nn
-import torch
-import torch.nn.functional as F
-import rl_games.common.divergence as divergence
-from rl_games.common.extensions.distributions import CategoricalMasked
-from torch.distributions import Categorical
-from rl_games.algos_torch.sac_helper import SquashedNormal
-from rl_games.algos_torch.running_mean_std import RunningMeanStd, RunningMeanStdObs
-from rl_games.algos_torch.moving_mean_std import GeneralizedMovingStats
-from torch.distributions import Normal, TransformedDistribution, TanhTransform
 import math
 
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.distributions import Categorical
 
-class BaseModel():
+import rl_games.common.divergence as divergence
+from rl_games.algos_torch.running_mean_std import RunningMeanStd, RunningMeanStdObs
+from rl_games.algos_torch.sac_helper import SquashedNormal
+from rl_games.common.extensions.distributions import CategoricalMasked
+
+
+class BaseModel:
     def __init__(self, model_class):
         self.model_class = model_class
 
@@ -27,12 +26,17 @@ class BaseModel():
         return None
 
     def build(self, config):
-        obs_shape = config['input_shape']
-        normalize_value = config.get('normalize_value', False)
-        normalize_input = config.get('normalize_input', False)
-        value_size = config.get('value_size', 1)
-        return self.Network(self.network_builder.build(self.model_class, **config), obs_shape=obs_shape,
-            normalize_value=normalize_value, normalize_input=normalize_input, value_size=value_size)
+        obs_shape = config["input_shape"]
+        normalize_value = config.get("normalize_value", False)
+        normalize_input = config.get("normalize_input", False)
+        value_size = config.get("value_size", 1)
+        return self.Network(
+            self.network_builder.build(self.model_class, **config),
+            obs_shape=obs_shape,
+            normalize_value=normalize_value,
+            normalize_input=normalize_input,
+            value_size=value_size,
+        )
 
 
 class BaseModelNetwork(nn.Module):
@@ -65,7 +69,7 @@ class BaseModelNetwork(nn.Module):
 
 class ModelA2C(BaseModel):
     def __init__(self, network):
-        BaseModel.__init__(self, 'a2c')
+        BaseModel.__init__(self, "a2c")
         self.network_builder = network
 
     class Network(BaseModelNetwork):
@@ -87,15 +91,15 @@ class ModelA2C(BaseModel):
             return self.a2c_network.get_value_layer()
 
         def kl(self, p_dict, q_dict):
-            p = p_dict['logits']
-            q = q_dict['logits']
+            p = p_dict["logits"]
+            q = q_dict["logits"]
             return divergence.d_kl_discrete(p, q)
 
         def forward(self, input_dict):
-            is_train = input_dict.get('is_train', True)
-            action_masks = input_dict.get('action_masks', None)
-            prev_actions = input_dict.get('prev_actions', None)
-            input_dict['obs'] = self.norm_obs(input_dict['obs'])
+            is_train = input_dict.get("is_train", True)
+            action_masks = input_dict.get("action_masks", None)
+            prev_actions = input_dict.get("prev_actions", None)
+            input_dict["obs"] = self.norm_obs(input_dict["obs"])
             logits, value, states = self.a2c_network(input_dict)
 
             if is_train:
@@ -103,11 +107,11 @@ class ModelA2C(BaseModel):
                 prev_neglogp = -categorical.log_prob(prev_actions)
                 entropy = categorical.entropy()
                 result = {
-                    'prev_neglogp': torch.squeeze(prev_neglogp),
-                    'logits': categorical.logits,
-                    'values': value,
-                    'entropy': entropy,
-                    'rnn_states': states
+                    "prev_neglogp": torch.squeeze(prev_neglogp),
+                    "logits": categorical.logits,
+                    "values": value,
+                    "entropy": entropy,
+                    "rnn_states": states,
                 }
                 return result
             else:
@@ -115,18 +119,18 @@ class ModelA2C(BaseModel):
                 selected_action = categorical.sample().long()
                 neglogp = -categorical.log_prob(selected_action)
                 result = {
-                    'neglogpacs': torch.squeeze(neglogp),
-                    'values': self.denorm_value(value),
-                    'actions': selected_action,
-                    'logits': categorical.logits,
-                    'rnn_states': states
+                    "neglogpacs": torch.squeeze(neglogp),
+                    "values": self.denorm_value(value),
+                    "actions": selected_action,
+                    "logits": categorical.logits,
+                    "rnn_states": states,
                 }
                 return result
 
 
 class ModelA2CMultiDiscrete(BaseModel):
     def __init__(self, network):
-        BaseModel.__init__(self, 'a2c')
+        BaseModel.__init__(self, "a2c")
         self.network_builder = network
 
     class Network(BaseModelNetwork):
@@ -148,33 +152,36 @@ class ModelA2CMultiDiscrete(BaseModel):
             return self.a2c_network.get_value_layer()
 
         def kl(self, p_dict, q_dict):
-            p = p_dict['logits']
-            q = q_dict['logits']
+            p = p_dict["logits"]
+            q = q_dict["logits"]
             return divergence.d_kl_discrete_list(p, q)
 
         def forward(self, input_dict):
-            is_train = input_dict.get('is_train', True)
-            action_masks = input_dict.get('action_masks', None)
-            prev_actions = input_dict.get('prev_actions', None)
-            input_dict['obs'] = self.norm_obs(input_dict['obs'])
+            is_train = input_dict.get("is_train", True)
+            action_masks = input_dict.get("action_masks", None)
+            prev_actions = input_dict.get("prev_actions", None)
+            input_dict["obs"] = self.norm_obs(input_dict["obs"])
             logits, value, states = self.a2c_network(input_dict)
             if is_train:
                 if action_masks is None:
                     categorical = [Categorical(logits=logit) for logit in logits]
                 else:
                     action_masks = np.split(action_masks, len(logits), axis=1)
-                    categorical = [CategoricalMasked(logits=logit, masks=mask) for logit, mask in zip(logits, action_masks)]
+                    categorical = [
+                        CategoricalMasked(logits=logit, masks=mask)
+                        for logit, mask in zip(logits, action_masks, strict=False)
+                    ]
                 prev_actions = torch.split(prev_actions, 1, dim=-1)
-                prev_neglogp = [-c.log_prob(a.squeeze()) for c, a in zip(categorical, prev_actions)]
+                prev_neglogp = [-c.log_prob(a.squeeze()) for c, a in zip(categorical, prev_actions, strict=False)]
                 prev_neglogp = torch.stack(prev_neglogp, dim=-1).sum(dim=-1)
                 entropy = [c.entropy() for c in categorical]
                 entropy = torch.stack(entropy, dim=-1).sum(dim=-1)
                 result = {
-                    'prev_neglogp': torch.squeeze(prev_neglogp),
-                    'logits': [c.logits for c in categorical],
-                    'values': value,
-                    'entropy': torch.squeeze(entropy),
-                    'rnn_states': states
+                    "prev_neglogp": torch.squeeze(prev_neglogp),
+                    "logits": [c.logits for c in categorical],
+                    "values": value,
+                    "entropy": torch.squeeze(entropy),
+                    "rnn_states": states,
                 }
                 return result
             else:
@@ -182,25 +189,28 @@ class ModelA2CMultiDiscrete(BaseModel):
                     categorical = [Categorical(logits=logit) for logit in logits]
                 else:
                     action_masks = np.split(action_masks, len(logits), axis=1)
-                    categorical = [CategoricalMasked(logits=logit, masks=mask) for logit, mask in zip(logits, action_masks)]
+                    categorical = [
+                        CategoricalMasked(logits=logit, masks=mask)
+                        for logit, mask in zip(logits, action_masks, strict=False)
+                    ]
 
                 selected_action = [c.sample().long() for c in categorical]
-                neglogp = [-c.log_prob(a.squeeze()) for c, a in zip(categorical, selected_action)]
+                neglogp = [-c.log_prob(a.squeeze()) for c, a in zip(categorical, selected_action, strict=False)]
                 selected_action = torch.stack(selected_action, dim=-1)
                 neglogp = torch.stack(neglogp, dim=-1).sum(dim=-1)
                 result = {
-                    'neglogpacs': torch.squeeze(neglogp),
-                    'values': self.denorm_value(value),
-                    'actions': selected_action,
-                    'logits': [c.logits for c in categorical],
-                    'rnn_states': states
+                    "neglogpacs": torch.squeeze(neglogp),
+                    "values": self.denorm_value(value),
+                    "actions": selected_action,
+                    "logits": [c.logits for c in categorical],
+                    "rnn_states": states,
                 }
                 return result
 
 
 class ModelA2CContinuous(BaseModel):
     def __init__(self, network):
-        BaseModel.__init__(self, 'a2c')
+        BaseModel.__init__(self, "a2c")
         self.network_builder = network
 
     class Network(BaseModelNetwork):
@@ -222,14 +232,14 @@ class ModelA2CContinuous(BaseModel):
             return self.a2c_network.get_value_layer()
 
         def kl(self, p_dict, q_dict):
-            p = p_dict['mu'], p_dict['sigma']
-            q = q_dict['mu'], q_dict['sigma']
+            p = p_dict["mu"], p_dict["sigma"]
+            q = q_dict["mu"], q_dict["sigma"]
             return divergence.d_kl_normal(p, q)
 
         def forward(self, input_dict):
-            is_train = input_dict.get('is_train', True)
-            prev_actions = input_dict.get('prev_actions', None)
-            input_dict['obs'] = self.norm_obs(input_dict['obs'])
+            is_train = input_dict.get("is_train", True)
+            prev_actions = input_dict.get("prev_actions", None)
+            input_dict["obs"] = self.norm_obs(input_dict["obs"])
             mu, sigma, value, states = self.a2c_network(input_dict)
             distr = torch.distributions.Normal(mu, sigma, validate_args=False)
 
@@ -237,32 +247,32 @@ class ModelA2CContinuous(BaseModel):
                 entropy = distr.entropy().sum(dim=-1)
                 prev_neglogp = -distr.log_prob(prev_actions).sum(dim=-1)
                 result = {
-                    'prev_neglogp': torch.squeeze(prev_neglogp),
-                    'value': value,
-                    'entropy': entropy,
-                    'rnn_states': states,
-                    'mus': mu,
-                    'sigmas': sigma
+                    "prev_neglogp": torch.squeeze(prev_neglogp),
+                    "value": value,
+                    "entropy": entropy,
+                    "rnn_states": states,
+                    "mus": mu,
+                    "sigmas": sigma,
                 }
                 return result
             else:
                 selected_action = distr.sample().squeeze()
                 neglogp = -distr.log_prob(selected_action).sum(dim=-1)
                 result = {
-                    'neglogpacs': torch.squeeze(neglogp),
-                    'values': self.denorm_value(value),
-                    'actions': selected_action,
-                    'entropy': entropy,
-                    'rnn_states': states,
-                    'mus': mu,
-                    'sigmas': sigma
+                    "neglogpacs": torch.squeeze(neglogp),
+                    "values": self.denorm_value(value),
+                    "actions": selected_action,
+                    "entropy": entropy,
+                    "rnn_states": states,
+                    "mus": mu,
+                    "sigmas": sigma,
                 }
                 return result
 
 
 class ModelA2CContinuousLogStd(BaseModel):
     def __init__(self, network):
-        BaseModel.__init__(self, 'a2c')
+        BaseModel.__init__(self, "a2c")
         self.network_builder = network
 
     class Network(BaseModelNetwork):
@@ -286,9 +296,9 @@ class ModelA2CContinuousLogStd(BaseModel):
         def forward(self, input_dict):
             torch.compiler.cudagraph_mark_step_begin()
 
-            is_train = input_dict.get('is_train', True)
-            prev_actions = input_dict.get('prev_actions', None)
-            input_dict['obs'] = self.norm_obs(input_dict['obs'])
+            is_train = input_dict.get("is_train", True)
+            prev_actions = input_dict.get("prev_actions", None)
+            input_dict["obs"] = self.norm_obs(input_dict["obs"])
             mu, logstd, value, states = self.a2c_network(input_dict)
             sigma = torch.exp(logstd)
             distr = torch.distributions.Normal(mu, sigma, validate_args=False)
@@ -296,38 +306,40 @@ class ModelA2CContinuousLogStd(BaseModel):
                 entropy = distr.entropy().sum(dim=-1)
                 prev_neglogp = self.neglogp(prev_actions, mu, sigma, logstd)
                 result = {
-                    'prev_neglogp': torch.squeeze(prev_neglogp),
-                    'values': value,
-                    'entropy': entropy,
-                    'rnn_states': states,
-                    'mus': mu,
-                    'sigmas': sigma
+                    "prev_neglogp": torch.squeeze(prev_neglogp),
+                    "values": value,
+                    "entropy": entropy,
+                    "rnn_states": states,
+                    "mus": mu,
+                    "sigmas": sigma,
                 }
                 return result
             else:
                 selected_action = distr.sample()
                 neglogp = self.neglogp(selected_action, mu, sigma, logstd)
                 result = {
-                    'neglogpacs': torch.squeeze(neglogp),
-                    'values': self.denorm_value(value),
-                    'actions': selected_action,
-                    'rnn_states': states,
-                    'mus': mu,
-                    'sigmas': sigma
+                    "neglogpacs": torch.squeeze(neglogp),
+                    "values": self.denorm_value(value),
+                    "actions": selected_action,
+                    "rnn_states": states,
+                    "mus": mu,
+                    "sigmas": sigma,
                 }
                 return result
 
         # Unfortunately mode='max-autotune' does not work with torch.compile() here
         @torch.compile()
         def neglogp(self, x, mean, std, logstd):
-            return 0.5 * (((x - mean) / std)**2).sum(dim=-1) \
-                + 0.5 * np.log(2.0 * np.pi) * x.size(-1) \
+            return (
+                0.5 * (((x - mean) / std) ** 2).sum(dim=-1)
+                + 0.5 * torch.log(2.0 * torch.tensor(math.pi, device=x.device, dtype=x.dtype)) * x.size(-1)
                 + logstd.sum(dim=-1)
+            )
 
 
 class ModelA2CContinuousTanh(BaseModel):
     def __init__(self, network):
-        BaseModel.__init__(self, 'a2c')
+        BaseModel.__init__(self, "a2c")
         self.network_builder = network
 
     class Network(BaseModelNetwork):
@@ -349,9 +361,9 @@ class ModelA2CContinuousTanh(BaseModel):
             return self.a2c_network.get_default_rnn_state()
 
         def forward(self, input_dict):
-            is_train = input_dict.get('is_train', True)
-            prev_actions = input_dict.get('prev_actions', None)
-            input_dict['obs'] = self.norm_obs(input_dict['obs'])
+            is_train = input_dict.get("is_train", True)
+            prev_actions = input_dict.get("prev_actions", None)
+            input_dict["obs"] = self.norm_obs(input_dict["obs"])
             mu, logstd, value, states = self.a2c_network(input_dict)
             sigma = torch.nn.functional.softplus(logstd + 0.001)
             main_distr = NormalTanhDistribution(mu.size(-1))
@@ -360,31 +372,31 @@ class ModelA2CContinuousTanh(BaseModel):
                 entropy = main_distr.entropy(mu, logstd)
                 prev_neglogp = -main_distr.log_prob(mu, logstd, main_distr.inverse_post_process(prev_actions))
                 result = {
-                    'prev_neglogp': torch.squeeze(prev_neglogp),
-                    'values': value,
-                    'entropy': entropy,
-                    'rnn_states': states,
-                    'mus': mu,
-                    'sigmas': sigma
+                    "prev_neglogp": torch.squeeze(prev_neglogp),
+                    "values": value,
+                    "entropy": entropy,
+                    "rnn_states": states,
+                    "mus": mu,
+                    "sigmas": sigma,
                 }
                 return result
             else:
                 selected_action = main_distr.sample_no_postprocessing(mu, logstd)
                 neglogp = -main_distr.log_prob(mu, logstd, selected_action)
                 result = {
-                    'neglogpacs': torch.squeeze(neglogp),
-                    'values': self.denorm_value(value),
-                    'actions': main_distr.post_process(selected_action),
-                    'rnn_states': states,
-                    'mus': mu,
-                    'sigmas': sigma
+                    "neglogpacs": torch.squeeze(neglogp),
+                    "values": self.denorm_value(value),
+                    "actions": main_distr.post_process(selected_action),
+                    "rnn_states": states,
+                    "mus": mu,
+                    "sigmas": sigma,
                 }
                 return result
 
 
 class ModelCentralValue(BaseModel):
     def __init__(self, network):
-        BaseModel.__init__(self, 'a2c')
+        BaseModel.__init__(self, "a2c")
         self.network_builder = network
 
     class Network(BaseModelNetwork):
@@ -406,27 +418,23 @@ class ModelCentralValue(BaseModel):
             return self.a2c_network.get_default_rnn_state()
 
         def kl(self, p_dict, q_dict):
-            return None # or throw exception?
+            return None  # or throw exception?
 
         def forward(self, input_dict):
-            is_train = input_dict.get('is_train', True)
-            prev_actions = input_dict.get('prev_actions', None)
-            input_dict['obs'] = self.norm_obs(input_dict['obs'])
+            is_train = input_dict.get("is_train", True)
+            prev_actions = input_dict.get("prev_actions", None)
+            input_dict["obs"] = self.norm_obs(input_dict["obs"])
             value, states = self.a2c_network(input_dict)
             if not is_train:
                 value = self.denorm_value(value)
 
-            result = {
-                'values': value,
-                'rnn_states': states
-            }
+            result = {"values": value, "rnn_states": states}
             return result
 
 
 class ModelSACContinuous(BaseModel):
-
     def __init__(self, network):
-        BaseModel.__init__(self, 'sac')
+        BaseModel.__init__(self, "sac")
         self.network_builder = network
 
     class Network(BaseModelNetwork):
@@ -451,7 +459,7 @@ class ModelSACContinuous(BaseModel):
             return False
 
         def forward(self, input_dict):
-            is_train = input_dict.pop('is_train', True)
+            is_train = input_dict.pop("is_train", True)
             mu, sigma = self.sac_network(input_dict)
             dist = SquashedNormal(mu, sigma)
             return dist
@@ -469,7 +477,7 @@ class TanhBijector:
 
     def forward_log_det_jacobian(self, x):
         # Log of the absolute value of the determinant of the Jacobian
-        return 2. * (math.log(2.) - x - F.softplus(-2. * x))
+        return 2.0 * (math.log(2.0) - x - F.softplus(-2.0 * x))
 
 
 class NormalTanhDistribution:

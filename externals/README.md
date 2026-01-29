@@ -56,3 +56,28 @@ Example update command (adjust ref as needed):
 git subtree pull --prefix=externals/Genesis https://github.com/Genesis-Embodied-AI/Genesis.git <ref> --squash
 ```
 
+## rl_games
+
+`rl_games` is vendored under `externals/rl_games/` as a git subtree (upstream: `https://github.com/Denys88/rl_games.git`).
+
+Pinned upstream commit:
+- `208b9f9464b8a4ae6fcb17a2d8ee7b6ee44a417b`
+
+### Local patches (Genesis env compatibility; temporary workaround)
+
+These changes are a **temporary workaround** to make `rl_games` compatible with this repo’s `genesis_env` integration. There may be better long-term solutions (e.g., a cleaner adapter layer between env outputs and `rl_games` expectations, or upstream fixes).
+
+#### Patch 01: keep tensor rewards/dones (avoid unconditional `.cpu()`)
+
+In `externals/rl_games/rl_games/common/player.py`, when `self.is_tensor_obses` is true, we keep `rewards` / `dones` as returned (instead of forcing `.cpu()`), to avoid device / type mismatches when the env already produces tensors.
+
+#### Patch 02: make `neglogp` constant device/dtype-safe under torch compile
+
+In `externals/rl_games/rl_games/algos_torch/models.py`, replace the NumPy scalar log constant with a Torch expression on the correct device/dtype. This avoids device/dtype issues in compiled codepaths.
+
+Example update command (adjust ref as needed):
+
+```bash
+git subtree pull --prefix=externals/rl_games https://github.com/Denys88/rl_games.git <ref> --squash
+```
+
