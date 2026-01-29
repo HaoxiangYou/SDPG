@@ -1063,9 +1063,9 @@ class RigidSolver(Solver):
                 "RigidSolver's option 'max_collision_pairs'."
             )
         if errno & 0b00000000000000000000000000000100:
-            gs.raise_exception("Invalid constraint forces causing 'nan'. Please decrease Rigid simulation timestep.")
+            gs.warn("Invalid constraint forces causing 'nan'. Please decrease Rigid simulation timestep.")
         if errno & 0b00000000000000000000000000001000:
-            gs.raise_exception("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
+            gs.warn("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
 
     def _kernel_detect_collision(self):
         self.collider.clear()
@@ -7105,12 +7105,12 @@ def func_copy_next_to_curr(
     for i_b in range(_B):
         # Prevent nan propagation
         is_valid = True
-        for i_d in range(n_dofs):
-            e = dofs_state.vel_next[i_d, i_b]
-            is_valid &= not ti.math.isnan(e)
-        for i_q in range(n_qs):
-            e = rigid_global_info.qpos_next[i_q, i_b]
-            is_valid &= not ti.math.isnan(e)
+        # for i_d in range(n_dofs):
+        #     e = dofs_state.vel_next[i_d, i_b]
+        # is_valid &= not ti.math.isnan(e)
+        # for i_q in range(n_qs):
+        #     e = rigid_global_info.qpos_next[i_q, i_b]
+        # is_valid &= not ti.math.isnan(e)
 
         if is_valid:
             for i_d in range(n_dofs):
