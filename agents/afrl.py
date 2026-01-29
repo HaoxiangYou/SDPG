@@ -44,6 +44,8 @@ class AFRLRunner:
         self.horizon_length = self.agent_config.horizon_length
         # action perturbation factor
         self.delta = self.agent_config.delta
+        self.causality = self.agent_config.causality
+        self.eligibility_trace = self.agent_config.eligibility_trace
         self.gamma = self.agent_config.gamma
         self.lam = self.agent_config.lam
         self.reward_scale = self.agent_config.reward_scale
@@ -405,45 +407,80 @@ class AFRLRunner:
 
             return rollout_reward / self.num_base_envs
 
-    def compute_delta_J(self):
-        """
-        This function computes the incremental trajectory rewards of each action compared to the nominal action.
-        """
-        # Initialize the incremental trajectory rewards
-        self.delta_J[:] = 0.0
-        # NOTE: next value is zero if done
-        curr_J = self.next_values[:, -1].clone()
+    def _compute_delta_J_noncausal(self) -> None:
+        """Non-causal (original) delta_J: assign the same return-difference to the entire trajectory segment."""
+        T = self.horizon_length
+        device = self.device
 
-        # The end of the current trajectory idx
-        traj_end_ids = torch.ones(self.num_envs, dtype=torch.int, device=self.device) * self.horizon_length
+        curr_J = self.next_values[:, -1].clone()  # NOTE: next value is zero if done
+        traj_end_ids = torch.ones(self.num_envs, dtype=torch.int, device=device) * T
 
-        for t in reversed(range(self.horizon_length)):
+        for t in reversed(range(T)):
             dones_env_ids = self.dones[:, t].nonzero(as_tuple=False).squeeze(-1)
 
-            if len(dones_env_ids) > 0 and t < self.horizon_length - 1:
+            if len(dones_env_ids) > 0 and t < T - 1:
                 assign_row_intervals(
                     tensor=self.delta_J,
-                    start=torch.ones_like(dones_env_ids, device=self.device) * (t + 1),
+                    start=torch.ones_like(dones_env_ids, device=device) * (t + 1),
                     end=traj_end_ids[dones_env_ids],
                     value=curr_J[dones_env_ids] - curr_J[self.get_nominal_idx_of_auxiliary_env(dones_env_ids)],
                     row_indices=dones_env_ids,
                 )
-                # Reset the trajectory end ids and curr_J
-                curr_J[dones_env_ids] = self.next_values[
-                    dones_env_ids, t
-                ].clone()  # NOTE: the next value is zero if done
+                curr_J[dones_env_ids] = self.next_values[dones_env_ids, t].clone()
                 traj_end_ids[dones_env_ids] = t + 1
 
             curr_J = self.gamma * curr_J + self.rewards[:, t]
 
-        # Assign the remaining trajectory rewards
         assign_row_intervals(
             tensor=self.delta_J,
-            start=torch.zeros(self.num_envs, device=self.device),
+            start=torch.zeros(self.num_envs, device=device),
             end=traj_end_ids,
-            value=curr_J
-            - curr_J[self.get_nominal_idx_of_auxiliary_env(torch.arange(self.num_envs, device=self.device))],
+            value=curr_J - curr_J[self.get_nominal_idx_of_auxiliary_env(torch.arange(self.num_envs, device=device))],
         )
+
+    def _compute_return_to_go(self, use_eligibility_trace: bool) -> None:
+        """Compute the return-to-go for each environment."""
+        Ai = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+        Bi = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+        lam = torch.ones(self.num_envs, dtype=torch.float32, device=self.device)
+        dones = self.dones.clone().to(torch.float32)
+        J = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
+        for i in reversed(range(self.horizon_length)):
+            lam = lam * self.lam * (1.0 - dones[:, i]) + dones[:, i]
+            Ai = (1.0 - dones[:, i]) * (
+                self.lam * self.gamma * Ai
+                + self.gamma * self.next_values[:, i]
+                + (1.0 - lam) / (1.0 - self.lam) * self.rewards[:, i]
+            )
+            Bi = self.gamma * (self.next_values[:, i] * dones[:, i] + Bi * (1.0 - dones[:, i])) + self.rewards[:, i]
+            if use_eligibility_trace:
+                J[:, i] = (1.0 - self.lam) * Ai + lam * Bi
+            else:
+                J[:, i] = Bi
+        return J
+
+    def _compute_delta_J_causal(self) -> None:
+        """Causal delta_J: per-timestep return-to-go difference; optionally TD(lambda) eligibility trace."""
+        J = self._compute_return_to_go(self.eligibility_trace)
+
+        nominal_ids = self.get_nominal_idx_of_auxiliary_env(torch.arange(self.num_envs, device=self.device))
+        self.delta_J[:] = J - J[nominal_ids]
+
+    def compute_delta_J(self) -> None:
+        """Compute incremental trajectory rewards (delta_J) relative to nominal envs.
+
+        - If self.causality is False: assign the trajectory rewards difference to the entire trajectory segment.
+        - If self.causality is True:
+          - If self.eligibility_trace is False: causal return-to-go difference.
+          - If self.eligibility_trace is True: TD(lambda)-style return with eligibility trace.
+        """
+
+        self.delta_J[:] = 0.0
+
+        if not self.causality:
+            self._compute_delta_J_noncausal()
+        else:
+            self._compute_delta_J_causal()
 
     def compute_action_ascent_direction(self):
         """
@@ -454,14 +491,14 @@ class AFRLRunner:
         # delta_J: [num_base_envs, num_action_perturbations + 1, horizon_length]
         delta_J = self.delta_J.view(self.num_base_envs, self.num_action_perturbations + 1, self.horizon_length)
 
-        # Per-(base env, timestep) variance across perturbations: [B, T]
+        # Per-(base env, timestep) variance across perturbations: [num_base_envs, horizon_length]
         delta_J_var = delta_J.var(dim=1)
         self.rollout_var = delta_J_var.mean()
         self.positive_rollout_ratio = (self.delta_J > 0).sum() / self.delta_J.numel()
 
         # Optional normalization (broadcast over num_action_perturbations + 1): [num_base_envs, num_action_perturbations + 1, horizon_length]
         if self.normalize_delta_J:
-            denom = torch.sqrt(delta_J_var).unsqueeze(1) + 1e-6  # [B, 1, T]
+            denom = torch.sqrt(delta_J_var).unsqueeze(1) + 1e-6  # [num_base_envs, 1, horizon_length]
             delta_J = delta_J / denom
 
         # Group eps_actions: [num_base_envs, num_action_perturbations + 1, horizon_length, num_actions]
@@ -489,21 +526,7 @@ class AFRLRunner:
         """
         This function computes the target values using TD(lambda) method.
         """
-        # TD-style return estimated
-        Ai = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
-        # Monte Carlo return estimated
-        Bi = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
-        lam = torch.ones(self.num_envs, dtype=torch.float32, device=self.device)
-        dones = self.dones.clone().to(torch.float32)
-        for i in reversed(range(self.horizon_length)):
-            lam = lam * self.lam * (1.0 - dones[:, i]) + dones[:, i]
-            Ai = (1.0 - dones[:, i]) * (
-                self.lam * self.gamma * Ai
-                + self.gamma * self.next_values[:, i]
-                + (1.0 - lam) / (1.0 - self.lam) * self.rewards[:, i]
-            )
-            Bi = self.gamma * (self.next_values[:, i] * dones[:, i] + Bi * (1.0 - dones[:, i])) + self.rewards[:, i]
-            self.target_values[:, i] = (1.0 - self.lam) * Ai + lam * Bi
+        self.target_values = self._compute_return_to_go(use_eligibility_trace=True)
 
     def train_actor(self):
         # Compute the incremental trajectory rewards
