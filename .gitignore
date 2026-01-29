@@ -209,5 +209,4 @@ __marimo__/
 logs/
 
 wandb/
-externals/
 .vscode/
