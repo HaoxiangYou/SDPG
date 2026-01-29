@@ -45,6 +45,11 @@ config:
   gamma: 0.99
   # TD(lambda)
   lam: 0.95
+  # Whether to use causality to compute the return
+  causality: True
+  # Whether to use eligibility traces to compute the return
+  eligibility_trace: True
+  
   reward_scale: 1.0
   target_critic_alpha: 0.01
 
