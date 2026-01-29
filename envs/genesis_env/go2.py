@@ -109,7 +109,6 @@ class Go2(GenesisEnv):
         # Will be set after scene is built
         self._base_dof_idx = None  # Base joint DOFs (6 DOFs: 3 translation + 3 rotation)
         self._motors_dof_idx = None
-        self._actions_dof_idx = None
 
         def find_link_indices(names):
             link_indices = list()
@@ -242,13 +241,6 @@ class Go2(GenesisEnv):
         # Get motor DOF indices after scene is built
         self._motors_dof_idx = [self._robot.get_joint(name).dof_start for name in self._motor_joint_names]
 
-        self._actions_dof_idx = torch.argsort(
-            torch.tensor(
-                self._motors_dof_idx,
-                dtype=gs.tc_int,
-                device=gs.device,
-            )
-        )
         # Set PD control parameters
         self._robot.set_dofs_kp([self._kp] * self._num_actions, self._motors_dof_idx)
         self._robot.set_dofs_kv([self._kd] * self._num_actions, self._motors_dof_idx)
@@ -445,7 +437,7 @@ class Go2(GenesisEnv):
         target_dof_pos = torch.clamp(target_dof_pos, self._joint_limits_low, self._joint_limits_high)
 
         # Control DOFs using position control (PD control is set in build_scene)
-        self._robot.control_dofs_position(target_dof_pos[:, self._actions_dof_idx], slice(6, 18))
+        self._robot.control_dofs_position(target_dof_pos, self._motors_dof_idx)
 
         # Store actions for observation
         self._prev_actions = actions.clone()
