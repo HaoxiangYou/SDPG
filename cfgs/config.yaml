@@ -8,12 +8,16 @@ defaults:
 hydra:
   run:
     dir: logs/${task.backend}/${task.name}/${agent.name}/${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: logs/${task.backend}/${task.name}/${agent.name}/${now:%Y-%m-%d_%H-%M-%S}
 
 # Wandb configuration
 wandb:
-  enabled: False  # Set to True to enable wandb logging
+  enable: False  # Set to True to enable Weights & Biases logging
   project: afrl  # Wandb project name
   entity: null  # Wandb entity/username (null for default)
+  group: null  # Group runs (same config, different seeds) for easy averaging/comparison
+  job_type: null  # Optional (e.g., train/eval/sweep)
   name: null  # Run name (null for auto-generated name)
   tags: []  # List of tags for the run
   notes: null  # Notes about the run

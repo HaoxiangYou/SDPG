@@ -5,12 +5,12 @@ import time
 
 import torch
 import torch.nn.functional as F
+import wandb
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from tensorboardX import SummaryWriter
 
 import models
-import wandb
 from utils.common_utils import TimeReport, make_envs, print_info
 from utils.statistic_utils import AverageMeter, RunningMeanStd
 from utils.tensor_utils import (
@@ -133,20 +133,22 @@ class AFRLRunner:
         self.time_report = TimeReport()
 
     def _init_wandb(self, config: DictConfig) -> bool:
-        if not hasattr(config, "wandb") or not config.wandb.get("enabled", False):
+        if not hasattr(config, "wandb") or not config.wandb.get("enable", False):
             return False
 
         wandb_config = config.wandb
+        # Keep wandb init simple: if a field is null, don't pass it (wandb will auto-generate).
         wandb_kwargs = {
             "project": wandb_config.get("project", "afrl"),
+            "entity": wandb_config.get("entity"),
+            "group": wandb_config.get("group"),
+            "job_type": wandb_config.get("job_type"),
             "name": wandb_config.get("name"),
             "tags": wandb_config.get("tags", []),
             "notes": wandb_config.get("notes"),
         }
         # Remove None values
         wandb_kwargs = {k: v for k, v in wandb_kwargs.items() if v is not None}
-        if wandb_config.get("entity"):
-            wandb_kwargs["entity"] = wandb_config.entity
 
         wandb.init(**wandb_kwargs)
 
@@ -981,7 +983,8 @@ class AFRLRunner:
 def make_runner(config: DictConfig):
     hydra_cfg = HydraConfig.get()
     if hydra_cfg is not None:
-        output_dir = hydra_cfg.run.dir
+        # Use runtime.output_dir so multirun jobs get their actual subdir (e.g. .../0, .../1)
+        output_dir = hydra_cfg.runtime.output_dir
         OmegaConf.set_struct(config, False)
         config.log_dir = output_dir
         OmegaConf.set_struct(config, True)
