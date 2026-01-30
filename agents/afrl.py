@@ -133,20 +133,22 @@ class AFRLRunner:
         self.time_report = TimeReport()
 
     def _init_wandb(self, config: DictConfig) -> bool:
-        if not hasattr(config, "wandb") or not config.wandb.get("enabled", False):
+        if not hasattr(config, "wandb") or not config.wandb.get("enable", False):
             return False
 
         wandb_config = config.wandb
+        # Keep wandb init simple: if a field is null, don't pass it (wandb will auto-generate).
         wandb_kwargs = {
             "project": wandb_config.get("project", "afrl"),
+            "entity": wandb_config.get("entity"),
+            "group": wandb_config.get("group"),
+            "job_type": wandb_config.get("job_type"),
             "name": wandb_config.get("name"),
             "tags": wandb_config.get("tags", []),
             "notes": wandb_config.get("notes"),
         }
         # Remove None values
         wandb_kwargs = {k: v for k, v in wandb_kwargs.items() if v is not None}
-        if wandb_config.get("entity"):
-            wandb_kwargs["entity"] = wandb_config.entity
 
         wandb.init(**wandb_kwargs)
 
