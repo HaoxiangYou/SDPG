@@ -5,12 +5,12 @@ import time
 
 import torch
 import torch.nn.functional as F
+import wandb
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from tensorboardX import SummaryWriter
 
 import models
-import wandb
 from utils.common_utils import TimeReport, make_envs, print_info
 from utils.statistic_utils import AverageMeter, RunningMeanStd
 from utils.tensor_utils import (
@@ -983,7 +983,8 @@ class AFRLRunner:
 def make_runner(config: DictConfig):
     hydra_cfg = HydraConfig.get()
     if hydra_cfg is not None:
-        output_dir = hydra_cfg.run.dir
+        # Use runtime.output_dir so multirun jobs get their actual subdir (e.g. .../0, .../1)
+        output_dir = hydra_cfg.runtime.output_dir
         OmegaConf.set_struct(config, False)
         config.log_dir = output_dir
         OmegaConf.set_struct(config, True)
