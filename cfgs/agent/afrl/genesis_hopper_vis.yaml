@@ -15,7 +15,7 @@ config:
       
       # Policy head processes concatenated encoded features
       policy_head:
-        type: deterministic_mlp  # Options: deterministic
+        type: mlp
         network:
           units: [128, 64, 32]
           activation: elu
@@ -77,7 +77,7 @@ config:
   
   # batch size for training the critic
   mini_batch_size: 4096
-  critic_iterations: 16
+  critic_iterations: 2
 
   truncated_grads: True
   grad_norm: 1.0

@@ -12,10 +12,13 @@ config:
       
       # Policy head processes concatenated encoded features
       policy_head:
-        type: deterministic_mlp  # Options: deterministic
+        type: mlp
         network:
           units: [128, 64, 32]
           activation: elu
+        # fixed_std true = constant log_std (use log_std_init); false = learn log_std
+        fixed_std: true
+        log_std_init: 0.0
     
     critic:
       # List of input sources, each with name, encoder, and RMS normalization flag
@@ -39,8 +42,6 @@ config:
 
   max_epochs: 5000
   horizon_length: 32
-  # Action perturbation factor
-  delta: 1.0
   # Discount factor
   gamma: 0.99
   # TD(lambda)
@@ -74,7 +75,7 @@ config:
   
   # batch size for training the critic
   mini_batch_size: 4096
-  critic_iterations: 16
+  critic_iterations: 2
 
   truncated_grads: True
   grad_norm: 1.0
