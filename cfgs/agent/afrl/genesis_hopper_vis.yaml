@@ -43,7 +43,7 @@ config:
   # Total number of environments = num_base_envs  * ( num_action_perturbations + 1 )
   num_envs: ${compute_num_envs:${.num_base_envs},${.num_action_perturbations}}
 
-  max_epochs: 5000
+  max_epochs: 20000
   horizon_length: 32
   # Action perturbation factor
   delta: 1.0
@@ -68,7 +68,7 @@ config:
   actor_lr_schedule:
     name: cosine  # Options: null, linear, cosine (cosine includes warmup)
     # CosineAnnealingLR with warmup parameters
-    T_max: 5000
+    T_max: 20000
     eta_min: 1e-5
     warmup_epochs: 100  # Number of epochs for warmup (linear increase from warmup_start_lr to actor_lr)
     warmup_start_lr: 0  # Starting learning rate for warmup (default: 0.0)
