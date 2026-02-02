@@ -15,10 +15,13 @@ config:
       
       # Policy head processes concatenated encoded features
       policy_head:
-        type: deterministic_mlp  # Options: deterministic
+        type: mlp
         network:
           units: [256, 128]
           activation: elu
+        # fixed_std true = constant log_std (use log_std_init); false = learn log_std
+        fixed_std: false
+        log_std_init: 0.0
     
     critic:
       # List of input sources, each with name, encoder, and RMS normalization flag

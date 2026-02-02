@@ -43,7 +43,6 @@ class AFRLRunner:
         self.max_epochs = self.agent_config.max_epochs
         self.horizon_length = self.agent_config.horizon_length
         # action perturbation factor
-        self.delta = self.agent_config.delta
         self.causality = self.agent_config.causality
         self.eligibility_trace = self.agent_config.eligibility_trace
         self.gamma = self.agent_config.gamma
@@ -120,6 +119,9 @@ class AFRLRunner:
             (self.num_envs, self.horizon_length, self.num_actions), dtype=torch.float32, device=self.device
         )
         self.eps_actions = torch.zeros(
+            (self.num_envs, self.horizon_length, self.num_actions), dtype=torch.float32, device=self.device
+        )
+        self.log_stds = torch.zeros(
             (self.num_envs, self.horizon_length, self.num_actions), dtype=torch.float32, device=self.device
         )
         self.rewards = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
@@ -236,6 +238,7 @@ class AFRLRunner:
         positive_rollout_ratio: float,
         actor_grad_norm: float,
         critic_grad_norm: float,
+        policy_std: float,
         iter: int,
         step: int,
         time_elapse: float | None = None,
@@ -266,6 +269,7 @@ class AFRLRunner:
         metrics = {
             "actor_loss": actor_loss,
             "critic_loss": critic_loss,
+            "policy_std": policy_std,
             "rollout_reward": rollout_reward,
             "rollout_reward_var": rollout_var,
             "rollout_reward_positive_ratio": positive_rollout_ratio,
@@ -341,15 +345,17 @@ class AFRLRunner:
                 actor_obs_buf.append(clone_dict_tensors(actor_obs))
 
                 # Compute the nominal actions
-                nominal_actions = self.actor(actor_obs)
-                nominal_actions = nominal_actions.repeat_interleave(self.num_action_perturbations + 1, dim=0)
-
+                out = self.actor(actor_obs)
+                nominal_actions = out["mean"].repeat_interleave(self.num_action_perturbations + 1, dim=0)
+                log_std = out["log_std"].repeat_interleave(self.num_action_perturbations + 1, dim=0)
+                std = torch.exp(log_std)
                 # Sample the action perturbations
                 eps_actions = torch.randn_like(nominal_actions)
                 eps_actions[self.nominal_env_ids] = 0.0
-                actions = nominal_actions + eps_actions * self.delta
+                actions = nominal_actions + eps_actions * std
                 self.actions[:, i] = actions.clone()
                 self.eps_actions[:, i] = eps_actions.clone()
+                self.log_stds[:, i] = log_std.clone()
 
                 # Step the environment
                 # TODO: currently assume the action is bounded by [-1, 1], and we step using tanh
@@ -484,9 +490,9 @@ class AFRLRunner:
         else:
             self._compute_delta_J_causal()
 
-    def compute_action_ascent_direction(self):
+    def compute_ascent_direction(self):
         """
-        This function computes the ascent direction for improving the nominal action by weighting all the perturbations.
+        This function computes the ascent direction for improving the mean and log std of policy by weighting all the perturbations.
         """
 
         # Group by base environments:
@@ -503,12 +509,31 @@ class AFRLRunner:
             denom = torch.sqrt(delta_J_var).unsqueeze(1) + 1e-6  # [num_base_envs, 1, horizon_length]
             delta_J = delta_J / denom
 
-        # Group eps_actions: [num_base_envs, num_action_perturbations + 1, horizon_length, num_actions]
-        eps_grouped = self.eps_actions.view(
+        # Group eps: [num_base_envs, num_action_perturbations + 1, horizon_length, num_actions]
+        eps = self.eps_actions.view(
             self.num_base_envs, self.num_action_perturbations + 1, self.horizon_length, self.num_actions
         )
-        weighted_grouped = (
-            delta_J.unsqueeze(-1) * eps_grouped
+
+        # TODO: Should we devide the mean by the std?
+        # Divide by the std match the policy gradient formulation
+        # But it may break the normalization property, we currently has
+        # Moreover, the update of mean will be large when std is small
+        # TODO Currently, instead of dividing the mean by the std, we multiply the std to log_std_weighted.
+        # This prevents the std to becoming too small too quickly, also stabilize the update for means.
+        std = torch.exp(
+            self.log_stds.view(
+                self.num_base_envs, self.num_action_perturbations + 1, self.horizon_length, self.num_actions
+            )
+        )
+
+        mean_weighted_grouped = (
+            delta_J.unsqueeze(-1) * eps
+        )  # [num_base_envs, num_action_perturbations + 1, horizon_length, num_actions]
+
+        # TODO: Currently, state-dependent std corrupts to small values very quickly.
+        # It seems fixed std with a high value works best?
+        log_std_weighted_grouped = (
+            delta_J.unsqueeze(-1) * (eps**2 - 1) * std
         )  # [num_base_envs, num_action_perturbations + 1, horizon_length, num_actions]
 
         k = min(self.top_k_perturbations, self.num_action_perturbations + 1)
@@ -518,11 +543,13 @@ class AFRLRunner:
             topk_idx = topk_idx.unsqueeze(-1).expand(
                 -1, -1, -1, self.num_actions
             )  # [num_base_envs, k, horizon_length, num_actions]
-            action_ascent_direction = torch.gather(weighted_grouped, dim=1, index=topk_idx).mean(dim=1)
+            mean_ascent_direction = torch.gather(mean_weighted_grouped, dim=1, index=topk_idx).mean(dim=1)
+            log_std_ascent_direction = torch.gather(log_std_weighted_grouped, dim=1, index=topk_idx).mean(dim=1)
         else:
-            action_ascent_direction = weighted_grouped.mean(dim=1)
+            mean_ascent_direction = mean_weighted_grouped.mean(dim=1)
+            log_std_ascent_direction = log_std_weighted_grouped.mean(dim=1)
 
-        return action_ascent_direction
+        return mean_ascent_direction, log_std_ascent_direction
 
     def compute_target_values(self):
         """
@@ -534,20 +561,27 @@ class AFRLRunner:
         # Compute the incremental trajectory rewards
         self.compute_delta_J()
         # Compute the action ascent direction for each nominal environment
-        action_ascent_direction = self.compute_action_ascent_direction()
+        mean_ascent_direction, log_std_ascent_direction = self.compute_ascent_direction()
 
         obs = flatten_dict(self.actor_obs_buf, start_dim=0, end_dim=1)
 
-        target_actions = self.actions[self.nominal_env_ids] + action_ascent_direction
-        target_actions = target_actions.view(-1, self.num_actions)
+        target_mean = self.actions[self.nominal_env_ids] + mean_ascent_direction
+        target_log_std = self.log_stds[self.nominal_env_ids] + log_std_ascent_direction
+        target_actions = {
+            "mean": target_mean.view(-1, self.num_actions),
+            "log_std": target_log_std.view(-1, self.num_actions),
+        }
         # TODO: the pred_actions may be slightly different from the target_actions (in the magnitude of 1e-6)
         pred_actions = self.actor(obs)
 
         # Update the actor
-        self.actor_optimizer.zero_grad()
         # TODO: currently we use all trajectory as single batch, and update the actor once.
         # Would be possible to use mini-batch training and run multiple updates, like PPO?
-        actor_loss = F.mse_loss(pred_actions, target_actions)
+        self.actor_optimizer.zero_grad()
+
+        actor_loss = F.mse_loss(pred_actions["mean"], target_actions["mean"]) + F.mse_loss(
+            pred_actions["log_std"], target_actions["log_std"]
+        )
         actor_loss.backward()
         self.actor_grad_norm = compute_grad_norm(self.actor.parameters())
         if self.truncated_grads:
@@ -748,7 +782,7 @@ class AFRLRunner:
         for t in range(maximum_trajectory_length):
             # process the observations with the running statistics
             obs = self.process_observations(obs, self.obs_rms)
-            actions = self.actor(obs)
+            actions = self.actor(obs)["mean"]
             obs, rewards, terminated, truncated, info = self.env.step(torch.tanh(actions), auto_reset=True)
             dones = terminated | truncated
             done_env_ids = dones.nonzero(as_tuple=False).squeeze(-1).to(torch.int32)
@@ -811,6 +845,7 @@ class AFRLRunner:
                 positive_rollout_ratio=self.positive_rollout_ratio,
                 actor_grad_norm=self.actor_grad_norm,
                 critic_grad_norm=self.critic_grad_norm,
+                policy_std=torch.exp(self.log_stds.mean()),
                 iter=self.iter_count,
                 step=self.step_count,
                 time_elapse=time_elapse,
