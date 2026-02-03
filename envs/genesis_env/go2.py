@@ -21,19 +21,16 @@ class Go2(GenesisEnv):
 
     _num_actions = 12
     _action_space = spaces.Box(low=-1.0, high=1.0, shape=(12,))
-    _observation_space = spaces.Dict(
-        {
-            "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(45,)),
-        }
-    )
 
     def __init__(
         self,
         num_envs: int,
-        render: bool = False,
+        vis_obs: bool = False,
         seed: int = 0,
         randomize_init: bool = True,
+        nominal_env_ids: Optional[Sequence[int]] = None,
         device: torch.device | None = None,
+        sensors_args: Dict[str, Any] | None = None,
         sim_options: gs.options.SimOptions | None = None,
         viewer_options: gs.options.ViewerOptions | None = None,
         vis_options: gs.options.VisOptions | None = None,
@@ -45,14 +42,20 @@ class Go2(GenesisEnv):
 
         episode_length = 1000  # Will be converted based on dt in reference
         early_termination = True
-        self._sim_dt = 0.02  # sim_options.dt
+        self._observation_space = spaces.Dict(
+            {
+                "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(45,)),
+            }
+        )
 
         super().__init__(
             num_envs=num_envs,
             episode_length=episode_length,
             early_termination=early_termination,
+            sensors_args=sensors_args,
             seed=seed,
             randomize_init=randomize_init,
+            nominal_env_ids=nominal_env_ids,
             device=device,
             show_viewer=show_viewer,
             sim_options=sim_options,
@@ -322,7 +325,7 @@ class Go2(GenesisEnv):
             name = self._reward_names[i]
             reward += self._reward_functions[i](robot_states, actions) * self._reward_scales[name]
 
-        return reward * self._sim_dt
+        return reward
 
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
         """Compute termination based on roll/pitch angles."""
