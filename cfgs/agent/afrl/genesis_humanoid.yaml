@@ -2,17 +2,36 @@ name: afrl
 
 config:
 
-  network:
+  model:
     actor:
-      name: ActorDeterministicMLP
-      mlp:
-        units: [256, 128]
-        activation: elu
+      # List of input sources, each with name, encoder, and RMS normalization flag
+      inputs:
+        - name: privileged_observations
+          encoder: null  # null = pass-through (no encoding)
+          apply_rms: true
+      
+      # Policy head processes concatenated encoded features
+      policy_head:
+        type: mlp
+        network:
+          units: [256, 128]
+          activation: elu
+        # fixed_std true = constant log_std (use log_std_init); false = learn log_std
+        fixed_std: false
+        log_std_init: 0.0
+    
     critic:
-      name: CriticMLP
-      mlp:
-        units: [128, 128]
-        activation: elu
+      # List of input sources, each with name, encoder, and RMS normalization flag
+      inputs:
+        - name: privileged_observations
+          encoder: null  # null = pass-through (no encoding)
+          apply_rms: true
+      # Value head processes concatenated encoded features to output scalar value
+      value_head:
+        type: mlp
+        network:
+          units: [128, 128]
+          activation: elu
 
   # Number of base environments for rollout
   num_base_envs: 64
@@ -31,6 +50,11 @@ config:
   gamma: 0.99
   # TD(lambda)
   lam: 0.95
+  # Whether to use causality to compute the return
+  causality: True
+  # Whether to use eligibility traces to compute the return
+  eligibility_trace: True
+  
   reward_scale: 1.0
   target_critic_alpha: 0.005
 
@@ -56,7 +80,7 @@ config:
   
   # batch size for training the critic
   mini_batch_size: 4096
-  critic_iterations: 16
+  critic_iterations: 2
 
   truncated_grads: True
   grad_norm: 1.0

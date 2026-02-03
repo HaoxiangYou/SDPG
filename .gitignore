@@ -209,6 +209,4 @@ __marimo__/
 logs/
 
 wandb/
-externals/
 .vscode/
-go2_hardware/

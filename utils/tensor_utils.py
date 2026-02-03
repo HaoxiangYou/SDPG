@@ -459,3 +459,186 @@ def dicts_equal(
             result[key] = val1 == val2
 
     return result
+
+
+def clone_dict_tensors(tensor_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    """Clone all tensors in a dictionary.
+
+    Creates a deep copy of a dictionary where all values are tensors,
+    cloning each tensor to avoid reference issues.
+
+    Args:
+        tensor_dict: Dictionary with string keys and tensor values.
+                    Example: {"key1": tensor1, "key2": tensor2}
+
+    Returns:
+        New dictionary with cloned tensors. Structure is preserved.
+
+    Example:
+        >>> obs = {"privileged_observations": torch.randn(64, 11), "RGB": torch.randn(64, 9, 256, 256)}
+        >>> obs_clone = clone_dict_tensors(obs)
+        >>> # obs_clone contains cloned tensors, modifications won't affect original
+    """
+    return {key: value.clone() for key, value in tensor_dict.items()}
+
+
+def concat_dict_list(dict_list: Sequence[Dict[str, torch.Tensor]], dim: int = 0) -> Dict[str, torch.Tensor]:
+    """Concatenate a list of dictionaries with same keys into a single dictionary.
+
+    Takes a list of dictionaries where each dictionary has the same keys,
+    and concatenates the corresponding tensors along the specified dimension.
+
+    Args:
+        dict_list: List of dictionaries, each with same keys and tensor values.
+                  Example: [{"key1": tensor1_t0, "key2": tensor2_t0},
+                           {"key1": tensor1_t1, "key2": tensor2_t1}, ...]
+        dim: Dimension along which to concatenate. Default is 0 (leading dimension).
+
+    Returns:
+        Single dictionary with concatenated tensors.
+        Example: {"key1": concat([tensor1_t0, tensor1_t1, ...], dim=0),
+                 "key2": concat([tensor2_t0, tensor2_t1, ...], dim=0)}
+
+    Example:
+        >>> obs_buf = [
+        ...     {"privileged_observations": torch.randn(64, 11), "RGB": torch.randn(64, 9, 256, 256)},
+        ...     {"privileged_observations": torch.randn(64, 11), "RGB": torch.randn(64, 9, 256, 256)},
+        ... ]
+        >>> obs_concat = concat_dict_list(obs_buf, dim=0)
+        >>> # obs_concat["privileged_observations"] has shape (128, 11)
+        >>> # obs_concat["RGB"] has shape (128, 9, 256, 256)
+    """
+    if not dict_list:
+        return {}
+
+    # Get keys from first dictionary (assume all dicts have same keys)
+    keys = dict_list[0].keys()
+
+    # Verify all dictionaries have the same keys
+    for i, d in enumerate(dict_list[1:], 1):
+        if set(d.keys()) != set(keys):
+            raise ValueError(f"Dictionary at index {i} has different keys than the first dictionary")
+
+    # Concatenate tensors for each key
+    result = {}
+    for key in keys:
+        tensors = [d[key] for d in dict_list]
+        result[key] = torch.cat(tensors, dim=dim)
+
+    return result
+
+
+def stack_dict_list(dict_list: Sequence[Dict[str, torch.Tensor]], dim: int = 0) -> Dict[str, torch.Tensor]:
+    """Stack a list of dictionaries with same keys into a single dictionary.
+
+    Takes a list of dictionaries where each dictionary has the same keys,
+    and stacks the corresponding tensors along a new dimension.
+
+    Args:
+        dict_list: List of dictionaries, each with same keys and tensor values.
+                  Example: [{"key1": tensor1_t0, "key2": tensor2_t0},
+                           {"key1": tensor1_t1, "key2": tensor2_t1}, ...]
+        dim: Dimension along which to stack. Default is 0 (creates new leading dimension).
+
+    Returns:
+        Single dictionary with stacked tensors.
+        Example: {"key1": stack([tensor1_t0, tensor1_t1, ...], dim=0),
+                 "key2": stack([tensor2_t0, tensor2_t1, ...], dim=0)}
+        If input tensors have shape (N, ...), output will have shape (len(dict_list), N, ...)
+
+    Example:
+        >>> obs_buf = [
+        ...     {"privileged_observations": torch.randn(64, 11), "RGB": torch.randn(64, 9, 256, 256)},
+        ...     {"privileged_observations": torch.randn(64, 11), "RGB": torch.randn(64, 9, 256, 256)},
+        ... ]
+        >>> obs_stack = stack_dict_list(obs_buf, dim=0)
+        >>> # obs_stack["privileged_observations"] has shape (2, 64, 11)
+        >>> # obs_stack["RGB"] has shape (2, 64, 9, 256, 256)
+    """
+    if not dict_list:
+        return {}
+
+    # Get keys from first dictionary (assume all dicts have same keys)
+    keys = dict_list[0].keys()
+
+    # Verify all dictionaries have the same keys
+    for i, d in enumerate(dict_list[1:], 1):
+        if set(d.keys()) != set(keys):
+            raise ValueError(f"Dictionary at index {i} has different keys than the first dictionary")
+
+    # Stack tensors for each key
+    result = {}
+    for key in keys:
+        tensors = [d[key] for d in dict_list]
+        result[key] = torch.stack(tensors, dim=dim)
+
+    return result
+
+
+def moveaxis_dict(
+    tensor_dict: Dict[str, torch.Tensor], source: Union[int, Sequence[int]], destination: Union[int, Sequence[int]]
+) -> Dict[str, torch.Tensor]:
+    """Move axes of tensors in a dictionary.
+
+    Applies `torch.moveaxis` to each tensor in the dictionary, moving the specified
+    source axes to the destination positions.
+
+    Args:
+        tensor_dict: Dictionary with string keys and tensor values.
+        source: Original positions of the axes to move. Can be int or sequence of ints.
+        destination: Destination positions for each of the original axes.
+                    Must have the same length as source.
+
+    Returns:
+        Dictionary with same keys, but tensors have axes moved.
+
+    Example:
+        >>> obs = {
+        ...     "privileged_observations": torch.randn(2, 64, 11),  # (time, batch, features)
+        ...     "RGB": torch.randn(2, 64, 9, 256, 256),  # (time, batch, channels, H, W)
+        ... }
+        >>> # Move time dimension (dim 0) to last position
+        >>> obs_moved = moveaxis_dict(obs, source=0, destination=-1)
+        >>> # obs_moved["privileged_observations"] has shape (64, 11, 2)
+        >>> # obs_moved["RGB"] has shape (64, 9, 256, 256, 2)
+        >>> # Move time dimension to position 1 (after batch)
+        >>> obs_moved = moveaxis_dict(obs, source=0, destination=1)
+        >>> # obs_moved["privileged_observations"] has shape (64, 2, 11)
+        >>> # obs_moved["RGB"] has shape (64, 2, 9, 256, 256)
+    """
+    result = {}
+    for key, tensor in tensor_dict.items():
+        result[key] = torch.moveaxis(tensor, source, destination)
+    return result
+
+
+def flatten_dict(
+    tensor_dict: Dict[str, torch.Tensor], start_dim: int = 0, end_dim: int = -1
+) -> Dict[str, torch.Tensor]:
+    """Flatten specified dimensions of tensors in a dictionary.
+
+    Applies `torch.flatten` to each tensor in the dictionary, flattening dimensions
+    from start_dim to end_dim (inclusive).
+
+    Args:
+        tensor_dict: Dictionary with string keys and tensor values.
+        start_dim: First dimension to flatten (default: 0).
+        end_dim: Last dimension to flatten (default: -1, meaning flatten all from start_dim to end).
+
+    Returns:
+        Dictionary with same keys, but tensors have specified dimensions flattened.
+
+    Example:
+        >>> obs = {
+        ...     "privileged_observations": torch.randn(64, 32, 11),  # (num_envs, horizon_length, features)
+        ...     "RGB": torch.randn(64, 32, 9, 256, 256),  # (num_envs, horizon_length, channels, H, W)
+        ... }
+        >>> # Flatten first two dimensions (num_envs, horizon_length)
+        >>> obs_flat = flatten_dict(obs, start_dim=0, end_dim=1)
+        >>> # obs_flat["privileged_observations"] has shape (64*32, 11) = (2048, 11)
+        >>> # obs_flat["RGB"] has shape (64*32, 9, 256, 256) = (2048, 9, 256, 256)
+    """
+    result = {}
+    for key, tensor in tensor_dict.items():
+        result[key] = tensor.flatten(start_dim=start_dim, end_dim=end_dim)
+    return result

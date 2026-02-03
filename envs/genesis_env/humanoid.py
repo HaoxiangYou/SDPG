@@ -13,10 +13,8 @@ from envs.genesis_env.genesis_env import GenesisEnv
 class Humanoid(GenesisEnv):
     """Humanoid environment."""
 
-    _num_observations = 76
     _num_actions = 21
     _action_space = spaces.Box(low=-1.0, high=1.0, shape=(21,))
-    _observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(76,))
 
     def __init__(
         self,
@@ -36,8 +34,6 @@ class Humanoid(GenesisEnv):
         episode_length = 1000
         early_termination = True
 
-        self._vis_obs = vis_obs
-
         if sensors_args is None:
             sensors_args = {
                 "camera": {
@@ -56,15 +52,16 @@ class Humanoid(GenesisEnv):
                 }
             }
 
+        self._vis_obs = vis_obs
         if vis_obs:
             self._num_image_stack = 3
             self._observation_space = spaces.Dict(
                 {
                     "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(76,)),
                     "RGB": spaces.Box(
-                        low=0.0,
+                        low=0,
                         high=255,
-                        dtype=torch.uint8,
+                        dtype=np.uint8,
                         shape=(
                             self._num_image_stack * 3,
                             sensors_args["camera"]["res"][0],
@@ -84,11 +81,11 @@ class Humanoid(GenesisEnv):
             num_envs=num_envs,
             episode_length=episode_length,
             early_termination=early_termination,
+            sensors_args=sensors_args,
             seed=seed,
             randomize_init=randomize_init,
             nominal_env_ids=nominal_env_ids,
             device=device,
-            sensors_args=sensors_args,
             show_viewer=show_viewer,
             sim_options=sim_options,
             viewer_options=viewer_options,
@@ -105,6 +102,7 @@ class Humanoid(GenesisEnv):
         )
         self._plane = self._scene.add_entity(gs.morphs.Plane())
 
+        # A record of the previous actions
         self._prev_actions = torch.zeros(self._num_envs, self._num_actions, device=self._device)
 
         self._motor_joint_names = [
@@ -361,6 +359,10 @@ class Humanoid(GenesisEnv):
         pos = self._torso_link.get_pos()
         self._camera_mount.set_pos(pos)
 
+        # TODO: genesis will refresh the image when the scene._dt is different from the last render time
+        # TODO: temporarily we hack by setting the last render time to 0 to force render the new image
+        self._camera._shared_metadata.last_render_timestep = 0
+        # TODO: the batch renderer will first render for all envs, and then return the data for the envs_idx, this may significantly increase the render memory
         data = self._camera.read(envs_idx=env_ids)
         return data.rgb
 
@@ -384,8 +386,7 @@ class Humanoid(GenesisEnv):
             "prev_actions": self._prev_actions[env_ids].clone(),
         }
 
-        if self._vis_obs:
-            robot_states["RGB_history"] = self._imgs_buf[env_ids].clone()
+        # TODO: shall we treat the image buffer as part of the robot states?
 
         states = {
             "robot_states": robot_states,
@@ -418,7 +419,6 @@ class Humanoid(GenesisEnv):
 
         self._prev_actions[env_ids] = robot_states["prev_actions"].clone()
 
-        if self._vis_obs:
-            self._imgs_buf[env_ids] = robot_states["RGB_history"].clone()
+        # TODO: shall we update the image buffer here?
 
         self._progress_buf[env_ids] = states["progress_buf"].clone()

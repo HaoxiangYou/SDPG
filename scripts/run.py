@@ -53,9 +53,9 @@ def main(cfg: DictConfig) -> None:
             # Resolve all interpolations in the config (resolves ${...} references)
             OmegaConf.resolve(cfg)
 
-            # If not training, overwrite env config with the play mode
+            # If not training, merge play config into task config
             if not cfg.train:
-                cfg.task.config = cfg.task.play
+                cfg.task.config = OmegaConf.merge(cfg.task.config, cfg.task.play)
                 cfg.num_envs = cfg.task.play.num_envs
                 cfg.agent.config.num_envs = cfg.task.play.num_envs
 
@@ -67,7 +67,7 @@ def main(cfg: DictConfig) -> None:
         OmegaConf.resolve(cfg)
 
         if not cfg.train:
-            cfg.task.config = cfg.task.play
+            cfg.task.config = OmegaConf.merge(cfg.task.config, cfg.task.play)
             cfg.num_envs = cfg.task.play.num_envs
             cfg.agent.config.num_envs = cfg.task.play.num_envs
 

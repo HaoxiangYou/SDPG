@@ -13,10 +13,8 @@ from envs.genesis_env.genesis_env import GenesisEnv
 class Hopper(GenesisEnv):
     """Hopper environment."""
 
-    _num_observations = 11
     _num_actions = 3
     _action_space = spaces.Box(low=-1.0, high=1.0, shape=(3,))
-    _observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(11,))
 
     def __init__(
         self,
@@ -278,6 +276,10 @@ class Hopper(GenesisEnv):
         pos = self._torso_link.get_pos()
         self._camera_mount.set_pos(pos)
 
+        # TODO: genesis will refresh the image when the scene._dt is different from the last render time
+        # TODO: temporarily we hack by setting the last render time to 0 to force render the new image
+        self._camera._shared_metadata.last_render_timestep = 0
+        # TODO: the batch renderer will first render for all envs, and then return the data for the envs_idx, this may significantly increase the render memory
         data = self._camera.read(envs_idx=env_ids)
         return data.rgb
 
@@ -297,8 +299,7 @@ class Hopper(GenesisEnv):
             "motor_joints_vel": motor_joints_vel.clone(),
         }
 
-        if self._vis_obs:
-            robot_states["RGB_history"] = self._imgs_buf[env_ids].clone()
+        # TODO: shall we treat the image buffer as part of the robot states?
 
         states = {
             "robot_states": robot_states,
@@ -339,7 +340,6 @@ class Hopper(GenesisEnv):
             envs_idx=env_ids,
         )
 
-        if self._vis_obs:
-            self._imgs_buf[env_ids] = robot_states["RGB_history"].clone()
+        # TODO: shall we update the image buffer here?
 
         self._progress_buf[env_ids] = states["progress_buf"].clone()
