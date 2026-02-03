@@ -1,0 +1,69 @@
+name: afrl
+
+config:
+
+  network:
+    actor:
+      name: ActorDeterministicMLP
+      mlp:
+        units: [512, 256, 128]
+        activation: elu
+    critic:
+      name: CriticMLP
+      mlp:
+        units: [512, 256, 128]
+        activation: elu
+
+  # Number of base environments for rollout
+  num_base_envs: 64
+  # Number of auxiliary environments for estimating the descent direction
+  num_action_perturbations: 63
+  # Number of top k perturbations to use for the ascent direction computation
+  top_k_perturbations: null
+  # Total number of environments = num_base_envs  * ( num_action_perturbations + 1 )
+  num_envs: ${compute_num_envs:${.num_base_envs},${.num_action_perturbations}}
+
+  max_epochs: 20000
+  horizon_length: 32
+  # Action perturbation factor
+  delta: 1.0
+  # Discount factor
+  gamma: 0.99
+  # TD(lambda)
+  lam: 0.95
+  reward_scale: 1.0
+  target_critic_alpha: 0.005
+
+  actor_lr:  2e-3
+  critic_lr: 5e-4
+  # Adam beta
+  betas: [0.7, 0.95]
+
+
+  # Learning rate schedules
+  actor_lr_schedule:
+    name: cosine  # Options: null, linear, cosine (cosine includes warmup)
+    # CosineAnnealingLR with warmup parameters
+    T_max: 20000
+    eta_min: 1e-5
+    warmup_epochs: 100  # Number of epochs for warmup (linear increase from warmup_start_lr to actor_lr)
+    warmup_start_lr: 0  # Starting learning rate for warmup (default: 0.0)
+  
+  critic_lr_schedule:
+    name: linear  # Options: null, linear, cosine
+    start_factor: 1.0
+    end_factor: 0.1
+  
+  # batch size for training the critic
+  mini_batch_size: 4096
+  critic_iterations: 8
+
+  truncated_grads: True
+  grad_norm: 1.0
+
+  # Whether to use running mean and std for the observations and reward
+  obs_rms: True
+  ret_rms: False
+  normalize_delta_J: True
+
+  save_frequency: 400
