@@ -15,7 +15,6 @@ class Hopper(GenesisEnv):
 
     _num_actions = 3
     _action_space = spaces.Box(low=-1.0, high=1.0, shape=(3,))
-    _observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(11,))
 
     def __init__(
         self,

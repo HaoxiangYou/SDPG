@@ -15,7 +15,6 @@ class Humanoid(GenesisEnv):
 
     _num_actions = 21
     _action_space = spaces.Box(low=-1.0, high=1.0, shape=(21,))
-    _observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(76,))
 
     def __init__(
         self,
