@@ -47,6 +47,7 @@ class Go2(GenesisEnv):
                 "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(45,)),
             }
         )
+        self._sim_dt = sim_options.dt
 
         super().__init__(
             num_envs=num_envs,
@@ -170,20 +171,34 @@ class Go2(GenesisEnv):
         self._global_gravity = torch.tensor([0.0, 0.0, -1.0], dtype=gs.tc_float, device=self._device)
 
         # Reward configuration
+        self._soft_dof_limit = 0.9
+        self._reward_base_height_target = 0.36
+        self._reward_foot_clearance_target = 0.05
+        self._reward_foot_height_offset = 0.022
+        self._reward_foot_clearance_tracking_sigma = 0.01
+        self._only_positive_rewards = True
         self._reward_tracking_sigma = 0.25
-        self._reward_base_height_target = 0.3
+
         self._reward_scales = {
+            # joint limit
+            "dof_pos_limits": -10.0,
+            "collision": -1.0,
+            # command tracking
             "tracking_lin_vel": 1.0,
-            "tracking_ang_vel": 0.2,  # 0.5,
-            "lin_vel_z": -1.0,  # -2.0,
-            # "ang_vel_xy": -0.05,
-            # "orientation": -10,
-            "base_height": -50.0,
-            # "collision": -1.0,
-            # "dof_acc": -2.5e-7,
-            # "feet_air_time": 1.0,
-            "action_rate": -0.005,  # -0.01,
-            "similar_to_default": -0.1,
+            "tracking_ang_vel": 0.5,
+            # smooth
+            "lin_vel_z": -0.5,
+            "base_height": -2.0,
+            "ang_vel_xy": -0.05,
+            "orientation": -1.0,
+            "dof_vel": -5.0e-4,
+            "dof_acc": -2.0e-7,
+            "action_rate": -0.01,
+            # "action_smoothness": -0.01,
+            "torques": -2.0e-4,
+            # gait
+            "feet_air_time": 1.0,
+            "foot_clearance": 0.5,
         }
 
         # Command configuration
@@ -221,17 +236,35 @@ class Go2(GenesisEnv):
             self._num_envs, self._command_cfg["num_commands"], device=self._device
         )  # [lin_vel_x, lin_vel_y, ang_vel]
         self._link_contact_forces = torch.zeros(
-            (self._num_envs, self._robot.n_links, 3), device=self._device, dtype=gs.tc_float
+            (self._num_envs, self._robot.n_links, 3), device=self._device, dtype=torch.float
         )
         self._feet_air_time = torch.zeros(
             (self._num_envs, self._num_feet),
             device=self._device,
-            dtype=gs.tc_float,
+            dtype=torch.float,
         )
         self._last_contacts = torch.zeros(
             (self._num_envs, self._num_feet),
             device=self._device,
-            dtype=gs.tc_int,
+            dtype=torch.bool,
+        )
+
+        self._foot_vel = torch.zeros(
+            (self._num_envs, self._num_feet, 3),
+            device=self._device,
+            dtype=torch.float,
+        )
+
+        self._last_foot_vel = torch.zeros(
+            (self._num_envs, self._num_feet, 3),
+            device=self._device,
+            dtype=torch.float,
+        )
+
+        self._feet_pos = torch.zeros(
+            (self._num_envs, self._num_feet, 3),
+            device=self._device,
+            dtype=torch.float,
         )
 
     def build_scene(self) -> None:
@@ -258,11 +291,14 @@ class Go2(GenesisEnv):
         self._robot.set_dofs_position(init_dof_pos, dofs_idx_local=self._motors_dof_idx, zero_velocity=True)
 
         # Get joint limits
-        self._joint_limits = np.concatenate(
-            [self._robot.get_joint(name).dofs_limit for name in self._motor_joint_names]
-        )
-        self._joint_limits_low = torch.tensor(self._joint_limits[:, 0], dtype=gs.tc_float, device=self._device)
-        self._joint_limits_high = torch.tensor(self._joint_limits[:, 1], dtype=gs.tc_float, device=self._device)
+        self._dof_pos_limits = torch.stack(self._robot.get_dofs_limit(self._motors_dof_idx), dim=1)
+        self._torque_limits = self._robot.get_dofs_force_range(self._motors_dof_idx)[1]
+        for i in range(self._dof_pos_limits.shape[0]):
+            # soft limits
+            m = (self._dof_pos_limits[i, 0] + self._dof_pos_limits[i, 1]) / 2
+            r = self._dof_pos_limits[i, 1] - self._dof_pos_limits[i, 0]
+            self._dof_pos_limits[i, 0] = m - 0.5 * r * self._soft_dof_limit
+            self._dof_pos_limits[i, 1] = m + 0.5 * r * self._soft_dof_limit
 
     def _post_physics_step(self) -> None:
         # resample commands when is half of the episode lenght
@@ -272,6 +308,8 @@ class Go2(GenesisEnv):
             device=self._device,
             dtype=gs.tc_float,
         )
+        self._foot_vel = self._robot.get_links_vel()[:, self._feet_link_indices, :]
+        self._feet_pos = self._robot.get_links_pos()[:, self._feet_link_indices, :]
 
     def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         """Compute observations based on go2_env.py structure."""
@@ -397,6 +435,9 @@ class Go2(GenesisEnv):
         # Reset previous actions
         self._prev_actions[env_ids] = torch.zeros(len(env_ids), self._num_actions, device=self._device)
         self._last_motor_joints_vel[env_ids] = torch.zeros(len(env_ids), self._num_actions, device=self._device)
+        self._last_foot_vel[env_ids] = torch.zeros(len(env_ids), self._num_feet, 3, device=self._device)
+        self._last_contacts[env_ids] = torch.zeros(len(env_ids), self._num_feet, dtype=torch.bool, device=self._device)
+        self._foot_vel[env_ids] = torch.zeros(len(env_ids), self._num_feet, 3, device=self._device)
 
         # Resample commands for reset environments
         self._resample_commands(env_ids)
@@ -409,14 +450,13 @@ class Go2(GenesisEnv):
         # Convert actions to target DOF positions
         target_dof_pos = actions * self._action_scale + self._default_dof_pos
 
-        target_dof_pos = torch.clamp(target_dof_pos, self._joint_limits_low, self._joint_limits_high)
-
         # Control DOFs using position control (PD control is set in build_scene)
         self._robot.control_dofs_position(target_dof_pos, self._motors_dof_idx)
 
         # Store actions for observation
         self._prev_actions = actions.clone()
         self._last_motor_joints_vel = self._robot.get_dofs_velocity(self._motors_dof_idx)
+        self._last_foot_vel = self._robot.get_links_vel()[:, self._feet_link_indices, :]
 
     def get_states(self, env_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
         """Get robot states for computing observations and rewards."""
@@ -449,6 +489,8 @@ class Go2(GenesisEnv):
             "motor_joints_vel": motor_joints_vel.clone(),
             "prev_actions": self._prev_actions[env_ids].clone(),
             "last_motor_joints_vel": self._last_motor_joints_vel[env_ids].clone(),
+            "last_foot_vel": self._last_foot_vel[env_ids].clone(),
+            "last_contacts": self._last_contacts[env_ids].clone(),
             "commands": self._commands[env_ids].clone(),
         }
 
@@ -502,6 +544,7 @@ class Go2(GenesisEnv):
         # Update previous actions if provided
         self._prev_actions[env_ids] = robot_states["prev_actions"].clone()
         self._last_motor_joints_vel[env_ids] = robot_states["motor_joints_vel"].clone()
+        self._last_foot_vel[env_ids] = robot_states["last_foot_vel"].clone()
 
     def _reward_tracking_lin_vel(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         """Tracking of linear velocity commands (xy axes)."""
@@ -548,7 +591,7 @@ class Go2(GenesisEnv):
     def _reward_similar_to_default(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         """Penalize joint poses far away from default pose."""
         dof_pos = robot_states["motor_joints_pos"]
-        return torch.sum(torch.abs(dof_pos - self._default_dof_pos), dim=1)
+        return torch.sum(torch.square(dof_pos - self._default_dof_pos), dim=1)
 
     def _reward_base_height(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         """Penalize base height away from target."""
@@ -583,25 +626,44 @@ class Go2(GenesisEnv):
         self._feet_air_time *= ~contact_filt
         return rew_airTime
 
-    # def _reward_stand_still(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
-    #     """Penalize movement whilestanding still."""
-    #     cmd_norm = torch.norm(self._commands[:, :2], dim=1)
-    #     dof_pos = robot_states["motor_joints_pos"]
-    #     return torch.sum(torch.abs(dof_pos - self._default_dof_pos), dim=1) * (cmd_norm < 0.01)
+    def _reward_dof_vel_stand_still(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
+        """Penalize DOF velocities while standing still."""
+        dof_vel = robot_states["motor_joints_vel"]
+        return torch.sum(torch.abs(dof_vel), dim=1) * (torch.norm(self._commands[:, :2], dim=1) < 0.1)
 
-    # def _reward_torques(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
-    #     """Minimize torques."""
-    #     torques = self._robot.get_dofs_control_force(self._motors_dof_idx)
-    #     return torch.sqrt(torch.sum(torch.square(torques), dim=1)) + torch.sum(torch.abs(torques), dim=1)
+    def _reward_dof_pos_stand_still(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
+        """Penalize DOF positions while standing still."""
+        dof_pos = robot_states["motor_joints_pos"]
+        return torch.sum(torch.square(dof_pos - self._default_dof_pos), dim=1) * (
+            torch.norm(self._commands[:, :2], dim=1) < 0.1
+        )
 
-    # def _reward_energy(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
-    #     """Minimize energy."""
-    #     torques = self._robot.get_dofs_control_force(self._motors_dof_idx)
-    #     dof_vel = robot_states["motor_joints_vel"]
-    #     return torch.sum(torch.abs(dof_vel), dim=1) * torch.abs(torques)
+    def _reward_feet_contact_still(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
+        # Encourage feet contact with the ground at zero commands
+        contacts = self._link_contact_forces[:, self._feet_link_indices, 2] > 1.0
+        full_contact = torch.sum(1.0 * contacts, dim=1) == len(self._feet_link_indices)
+        return 1.0 * full_contact * (torch.norm(self._commands[:, :2], dim=1) < 0.1)
 
-    # # Feet related rewards
-    # def _reward_feet_slip(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
-    #     """Penalize feet slip."""
-    #     feet_slip = self._robot.get_feet_slip(self._feet_link_indices)
-    #     return torch.sum(torch.square(feet_slip), dim=1)
+    def _reward_foot_clearance(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
+        # Encourage feet to be close to desired height while swinging
+        foot_vel_xy_norm = torch.norm(self._foot_vel[:, :, :2], dim=-1)
+        clearance_error = torch.sum(
+            foot_vel_xy_norm
+            * torch.square(
+                self._feet_pos[:, :, 2] - self._reward_foot_clearance_target - self._reward_foot_height_offset
+            ),
+            dim=-1,
+        )
+        return torch.exp(-clearance_error / self._reward_foot_clearance_tracking_sigma)
+
+    def _reward_dof_pos_limits(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
+        # Penalize dof positions too close to the limit
+        dof_pos = robot_states["motor_joints_pos"]
+        out_of_limits = -(dof_pos - self._dof_pos_limits[:, 0]).clip(max=0.0)  # lower limit
+        out_of_limits += (dof_pos - self._dof_pos_limits[:, 1]).clip(min=0.0)
+        return torch.sum(out_of_limits, dim=1)
+
+    def _reward_torques(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
+        # Penalize torques
+        torques = self._robot.get_dofs_control_force(self._motors_dof_idx)
+        return torch.sum(torch.square(torques), dim=1)
