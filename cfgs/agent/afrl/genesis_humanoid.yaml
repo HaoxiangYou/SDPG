@@ -17,7 +17,7 @@ config:
           units: [256, 128]
           activation: elu
         # fixed_std true = constant log_std (use log_std_init); false = learn log_std
-        fixed_std: false
+        fixed_std: true
         log_std_init: 0.0
     
     critic:
