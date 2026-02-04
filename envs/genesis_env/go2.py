@@ -125,9 +125,7 @@ class Go2(GenesisEnv):
 
         self._penalized_contact_link_indices = find_link_indices(self._penalized_contact_link_names)
         self._feet_link_indices = find_link_indices(self._feet_link_names)
-        self._termination_contact_link_indices = find_link_indices(
-            self._termination_contact_link_names
-        )
+        self._termination_contact_link_indices = find_link_indices(self._termination_contact_link_names)
 
         assert len(self._penalized_contact_link_indices) > 0
         assert len(self._feet_link_indices) > 0
@@ -189,7 +187,7 @@ class Go2(GenesisEnv):
         self._reward_scales = {
             # joint limit
             "dof_pos_limits": -10.0,
-            # "collision": -1.0, # This has issues
+            "collision": -1.0,
             # command tracking
             "tracking_lin_vel": 1.0,
             "tracking_ang_vel": 0.5,
@@ -309,7 +307,7 @@ class Go2(GenesisEnv):
         # resample commands when is half of the episode lenght
         self._resample_commands(self._progress_buf % int(self._episode_length / 2) == 0)
         self._link_contact_forces[:] = self._robot.get_links_net_contact_force()
- 
+
         self._foot_vel = self._robot.get_links_vel()[:, self._feet_link_indices, :]
         self._feet_pos = self._robot.get_links_pos()[:, self._feet_link_indices, :]
 
@@ -366,7 +364,7 @@ class Go2(GenesisEnv):
             reward += self._reward_functions[i](robot_states, actions) * self._reward_scales[name]
 
         if self._only_positive_rewards:
-            reward = torch.clip(reward, min=0.)
+            reward = torch.clip(reward, min=0.0)
         return reward
 
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
@@ -613,9 +611,10 @@ class Go2(GenesisEnv):
 
     def _reward_collision(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         """Penalize collisions."""
-        return torch.sum(1.*(torch.norm(
-            self._link_contact_forces[:, self._penalized_contact_link_indices, :], 
-            dim=-1) > 0.1), dim=1)
+        return torch.sum(
+            1.0 * (torch.norm(self._link_contact_forces[:, self._penalized_contact_link_indices, :], dim=-1) > 0.1),
+            dim=1,
+        )
 
     def _reward_feet_air_time(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         # Reward long steps
