@@ -76,11 +76,14 @@ class Go2(GenesisEnv):
         )
 
         # Add go2 robot
-        base_init_pos = [0.0, 0.0, 0.27]
+        base_init_pos = [0.0, 0.0, 0.42]
         base_init_quat = [1.0, 0.0, 0.0, 0.0]
 
         self._robot = self._scene.add_entity(
             gs.morphs.MJCF(file=os.path.join(os.path.dirname(__file__), "../../assets/unitree_go2/go2_genesis.xml")),
+            # gs.morphs.URDF(file='urdf/go2/urdf/go2.urdf',
+            #                 merge_fixed_links=True,
+            #                 links_to_keep=['FL_foot', 'FR_foot', 'RL_foot', 'RR_foot']),
         )
 
         # Joint names from go2 configuration
@@ -99,9 +102,9 @@ class Go2(GenesisEnv):
             "RL_calf_joint",
         ]
 
-        self._penalized_contact_link_names = ["base", "thigh", "calf"]
+        self._penalized_contact_link_names = ["thigh", "calf"]
         self._feet_link_names = ["foot"]
-        self._base_link_name = "base"
+        self._termination_contact_link_names = ["base"]
         self._num_feet = 4
 
         # Get DOF indices - need to build scene first or get joint info after adding
@@ -122,9 +125,13 @@ class Go2(GenesisEnv):
 
         self._penalized_contact_link_indices = find_link_indices(self._penalized_contact_link_names)
         self._feet_link_indices = find_link_indices(self._feet_link_names)
+        self._termination_contact_link_indices = find_link_indices(
+            self._termination_contact_link_names
+        )
 
         assert len(self._penalized_contact_link_indices) > 0
         assert len(self._feet_link_indices) > 0
+        assert len(self._termination_contact_link_indices) > 0
 
         # PD control parameters
         self._kp = 20.0
@@ -182,7 +189,7 @@ class Go2(GenesisEnv):
         self._reward_scales = {
             # joint limit
             "dof_pos_limits": -10.0,
-            "collision": -1.0,
+            # "collision": -1.0, # This has issues
             # command tracking
             "tracking_lin_vel": 1.0,
             "tracking_ang_vel": 0.5,
@@ -199,17 +206,15 @@ class Go2(GenesisEnv):
             # gait
             "feet_air_time": 1.0,
             "foot_clearance": 0.5,
+            # "dof_close_to_default": -0.1,
         }
 
         # Command configuration
         self._command_cfg = {
             "num_commands": 3,
-            # "lin_vel_x_range": [-1.5, 1.5],
-            # "lin_vel_y_range": [-0.8, 0.8],
-            # "ang_vel_range": [-1.2, 1.2],
-            "lin_vel_x_range": [0.5, 0.5],
-            "lin_vel_y_range": [0.0, 0.0],
-            "ang_vel_range": [0.0, 0.0],
+            "lin_vel_x_range": [-1.0, 1.0],
+            "lin_vel_y_range": [-0.5, 0.5],
+            "ang_vel_range": [-1.0, 1.0],
         }
         self._command_limits = [
             torch.tensor(values, dtype=gs.tc_float, device=gs.device)
@@ -303,11 +308,8 @@ class Go2(GenesisEnv):
     def _post_physics_step(self) -> None:
         # resample commands when is half of the episode lenght
         self._resample_commands(self._progress_buf % int(self._episode_length / 2) == 0)
-        self._link_contact_forces[:] = torch.tensor(
-            self._robot.get_links_net_contact_force(),
-            device=self._device,
-            dtype=gs.tc_float,
-        )
+        self._link_contact_forces[:] = self._robot.get_links_net_contact_force()
+ 
         self._foot_vel = self._robot.get_links_vel()[:, self._feet_link_indices, :]
         self._feet_pos = self._robot.get_links_pos()[:, self._feet_link_indices, :]
 
@@ -363,6 +365,8 @@ class Go2(GenesisEnv):
             name = self._reward_names[i]
             reward += self._reward_functions[i](robot_states, actions) * self._reward_scales[name]
 
+        if self._only_positive_rewards:
+            reward = torch.clip(reward, min=0.)
         return reward
 
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
@@ -373,10 +377,19 @@ class Go2(GenesisEnv):
         base_euler = quat_to_xyz(transformed_quat, rpy=True, degrees=True)
         self._base_euler = base_euler
         termination = torch.zeros(self._num_envs, dtype=torch.bool, device=self._device)
+        base_contact = torch.any(
+            torch.norm(
+                self._link_contact_forces[:, self._termination_contact_link_indices, :],
+                dim=-1,
+            )
+            > 1.0,
+            dim=1,
+        )
         if self._early_termination:
             # Terminate if roll or pitch exceeds threshold
             termination |= torch.abs(base_euler[:, 0]) > self._termination_roll_threshold
             termination |= torch.abs(base_euler[:, 1]) > self._termination_pitch_threshold
+            termination |= base_contact
 
         return termination
 
@@ -588,7 +601,7 @@ class Go2(GenesisEnv):
         prev_actions = robot_states["prev_actions"]
         return torch.sum(torch.square(prev_actions - actions), dim=1)
 
-    def _reward_similar_to_default(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
+    def _reward_dof_close_to_default(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         """Penalize joint poses far away from default pose."""
         dof_pos = robot_states["motor_joints_pos"]
         return torch.sum(torch.square(dof_pos - self._default_dof_pos), dim=1)
@@ -600,17 +613,9 @@ class Go2(GenesisEnv):
 
     def _reward_collision(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         """Penalize collisions."""
-        return torch.sum(
-            1.0
-            * (
-                torch.norm(
-                    self._link_contact_forces[:, self._penalized_contact_link_indices, :],
-                    dim=-1,
-                )
-                > 0.1
-            ),
-            dim=1,
-        )
+        return torch.sum(1.*(torch.norm(
+            self._link_contact_forces[:, self._penalized_contact_link_indices, :], 
+            dim=-1) > 0.1), dim=1)
 
     def _reward_feet_air_time(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         # Reward long steps
