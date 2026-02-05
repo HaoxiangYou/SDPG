@@ -209,6 +209,8 @@ class AllegroHand(GenesisEnv):
         self._dist_reward_scale = -10.0
         self._rot_reward_scale = 1.0
         self._rot_eps = 0.1
+        self._success_bonus = 250.0
+        self._success_rot_dist = 0.2
         self._action_penalty = -0.0002
 
         # Initialize the sensors
@@ -333,7 +335,6 @@ class AllegroHand(GenesisEnv):
         return observations
 
     def compute_reward(self, states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
-        # following the IsaacGym reward function, the different between isaacgym and isaaclab is we do not add a success bonus reward
         robot_states = states["robot_states"]
         cube_pos = robot_states["cube_pos"]
         cube_quat = robot_states["cube_quat"]
@@ -347,7 +348,9 @@ class AllegroHand(GenesisEnv):
 
         action_penalty = self._action_penalty * torch.sum(actions**2, dim=-1)
 
-        return dist_reward + rot_rew + action_penalty
+        success_bonus = self._success_bonus * (rot_dist <= self._success_rot_dist)
+
+        return dist_reward + rot_rew + action_penalty + success_bonus
 
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
         robot_states = states["robot_states"]
@@ -366,16 +369,34 @@ class AllegroHand(GenesisEnv):
         target_quat = self._default_target_quat[env_ids]
 
         if self._randomize_init:
-            cube_pos = cube_pos + (torch.rand_like(cube_pos) - 0.5) * 0.01
-            angle = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi / 12.0
-            axis = torch.nn.functional.normalize(torch.rand(len(env_ids), 3, device=self.device) - 0.5)
-            cube_quat = transform_quat_by_quat(cube_quat, axis_angle_to_quat(angle, axis))
+            cube_pos = cube_pos + (torch.rand_like(cube_pos) - 0.5) * 0.02
+            cube_random_angle_1 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
+            cube_random_quat_1 = axis_angle_to_quat(
+                cube_random_angle_1, torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat(len(env_ids), 1)
+            )
+            cube_random_angle_2 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
+            cube_random_quat_2 = axis_angle_to_quat(
+                cube_random_angle_2, torch.tensor([0.0, 1.0, 0.0], device=self.device).repeat(len(env_ids), 1)
+            )
+            cube_quat = transform_quat_by_quat(cube_random_quat_1, cube_random_quat_2)
 
-            angle = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
-            axis = torch.nn.functional.normalize(torch.rand(len(env_ids), 3, device=self.device) - 0.5)
-            target_quat = transform_quat_by_quat(target_quat, axis_angle_to_quat(angle, axis))
+            target_random_angle_1 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
+            target_random_quat_1 = axis_angle_to_quat(
+                target_random_angle_1, torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat((len(env_ids), 1))
+            )
+            target_random_angle_2 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
+            target_random_quat_2 = axis_angle_to_quat(
+                target_random_angle_2, torch.tensor([0.0, 1.0, 0.0], device=self.device).repeat((len(env_ids), 1))
+            )
+            target_quat = transform_quat_by_quat(target_random_quat_1, target_random_quat_2)
 
-            hand_dof_pos = hand_dof_pos + (torch.rand_like(hand_dof_pos) - 0.5) * 0.01
+            ctrl_range = self._hand_motors_ctrl_upper - self._hand_motors_ctrl_lower
+            hand_dof_pos = hand_dof_pos + (torch.rand_like(hand_dof_pos) - 0.5) * ctrl_range * 0.2
+            hand_dof_pos = torch.clamp(
+                hand_dof_pos,
+                self._hand_motors_ctrl_lower,
+                self._hand_motors_ctrl_upper,
+            )
 
         self._robot.set_dofs_position(
             position=hand_dof_pos,
@@ -420,6 +441,29 @@ class AllegroHand(GenesisEnv):
         )
 
     def _post_physics_step(self) -> None:
+        # check if the cube orientation is close to the target orientation
+        cube_quat = self._cube.get_quat()
+        target_quat = self._target_quat
+        quat_diff = transform_quat_by_quat(cube_quat, inv_quat(target_quat))
+        rot_dist = 2.0 * torch.asin(torch.clamp(torch.norm(quat_diff[:, 1:4], p=2, dim=-1), max=1.0))
+        success = rot_dist <= self._success_rot_dist
+        success_env_ids = success.nonzero(as_tuple=False).squeeze(-1)
+        if len(success_env_ids) > 0 and self._randomize_init:
+            target_random_angle_1 = (torch.rand(len(success_env_ids), device=self.device) - 0.5) * np.pi * 2.0
+            target_random_quat_1 = axis_angle_to_quat(
+                target_random_angle_1,
+                torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat((len(success_env_ids), 1)),
+            )
+            target_random_angle_2 = (torch.rand(len(success_env_ids), device=self.device) - 0.5) * np.pi * 2.0
+            target_random_quat_2 = axis_angle_to_quat(
+                target_random_angle_2,
+                torch.tensor([0.0, 1.0, 0.0], device=self.device).repeat((len(success_env_ids), 1)),
+            )
+            target_quat = transform_quat_by_quat(target_random_quat_1, target_random_quat_2)
+            self._target_quat[success_env_ids] = target_quat
+            if self._vis_target:
+                self._target.set_quat(target_quat, envs_idx=success_env_ids)
+
         # TODO:
         # if self._vis_obs:
         #     new_img = self.render(env_ids=self.nominal_env_ids)
