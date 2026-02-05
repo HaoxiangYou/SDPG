@@ -12,7 +12,7 @@ config:
     max_FPS: 60
   vis_options:
     rendered_envs_idx: null
-  show_viewer: True
+  show_viewer: False
   show_FPS: False
 
 

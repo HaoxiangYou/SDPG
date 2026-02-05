@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import genesis as gs
 import numpy as np
@@ -10,10 +10,10 @@ from gym import spaces
 from envs.genesis_env.genesis_env import GenesisEnv
 
 
-def gs_rand(lower, upper, batch_shape):
-    """Random tensor generator with shape matching."""
-    assert lower.shape == upper.shape
-    return (upper - lower) * torch.rand(size=(*batch_shape, *lower.shape), dtype=gs.tc_float, device=gs.device) + lower
+def torch_rand_float(
+    lower: float, upper: float, shape: Tuple[int, int], device: torch.device
+) -> torch.Tensor:
+    return (upper - lower) * torch.rand(*shape, device=device) + lower
 
 
 class Go2(GenesisEnv):
@@ -162,7 +162,7 @@ class Go2(GenesisEnv):
 
         # Observation scales
         self._obs_scales = {
-            "lin_vel": 2.0,
+            "lin_vel": 1.0,
             "ang_vel": 0.25,
             "dof_pos": 1.0,
             "dof_vel": 0.05,
@@ -177,11 +177,11 @@ class Go2(GenesisEnv):
 
         # Reward configuration
         self._soft_dof_limit = 0.9
-        self._reward_base_height_target = 0.36
+        self._reward_base_height_target = 0.3
         self._reward_foot_clearance_target = 0.05
         self._reward_foot_height_offset = 0.022
         self._reward_foot_clearance_tracking_sigma = 0.01
-        self._only_positive_rewards = True
+        self._only_positive_rewards = False
         self._reward_tracking_sigma = 0.25
 
         self._reward_scales = {
@@ -189,7 +189,7 @@ class Go2(GenesisEnv):
             "dof_pos_limits": -10.0,
             "collision": -1.0,
             # command tracking
-            "tracking_lin_vel": 1.0,
+            "tracking_lin_vel": 1.5,
             "tracking_ang_vel": 0.5,
             # smooth
             "lin_vel_z": -0.5,
@@ -198,31 +198,22 @@ class Go2(GenesisEnv):
             "orientation": -1.0,
             "dof_vel": -5.0e-4,
             "dof_acc": -2.0e-7,
-            "action_rate": -0.01,
+            "action_rate": -0.005,
             # "action_smoothness": -0.01,
-            "torques": -2.0e-4,
+            # "torques": -2.0e-4,
             # gait
             "feet_air_time": 1.0,
             "foot_clearance": 0.5,
-            # "dof_close_to_default": -0.1,
+            # "similar_to_default": -0.1,
         }
 
         # Command configuration
         self._command_cfg = {
             "num_commands": 3,
-            "lin_vel_x_range": [-1.0, 1.0],
-            "lin_vel_y_range": [-0.5, 0.5],
+            "lin_vel_x_range": [-0.5, 0.5],
+            "lin_vel_y_range": [-1.0, 1.0],
             "ang_vel_range": [-1.0, 1.0],
         }
-        self._command_limits = [
-            torch.tensor(values, dtype=gs.tc_float, device=gs.device)
-            for values in zip(
-                self._command_cfg["lin_vel_x_range"],
-                self._command_cfg["lin_vel_y_range"],
-                self._command_cfg["ang_vel_range"],
-                strict=False,
-            )
-        ]
 
         # prepare list of functions
         self._reward_functions = []
@@ -305,7 +296,8 @@ class Go2(GenesisEnv):
 
     def _post_physics_step(self) -> None:
         # resample commands when is half of the episode lenght
-        self._resample_commands(self._progress_buf % int(self._episode_length / 2) == 0)
+        env_ids = (self._progress_buf % int(self._episode_length / 2) == 0).nonzero(as_tuple=False).flatten()
+        self._resample_commands(env_ids)
         self._link_contact_forces[:] = self._robot.get_links_net_contact_force()
 
         self._foot_vel = self._robot.get_links_vel()[:, self._feet_link_indices, :]
@@ -398,21 +390,13 @@ class Go2(GenesisEnv):
             envs_idx: Boolean tensor mask of environments to resample commands for,
                      or tensor of environment indices (Long), or None to resample for all environments.
         """
-        commands = gs_rand(*self._command_limits, (self._num_envs,))
-        if envs_idx is None:
-            self._commands.copy_(commands)
-        else:
-            # Convert indices to boolean mask if needed
-            if envs_idx.dtype == torch.bool:
-                # Already a boolean mask
-                mask = envs_idx
-            else:
-                # Convert indices to boolean mask
-                mask = torch.zeros(self._num_envs, dtype=torch.bool, device=self._device)
-                mask[envs_idx] = True
-
-            # Resample commands only for specified environments using boolean mask
-            torch.where(mask[:, None], commands, self._commands, out=self._commands)
+        self._commands[envs_idx, 0] = torch_rand_float(
+            self._command_cfg["lin_vel_x_range"][0], self._command_cfg["lin_vel_x_range"][1], (len(envs_idx),1), self._device).squeeze(1)
+        self._commands[envs_idx, 1] = torch_rand_float(
+            self._command_cfg["lin_vel_y_range"][0], self._command_cfg["lin_vel_y_range"][1], (len(envs_idx),1), self._device).squeeze(1)
+        self._commands[envs_idx, 2] = torch_rand_float(self._command_cfg["ang_vel_range"][0], self._command_cfg["ang_vel_range"][1], (len(envs_idx), 1), self._device).squeeze(1)
+        self._commands[envs_idx, :2] *= (torch.norm(
+            self._commands[envs_idx, :2], dim=1) > 0.2).unsqueeze(1)
 
     def _reset_idx(self, env_ids: torch.Tensor) -> None:
         """Reset environments by index."""
@@ -599,10 +583,10 @@ class Go2(GenesisEnv):
         prev_actions = robot_states["prev_actions"]
         return torch.sum(torch.square(prev_actions - actions), dim=1)
 
-    def _reward_dof_close_to_default(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
+    def _reward_similar_to_default(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         """Penalize joint poses far away from default pose."""
         dof_pos = robot_states["motor_joints_pos"]
-        return torch.sum(torch.square(dof_pos - self._default_dof_pos), dim=1)
+        return torch.sum(torch.abs(dof_pos - self._default_dof_pos), dim=1)
 
     def _reward_base_height(self, robot_states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         """Penalize base height away from target."""
