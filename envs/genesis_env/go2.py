@@ -40,7 +40,6 @@ class Go2(GenesisEnv):
     ) -> None:
         if device is None:
             device = torch.device("cuda")
-
         episode_length = 1000  # Will be converted based on dt in reference
         early_termination = True
         self._num_privileged_obs = 60
@@ -229,9 +228,6 @@ class Go2(GenesisEnv):
         )
         self._forward_vec[:, 0] = 1.0
 
-        # self._obs_buf = torch.zeros(
-        #     (self._num_envs, self._num_single_obs), device=self._device, dtype=torch.float
-        # )
         self._obs_history_buf = torch.zeros(
             (self._num_envs, self._num_obs), device=self._device, dtype=torch.float
         )

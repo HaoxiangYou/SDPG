@@ -72,6 +72,25 @@ config:
       seq_length: 4
       bounds_loss_coef: 0.0001
 
+      central_value_config:
+        minibatch_size: 8192
+        mini_epochs: 5
+        learning_rate: 3e-4
+        clip_value: True
+        normalize_input: True
+        truncate_grads: True
+        grad_norm: 1.0
+        network:
+          name: actor_critic
+          central_value: True
+          mlp:
+            units: [512, 256, 128]
+            activation: elu
+            initializer:
+              name: default
+            regularizer:
+              name: None
+
       player:
         determenistic: True
         print_stats: True
