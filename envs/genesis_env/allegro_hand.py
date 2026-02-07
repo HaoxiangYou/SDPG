@@ -36,7 +36,9 @@ class AllegroHand(GenesisEnv):
         show_viewer: bool = False,
         show_FPS: bool = False,
     ) -> None:
-        episode_length = 1000
+        dt = sim_options.dt
+        episode_length = int(10.0 / dt)
+
         early_termination = True
 
         self._vis_obs = vis_obs
@@ -179,8 +181,8 @@ class AllegroHand(GenesisEnv):
         self._finger_tip_link_idx = [self._robot.get_link(name).idx_local for name in self._finger_tip_link_names]
 
         self._default_target_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device).repeat(self._num_envs, 1)
-        self._default_cube_pos = torch.tensor([0.2, 0.0, 0.275], device=self._device).repeat(self._num_envs, 1)
-        self._in_hand_pos = torch.tensor([0.22, 0.0, 0.25], device=self._device).repeat(self._num_envs, 1)
+        self._default_cube_pos = torch.tensor([0.25, 0.0, 0.275], device=self._device).repeat(self._num_envs, 1)
+        self._in_hand_pos = torch.tensor([0.25, 0.0, 0.25], device=self._device).repeat(self._num_envs, 1)
         self._default_cube_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device).repeat(self._num_envs, 1)
         self._default_hand_dof_pos = torch.tensor(
             [
@@ -278,7 +280,7 @@ class AllegroHand(GenesisEnv):
         scaled_cube_angular_vel = cube_angular_vel * self._vel_obs_scale
 
         target_quat = robot_states["target_quat"]
-        rot_diff = transform_quat_by_quat(cube_quat, inv_quat(target_quat))
+        rot_diff = transform_quat_by_quat(inv_quat(target_quat), cube_quat)
 
         prev_actions = robot_states["prev_actions"]
         # TODO, in IsaacLab, the observation contains figer tip pose and velocity;
@@ -342,7 +344,7 @@ class AllegroHand(GenesisEnv):
         goal_dis = torch.norm(cube_pos - self._in_hand_pos, p=2, dim=-1)
         dist_reward = self._dist_reward_scale * goal_dis
 
-        quat_diff = transform_quat_by_quat(cube_quat, inv_quat(target_quat))
+        quat_diff = transform_quat_by_quat(inv_quat(target_quat), cube_quat)
         rot_dist = 2.0 * torch.asin(torch.clamp(torch.norm(quat_diff[:, 1:4], p=2, dim=-1), max=1.0))
         rot_rew = 1.0 / (torch.abs(rot_dist) + self._rot_eps) * self._rot_reward_scale
 
@@ -378,7 +380,7 @@ class AllegroHand(GenesisEnv):
             cube_random_quat_2 = axis_angle_to_quat(
                 cube_random_angle_2, torch.tensor([0.0, 1.0, 0.0], device=self.device).repeat(len(env_ids), 1)
             )
-            cube_quat = transform_quat_by_quat(cube_random_quat_1, cube_random_quat_2)
+            cube_quat = transform_quat_by_quat(cube_random_quat_2, cube_random_quat_1)
 
             target_random_angle_1 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
             target_random_quat_1 = axis_angle_to_quat(
@@ -388,7 +390,7 @@ class AllegroHand(GenesisEnv):
             target_random_quat_2 = axis_angle_to_quat(
                 target_random_angle_2, torch.tensor([0.0, 1.0, 0.0], device=self.device).repeat((len(env_ids), 1))
             )
-            target_quat = transform_quat_by_quat(target_random_quat_1, target_random_quat_2)
+            target_quat = transform_quat_by_quat(target_random_quat_2, target_random_quat_1)
 
             ctrl_range = self._hand_motors_ctrl_upper - self._hand_motors_ctrl_lower
             hand_dof_pos = hand_dof_pos + (torch.rand_like(hand_dof_pos) - 0.5) * ctrl_range * 0.2
@@ -397,12 +399,20 @@ class AllegroHand(GenesisEnv):
                 self._hand_motors_ctrl_lower,
                 self._hand_motors_ctrl_upper,
             )
+            prev_actions = (hand_dof_pos - self._hand_motors_ctrl_lower) / (
+                self._hand_motors_ctrl_upper - self._hand_motors_ctrl_lower
+            ) * 2 - 1.0
 
         self._robot.set_dofs_position(
             position=hand_dof_pos,
             dofs_idx_local=self._hand_motors_dof_idx,
             envs_idx=env_ids,
             zero_velocity=True,
+        )
+        self._robot.control_dofs_position(
+            position=hand_dof_pos,
+            dofs_idx_local=self._hand_motors_dof_idx,
+            envs_idx=env_ids,
         )
 
         self._cube.set_pos(cube_pos, envs_idx=env_ids, zero_velocity=True)
@@ -411,7 +421,7 @@ class AllegroHand(GenesisEnv):
         if self._vis_target:
             self._target.set_quat(target_quat, envs_idx=env_ids, zero_velocity=True)
 
-        self._prev_actions[env_ids] = torch.zeros(len(env_ids), self._num_actions, device=self._device)
+        self._prev_actions[env_ids] = prev_actions
 
         # if self._vis_obs:
         #     # Find which nominal environments are being reset
@@ -444,7 +454,7 @@ class AllegroHand(GenesisEnv):
         # check if the cube orientation is close to the target orientation
         cube_quat = self._cube.get_quat()
         target_quat = self._target_quat
-        quat_diff = transform_quat_by_quat(cube_quat, inv_quat(target_quat))
+        quat_diff = transform_quat_by_quat(inv_quat(target_quat), cube_quat)
         rot_dist = 2.0 * torch.asin(torch.clamp(torch.norm(quat_diff[:, 1:4], p=2, dim=-1), max=1.0))
         success = rot_dist <= self._success_rot_dist
         success_env_ids = success.nonzero(as_tuple=False).squeeze(-1)
@@ -459,7 +469,7 @@ class AllegroHand(GenesisEnv):
                 target_random_angle_2,
                 torch.tensor([0.0, 1.0, 0.0], device=self.device).repeat((len(success_env_ids), 1)),
             )
-            target_quat = transform_quat_by_quat(target_random_quat_1, target_random_quat_2)
+            target_quat = transform_quat_by_quat(target_random_quat_2, target_random_quat_1)
             self._target_quat[success_env_ids] = target_quat
             if self._vis_target:
                 self._target.set_quat(target_quat, envs_idx=success_env_ids)

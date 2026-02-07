@@ -6,7 +6,7 @@
   <default>
     <default class="allegro_right">
       <joint axis="0 1 0" damping=".1"/>
-      <position kp="0.5"/>
+      <position kp="3.0"/>
       <geom density="800" friction="0.3"/>
 
       <default class="visual">
@@ -72,36 +72,36 @@
       </default>
 
       <default class="base">
-        <joint axis="0 0 1" range="-0.47 0.47"/>
-        <position ctrlrange="-0.47 0.47"/>
+        <joint axis="0 0 1" range="-0.5585 0.5585"/>
+        <position ctrlrange="-0.5585 0.5585"/>
       </default>
       <default class="proximal">
-        <joint range="-0.196 1.61"/>
-        <position ctrlrange="-0.196 1.61"/>
+        <joint range="-0.2792 1.7278"/>
+        <position ctrlrange="-0.2792 1.7278"/>
       </default>
       <default class="medial">
-        <joint range="-0.174 1.709"/>
-        <position ctrlrange="-0.174 1.709"/>
+        <joint range="-0.2792 1.7278"/>
+        <position ctrlrange="-0.2792 1.7278"/>
       </default>
       <default class="distal">
-        <joint range="-0.227 1.618"/>
-        <position ctrlrange="-0.227 1.618"/>
+        <joint range="-0.2792 1.7278"/>
+        <position ctrlrange="-0.2792 1.7278"/>
       </default>
       <default class="thumb_base">
-        <joint axis="-1 0 0" range="0.263 1.396"/>
-        <position ctrlrange="0.263 1.396"/>
+        <joint axis="-1 0 0" range="0.2792 1.5707"/>
+        <position ctrlrange="0.2792 1.5707"/>
       </default>
       <default class="thumb_proximal">
-        <joint axis="0 0 1" range="-0.105 1.163"/>
-        <position ctrlrange="-0.105 1.163"/>
+        <joint axis="0 0 1" range="-0.3316 1.1519"/>
+        <position ctrlrange="-0.3316 1.1519"/>
       </default>
       <default class="thumb_medial">
-        <joint range="-0.189 1.644"/>
-        <position ctrlrange="-0.189 1.644"/>
+        <joint range="-0.2792 1.7278"/>
+        <position ctrlrange="-0.2792 1.7278"/>
       </default>
       <default class="thumb_distal">
-        <joint range="-0.162 1.719"/>
-        <position ctrlrange="-0.162 1.719"/>
+        <joint range="-0.2792 1.7627"/>
+        <position ctrlrange="-0.2792 1.7627"/>
       </default>
     </default>
   </default>
