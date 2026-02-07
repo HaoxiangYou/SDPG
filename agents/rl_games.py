@@ -1,6 +1,7 @@
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from rl_games.common import env_configurations, vecenv
+from rl_games.common.algo_observer import IsaacAlgoObserver
 from rl_games.torch_runner import Runner
 
 from envs.base_env import BaseEnv
@@ -27,13 +28,20 @@ class RlGamesGpuEnv(vecenv.IVecEnv):
         observations, reward, terminated, truncated, info = self.env.step(actions, auto_reset=True)
 
         is_done = terminated | truncated
-
-        return {"obs": observations["privileged_observations"]}, reward, is_done, info
+        obs_dict = {
+            "obs": observations["observations"],
+            "states": observations["privileged_observations"],  # value function uses this
+        }
+        return obs_dict, reward, is_done, info
 
     def reset(self):
         observations, _ = self.env.reset()
+        obs_dict = {
+            "obs": observations["observations"],
+            "states": observations["privileged_observations"],
+        }
+        return obs_dict
 
-        return {"obs": observations["privileged_observations"]}
 
     def get_number_of_agents(self) -> int:
         """Returns number of actors in the environment."""
@@ -42,10 +50,10 @@ class RlGamesGpuEnv(vecenv.IVecEnv):
     def get_env_info(self):
         info = {}
         info["action_space"] = self.env.action_space
-        info["observation_space"] = self.env.observation_space["privileged_observations"]
-
-        print(info["action_space"], info["observation_space"])
-
+        obs_space = self.env.observation_space
+        info["observation_space"] = obs_space.get("observations", obs_space["privileged_observations"])
+        info["state_space"] = obs_space["privileged_observations"]
+        info["use_global_observations"] = True
         return info
 
 
@@ -76,7 +84,7 @@ def make_runner(config: DictConfig):
         print(f"Output directory: {output_dir}")
         agent_config["config"]["full_experiment_name"] = "training_logs"
 
-    runner = Runner()
+    runner = Runner(algo_observer=IsaacAlgoObserver())
     runner.load({"params": agent_config})
     runner.reset()
 
