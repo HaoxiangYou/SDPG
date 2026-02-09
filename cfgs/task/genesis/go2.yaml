@@ -4,6 +4,9 @@ name: go2
 
 config:
   num_envs: ${...num_envs}
+
+  nominal_env_ids: null
+  
   randomize_init: True
   sim_options:
     dt: 0.02
