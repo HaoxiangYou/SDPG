@@ -211,7 +211,6 @@ class AllegroHand(GenesisEnv):
         self._dist_reward_scale = -10.0
         self._rot_reward_scale = 1.0
         self._rot_eps = 0.1
-        self._success_rot_dist = 0.2
         self._action_penalty = -0.0002
 
         # Initialize the sensors
@@ -448,29 +447,6 @@ class AllegroHand(GenesisEnv):
         )
 
     def _post_physics_step(self) -> None:
-        # check if the cube orientation is close to the target orientation
-        cube_quat = self._cube.get_quat()
-        target_quat = self._target_quat
-        quat_diff = transform_quat_by_quat(inv_quat(target_quat), cube_quat)
-        rot_dist = 2.0 * torch.asin(torch.clamp(torch.norm(quat_diff[:, 1:4], p=2, dim=-1), max=1.0))
-        success = rot_dist <= self._success_rot_dist
-        success_env_ids = success.nonzero(as_tuple=False).squeeze(-1)
-        if len(success_env_ids) > 0 and self._randomize_init:
-            target_random_angle_1 = (torch.rand(len(success_env_ids), device=self.device) - 0.5) * np.pi * 2.0
-            target_random_quat_1 = axis_angle_to_quat(
-                target_random_angle_1,
-                torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat((len(success_env_ids), 1)),
-            )
-            target_random_angle_2 = (torch.rand(len(success_env_ids), device=self.device) - 0.5) * np.pi * 2.0
-            target_random_quat_2 = axis_angle_to_quat(
-                target_random_angle_2,
-                torch.tensor([0.0, 1.0, 0.0], device=self.device).repeat((len(success_env_ids), 1)),
-            )
-            target_quat = transform_quat_by_quat(target_random_quat_2, target_random_quat_1)
-            self._target_quat[success_env_ids] = target_quat
-            if self._vis_target:
-                self._target.set_quat(target_quat, envs_idx=success_env_ids)
-
         # TODO:
         # if self._vis_obs:
         #     new_img = self.render(env_ids=self.nominal_env_ids)
