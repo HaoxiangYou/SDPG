@@ -1,3 +1,4 @@
+import torch
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from rl_games.common import env_configurations, vecenv
@@ -11,16 +12,20 @@ from utils.common_utils import make_envs
 class RlGamesGpuEnv(vecenv.IVecEnv):
     """Thin wrapper to create instance of the environment to fit RL-Games runner."""
 
-    # TODO: currently only support for full state observation
-
-    def __init__(self, config_name: str, num_actors: int, **kwargs):
+    def __init__(self, config_name: str, num_actors: int, input_keys=None, **kwargs):
         """Initialize the environment.
 
         Args:
             config_name: The name of the environment configuration.
             num_actors: The number of actors in the environment. This is not used in this wrapper.
+            input_keys: Dictionary with 'actor' and 'critic' keys containing lists of input key names.
         """
         self.env: BaseEnv = env_configurations.configurations[config_name]["env_creator"](**kwargs)
+
+        # Extract input key names from input_keys config
+        # input_keys structure: {actor: [{name: "observations"}], critic: [{name: "privileged_observations"}]}
+        self.actor_input_key = input_keys["actor"][0]["name"]
+        self.critic_input_key = input_keys["critic"][0]["name"]
 
         self.env.reset()
 
@@ -28,17 +33,20 @@ class RlGamesGpuEnv(vecenv.IVecEnv):
         observations, reward, terminated, truncated, info = self.env.step(actions, auto_reset=True)
 
         is_done = terminated | truncated
+
+        info = {**info, "time_outs": truncated.float()}
+
         obs_dict = {
-            "obs": observations["observations"],
-            "states": observations["privileged_observations"],  # value function uses this
+            "obs": observations[self.actor_input_key],
+            "states": observations[self.critic_input_key],  # value function uses this
         }
         return obs_dict, reward, is_done, info
 
     def reset(self):
         observations, _ = self.env.reset()
         obs_dict = {
-            "obs": observations["observations"],
-            "states": observations["privileged_observations"],
+            "obs": observations[self.actor_input_key],
+            "states": observations[self.critic_input_key],
         }
         return obs_dict
 
@@ -61,8 +69,15 @@ def make_runner(config: DictConfig):
     # Following the IsaacLab implementation:
     # First initialize the environment and use wrapper to fit RL-Games runner.
     env = make_envs(config)
+
+    # Extract input_keys from config
+    input_keys = OmegaConf.to_container(config.agent.config.input_keys, resolve=True)
+    
+    # NOTE: both actor and critic current only support one input key
+    assert len(input_keys["actor"]) == 1 and len(input_keys["critic"]) == 1, "Both actor and critic current only support one input key"
+
     vecenv.register(
-        "AFRLEnv", lambda config_name, num_actors, **kwargs: RlGamesGpuEnv(config_name, num_actors, **kwargs)
+        "AFRLEnv", lambda config_name, num_actors, **kwargs: RlGamesGpuEnv(config_name, num_actors, input_keys=input_keys, **kwargs)
     )
     env_configurations.register("afrl_env", {"env_creator": lambda **kwargs: env, "vecenv_type": "AFRLEnv"})
 
