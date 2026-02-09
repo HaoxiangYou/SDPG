@@ -919,7 +919,8 @@ class AFRLRunner:
             obs_rms = self.obs_rms
 
         for key in obs_rms.keys():
-            obs[key] = obs_rms[key].normalize(obs[key])
+            if key in obs.keys():
+                obs[key] = obs_rms[key].normalize(obs[key])
         return obs
 
     @torch.no_grad()
