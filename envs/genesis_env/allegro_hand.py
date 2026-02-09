@@ -122,10 +122,7 @@ class AllegroHand(GenesisEnv):
                     image_path=os.path.join(os.path.dirname(__file__), "../../assets/dexcube/textures/cube.png")
                 )
             ),
-            # NOTE: both for hand xml and cube, the friction is set to 1.0
-            # This is what IsaacLab uses. In some mujoco examples, the friction is set to 0.3
-            # Yet, have no idea which one is better for the real scenario.
-            material=gs.materials.Rigid(friction=1.0, rho=600.0),
+            material=gs.materials.Rigid(friction=0.3, rho=600.0),
         )
 
         # target quat
@@ -214,7 +211,7 @@ class AllegroHand(GenesisEnv):
         self._dist_reward_scale = -10.0
         self._rot_reward_scale = 1.0
         self._rot_eps = 0.1
-        self._success_bonus = 250.0
+        self._success_bonus = 0.0
         self._success_rot_dist = 0.2
         self._action_penalty = -0.0002
 
