@@ -97,8 +97,9 @@
             <geom size="0.012 0.06" pos="0.008 0 -0.06" quat="0.994493 0 -0.104807 0" type="cylinder" class="collision"/>
             <geom size="0.011 0.0325" pos="0.02 0 -0.148" quat="0.999688 0 0.0249974 0" type="cylinder" class="collision"/>
             <geom pos="0 0 -0.213" mesh="foot" class="visual" material="black"/>
-            <geom name="FL" class="foot"/>
-            <body name="FL_foot" pos="0 0 -0.213" />
+            <body name="FL_foot" pos="0 0 -0.213">
+              <geom name="FL" class="foot" pos="-0.002 0 0"/>
+            </body>
           </body>
         </body>
       </body>
@@ -125,8 +126,9 @@
             <geom size="0.013 0.06" pos="0.01 0 -0.06" quat="0.995004 0 -0.0998334 0" type="cylinder" class="collision"/>
             <geom size="0.011 0.0325" pos="0.02 0 -0.148" quat="0.999688 0 0.0249974 0" type="cylinder" class="collision"/>
             <geom pos="0 0 -0.213" mesh="foot" class="visual" material="black"/>
-            <geom name="FR" class="foot"/>
-            <body name="FR_foot" pos="0 0 -0.213" />
+            <body name="FR_foot" pos="0 0 -0.213" >
+              <geom name="FR" class="foot" pos="-0.002 0 0"/>
+            </body>
           </body>
         </body>
       </body>
@@ -153,8 +155,9 @@
             <geom size="0.013 0.06" pos="0.01 0 -0.06" quat="0.995004 0 -0.0998334 0" type="cylinder" class="collision"/>
             <geom size="0.011 0.0325" pos="0.02 0 -0.148" quat="0.999688 0 0.0249974 0" type="cylinder" class="collision"/>
             <geom pos="0 0 -0.213" mesh="foot" class="visual" material="black"/>
-            <geom name="RL" class="foot"/>
-            <body name="RL_foot" pos="0 0 -0.213" />
+            <body name="RL_foot" pos="0 0 -0.213">
+              <geom name="RL" class="foot" pos="-0.002 0 0"/>
+            </body>
           </body>
         </body>
       </body>
@@ -181,8 +184,9 @@
             <geom size="0.013 0.06" pos="0.01 0 -0.06" quat="0.995004 0 -0.0998334 0" type="cylinder" class="collision"/>
             <geom size="0.011 0.0325" pos="0.02 0 -0.148" quat="0.999688 0 0.0249974 0" type="cylinder" class="collision"/>
             <geom pos="0 0 -0.213" mesh="foot" class="visual" material="black"/>
-            <geom name="RR" class="foot"/>
-            <body name="RR_foot" pos="0 0 -0.213" />
+            <body name="RR_foot" pos="0 0 -0.213">
+              <geom name="RR" class="foot" pos="-0.002 0 0"/>
+            </body>
           </body>
         </body>
       </body>
