@@ -211,7 +211,6 @@ class AllegroHand(GenesisEnv):
         self._dist_reward_scale = -10.0
         self._rot_reward_scale = 1.0
         self._rot_eps = 0.1
-        self._success_bonus = 0.0
         self._success_rot_dist = 0.2
         self._action_penalty = -0.0002
 
@@ -350,9 +349,7 @@ class AllegroHand(GenesisEnv):
 
         action_penalty = self._action_penalty * torch.sum(actions**2, dim=-1)
 
-        success_bonus = self._success_bonus * (rot_dist <= self._success_rot_dist)
-
-        return dist_reward + rot_rew + action_penalty + success_bonus
+        return dist_reward + rot_rew + action_penalty
 
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
         robot_states = states["robot_states"]
