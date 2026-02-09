@@ -1,4 +1,5 @@
-import torch
+from typing import Dict, List
+
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from rl_games.common import env_configurations, vecenv
@@ -12,13 +13,13 @@ from utils.common_utils import make_envs
 class RlGamesGpuEnv(vecenv.IVecEnv):
     """Thin wrapper to create instance of the environment to fit RL-Games runner."""
 
-    def __init__(self, config_name: str, num_actors: int, input_keys=None, **kwargs):
+    def __init__(self, config_name: str, num_actors: int, input_keys: Dict[str, List[Dict[str, str]]], **kwargs):
         """Initialize the environment.
 
         Args:
             config_name: The name of the environment configuration.
             num_actors: The number of actors in the environment. This is not used in this wrapper.
-            input_keys: Dictionary with 'actor' and 'critic' keys containing lists of input key names.
+            input_keys: Dictionary with 'actor' and 'critic' keys containing lists of input key dictionaries.
         """
         self.env: BaseEnv = env_configurations.configurations[config_name]["env_creator"](**kwargs)
 
@@ -50,7 +51,6 @@ class RlGamesGpuEnv(vecenv.IVecEnv):
         }
         return obs_dict
 
-
     def get_number_of_agents(self) -> int:
         """Returns number of actors in the environment."""
         return getattr(self, "num_agents", 1)
@@ -72,12 +72,17 @@ def make_runner(config: DictConfig):
 
     # Extract input_keys from config
     input_keys = OmegaConf.to_container(config.agent.config.input_keys, resolve=True)
-    
+
     # NOTE: both actor and critic current only support one input key
-    assert len(input_keys["actor"]) == 1 and len(input_keys["critic"]) == 1, "Both actor and critic current only support one input key"
+    assert (
+        len(input_keys["actor"]) == 1 and len(input_keys["critic"]) == 1
+    ), "Both actor and critic current only support one input key"
 
     vecenv.register(
-        "AFRLEnv", lambda config_name, num_actors, **kwargs: RlGamesGpuEnv(config_name, num_actors, input_keys=input_keys, **kwargs)
+        "AFRLEnv",
+        lambda config_name, num_actors, **kwargs: RlGamesGpuEnv(
+            config_name, num_actors, input_keys=input_keys, **kwargs
+        ),
     )
     env_configurations.register("afrl_env", {"env_creator": lambda **kwargs: env, "vecenv_type": "AFRLEnv"})
 
