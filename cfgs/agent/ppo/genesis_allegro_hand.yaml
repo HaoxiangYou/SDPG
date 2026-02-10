@@ -4,6 +4,12 @@ config:
 
   num_envs: 4096
 
+  input_keys:
+    actor: 
+      - name: privileged_observations
+    critic: 
+      - name: privileged_observations
+
   rl_games:
 
     algo:
