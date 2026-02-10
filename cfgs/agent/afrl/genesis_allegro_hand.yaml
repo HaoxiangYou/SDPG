@@ -14,7 +14,7 @@ config:
       policy_head:
         type: mlp
         network:
-          units: [256, 128]
+          units: [1024, 512, 256, 128]
           activation: elu
         fixed_std: true
         log_std_init: 0.0
@@ -29,7 +29,7 @@ config:
       value_head:
         type: mlp
         network:
-          units: [128, 128]
+          units: [1024, 512, 256, 128]
           activation: elu
 
   # Number of base environments for rollout
