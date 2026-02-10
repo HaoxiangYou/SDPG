@@ -182,7 +182,7 @@ class GenesisEnv(BaseEnv):
         Returns:
             A tensor containing the environment indices that have at least one NaN value.
         """
-        robot_states = states.get("robot_states", {})
+        robot_states = states.get("robot_states")
 
         def check_nan_recursive(obj: Any) -> torch.Tensor:
             """Recursively check for NaN values in nested dictionaries and tensors."""
