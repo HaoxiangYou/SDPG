@@ -243,6 +243,9 @@ class Go2(GenesisEnv):
         self._reward_base_height_target = 0.3
         self._only_positive_rewards = False
         self._reward_tracking_sigma = 0.25
+        self._foot_clearance_tracking_sigma = 0.01
+        self._foot_clearance_target = 0.05  # desired foot clearance above ground [m]
+        self._foot_height_offset = 0.022  # height of the foot coordinate origin above ground [m]
 
         self._reward_scales = {
             "tracking_lin_vel": 1.0,
@@ -253,10 +256,13 @@ class Go2(GenesisEnv):
             "base_height": -50.0,
             "torques": -0.0002,
             "collision": -1.0,
-            "dof_vel": -0.0,
+            "dof_vel": -0.0005,
             "dof_acc": -2.5e-7,
+            "action_smoothness": -0.01,
             "feet_air_time": 1.0,
             "action_rate": -0.01,
+            "stand_still": -0.5,
+            "feet_contact_stand_still": 0.5,
         }
 
         # PD control parameters
@@ -798,6 +804,35 @@ class Go2(GenesisEnv):
         rew_airTime *= torch.norm(self._commands[:, :2], dim=1) > 0.1  # no reward for zero command
         self._feet_air_time *= ~contact_filt
         return rew_airTime
+
+    def _reward_feet_clearance(self):
+        """
+        Encourage feet to be close to desired height while swinging
+        """
+        foot_vel_xy_norm = torch.norm(self._foot_velocities[:, :, :2], dim=-1)
+        clearance_error = torch.sum(
+            foot_vel_xy_norm
+            * torch.square(self._foot_positions[:, :, 2] - self._foot_clearance_target - self._foot_height_offset),
+            dim=-1,
+        )
+        return torch.exp(-clearance_error / self._foot_clearance_tracking_sigma)
+
+    def _reward_action_smoothness(self):
+        """Penalize action smoothness"""
+        action_smoothness_cost = torch.sum(
+            torch.square(self._actions - 2 * self._last_actions + self._last_last_actions), dim=-1
+        )
+        return action_smoothness_cost
+
+    def _reward_stand_still(self) -> torch.Tensor:
+        cmd_norm = torch.norm(self._commands, dim=1)
+        return torch.sum(torch.square(self._dof_pos - self._default_dof_pos), dim=1) * (cmd_norm < 0.01)
+
+    def _reward_feet_contact_stand_still(self):
+        # Encourage feet contact with the ground at zero commands
+        contacts = self._link_contact_forces[:, self._feet_link_indices, 2] > 1.0
+        full_contact = torch.sum(1.0 * contacts, dim=1) == len(self._feet_link_indices)
+        return 1.0 * full_contact * (torch.norm(self._commands[:, :3], dim=1) < 0.01)
 
     def _randomize_rigids(self, env_ids=None):
         if not self._train:
