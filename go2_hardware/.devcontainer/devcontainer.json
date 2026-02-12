@@ -8,8 +8,7 @@
     },
   },
   "runArgs": [
-    // Please first enable spacenavd system service through `sudo systemctl start spacenavd` or `sudo /etc/init.d/spacenavd start`
-    "--volume=/var/run/spnav.sock:/var/run/spnav.sock", // For spnav spacemouse control. 
+    "--it", // Enable interactive mode
     "--network=host",
     "--volume=/tmp/.X11-unix/:/tmp/.X11-unix/", // For GUI display
     "--runtime=nvidia", // For CUDA/GPU support (for ApproximateFoRL training)
