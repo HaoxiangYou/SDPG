@@ -34,7 +34,6 @@ class MLPPolicyHead(PolicyHeadBase):
         learn = not fixed_std
         dep = cfg_network.get("state_dependent_std", False)
         init_val = cfg_network.get("log_std_init", 0.0)
-        bounds = cfg_network.get("log_std_bounds", [-5, 2])
 
         nc = cfg_network.get("network", cfg_network)
         units = list(nc["units"])
@@ -77,7 +76,6 @@ class MLPPolicyHead(PolicyHeadBase):
 
         self._learn_std = learn
         self._state_dependent_std = dep
-        self._log_std_bounds = bounds
         self._fixed_log_std = float(init_val)
 
     def forward(self, x):
@@ -86,14 +84,10 @@ class MLPPolicyHead(PolicyHeadBase):
             h = self.trunk(x)
             o = self.out(h)
             m, l = o.chunk(2, dim=-1)
-            if self._log_std_bounds is not None:
-                l = torch.clamp(l, self._log_std_bounds[0], self._log_std_bounds[1])
             return {"mean": m, "log_std": l}
         m = self.mlp(x)
         if self._learn_std:
             l = self.log_std
-            if self._log_std_bounds is not None:
-                l = torch.clamp(l, self._log_std_bounds[0], self._log_std_bounds[1])
             l = l.unsqueeze(0).expand_as(m)
         else:
             l = torch.full_like(m, self._fixed_log_std, device=m.device, dtype=m.dtype)

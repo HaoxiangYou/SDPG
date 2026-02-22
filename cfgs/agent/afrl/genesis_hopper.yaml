@@ -81,6 +81,10 @@ config:
     temperature_auto_tune: true
     target_std: 0.15
     temperature_lr: 1e-3
+  
+  bounds:
+    mean_bounds: [-2, 2]
+    log_std_bounds: [-5, 2]
 
   # batch size for training the critic
   mini_batch_size: 4096

@@ -113,6 +113,15 @@ class AFRLRunner:
             self.soft_critic = False
             self.temperature_auto_tune = False
 
+        # bounds
+        bounds = self.agent_config.get("bounds", None)
+        if bounds is not None:
+            self.mean_bounds = bounds.get("mean_bounds", None)
+            self.log_std_bounds = bounds.get("log_std_bounds", None)
+        else:
+            self.mean_bounds = None
+            self.log_std_bounds = None
+
         # Performance metrics recorder
         self.episode_reward_meter = AverageMeter(1, 100).to(self.device)
         self.episode_length_meter = AverageMeter(1, 100).to(self.device)
@@ -375,6 +384,11 @@ class AFRLRunner:
                 out = self.actor(actor_obs)
                 nominal_actions = out["mean"].repeat_interleave(self.num_action_perturbations + 1, dim=0)
                 log_std = out["log_std"].repeat_interleave(self.num_action_perturbations + 1, dim=0)
+                # Bounds the action and log std
+                if self.mean_bounds is not None:
+                    nominal_actions = torch.clamp(nominal_actions, self.mean_bounds[0], self.mean_bounds[1])
+                if self.log_std_bounds is not None:
+                    log_std = torch.clamp(log_std, self.log_std_bounds[0], self.log_std_bounds[1])
                 std = torch.exp(log_std)
                 # Sample the action perturbations
                 eps_actions = torch.randn_like(nominal_actions)
@@ -602,12 +616,22 @@ class AFRLRunner:
 
         target_mean = self.actions[self.nominal_env_ids] + mean_ascent_direction
         target_log_std = self.log_stds[self.nominal_env_ids] + log_std_ascent_direction
+        if self.mean_bounds is not None:
+            target_mean = torch.clamp(target_mean, self.mean_bounds[0], self.mean_bounds[1])
+        if self.log_std_bounds is not None:
+            target_log_std = torch.clamp(target_log_std, self.log_std_bounds[0], self.log_std_bounds[1])
         target_actions = {
             "mean": target_mean.view(-1, self.num_actions),
             "log_std": target_log_std.view(-1, self.num_actions),
         }
         # TODO: the pred_actions may be slightly different from the target_actions (in the magnitude of 1e-6)
         pred_actions = self.actor(obs)
+        if self.mean_bounds is not None:
+            pred_actions["mean"] = torch.clamp(pred_actions["mean"], self.mean_bounds[0], self.mean_bounds[1])
+        if self.log_std_bounds is not None:
+            pred_actions["log_std"] = torch.clamp(
+                pred_actions["log_std"], self.log_std_bounds[0], self.log_std_bounds[1]
+            )
 
         # Update the actor
         # TODO: currently we use all trajectory as single batch, and update the actor once.
