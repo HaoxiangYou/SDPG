@@ -34,7 +34,7 @@ class MLPPolicyHead(PolicyHeadBase):
         learn = not fixed_std
         dep = cfg_network.get("state_dependent_std", False)
         init_val = cfg_network.get("log_std_init", 0.0)
-        bounds = cfg_network.get("log_std_bounds", None)
+        bounds = cfg_network.get("log_std_bounds", [-5, 2])
 
         nc = cfg_network.get("network", cfg_network)
         units = list(nc["units"])

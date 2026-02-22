@@ -17,7 +17,8 @@ config:
           units: [128, 64, 32]
           activation: elu
         # fixed_std true = constant log_std (use log_std_init); false = learn log_std
-        fixed_std: true
+        fixed_std: false
+        state_dependent_std: true
         log_std_init: 0.0
     
     critic:
@@ -73,6 +74,14 @@ config:
     # start_factor: 1.0
     # end_factor: 0.1
   
+  entropy_parameters:
+    initial_temperature: 1e-2
+    actor_regularization: true
+    soft_critic: true
+    temperature_auto_tune: true
+    target_std: 0.15
+    temperature_lr: 1e-3
+
   # batch size for training the critic
   mini_batch_size: 4096
   critic_iterations: 2
