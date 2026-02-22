@@ -87,8 +87,9 @@ config:
     log_std_bounds: [-5, 2]
 
   # batch size for training the critic
-  mini_batch_size: 4096
-  critic_iterations: 2
+  use_auxiliary_envs_for_critic: false
+  mini_batch_size: 512
+  critic_iterations: 16
 
   truncated_grads: True
   grad_norm: 1.0

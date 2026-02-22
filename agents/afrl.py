@@ -42,7 +42,6 @@ class AFRLRunner:
         )
         self.max_epochs = self.agent_config.max_epochs
         self.horizon_length = self.agent_config.horizon_length
-        # action perturbation factor
         self.causality = self.agent_config.causality
         self.eligibility_trace = self.agent_config.eligibility_trace
         self.gamma = self.agent_config.gamma
@@ -53,6 +52,7 @@ class AFRLRunner:
         self.grad_norm = self.agent_config.grad_norm
         self.mini_batch_size = self.agent_config.mini_batch_size
         self.critic_iterations = self.agent_config.critic_iterations
+        self.use_auxiliary_envs_for_critic = self.agent_config.use_auxiliary_envs_for_critic
 
         # make the environments
         self.make_envs()
@@ -499,6 +499,8 @@ class AFRLRunner:
         if include_entropy:
             # NOTE: soft critic is meaningful only when the log std is state-dependent
             # for state-independent log std, the entropy is simply an same offset to all states
+            # TODO: for auxiliary environments, the std is copy from the nominal environment
+            # would this cause problem if we use all auxiliary environments for training the critic?
             rewards += self.get_temperature() * torch.mean(self.log_stds - self.target_std, dim=-1)
 
         J = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
@@ -661,8 +663,16 @@ class AFRLRunner:
         # NOTE: currently we use both nominal and auxiliary rollout for training the critic
         self.compute_target_values()
         # Flatten first two dimensions (num_envs, horizon_length) for all observation keys
-        obs = flatten_dict(self.critic_obs_buf, start_dim=0, end_dim=1)
-        target_values = self.target_values.view(-1, 1)
+        if self.use_auxiliary_envs_for_critic:
+            obs = flatten_dict(self.critic_obs_buf, start_dim=0, end_dim=1)
+            target_values = self.target_values.view(-1, 1)
+        else:
+            obs = {}
+            for key in self.critic_obs_buf.keys():
+                obs[key] = self.critic_obs_buf[key][self.nominal_env_ids]
+            obs = flatten_dict(obs, start_dim=0, end_dim=1)
+            target_values = self.target_values[self.nominal_env_ids].view(-1, 1)
+
         # Get dataset size from first observation key
         dataset_size = list(obs.values())[0].shape[0]
 
@@ -913,7 +923,7 @@ class AFRLRunner:
                 positive_rollout_ratio=self.positive_rollout_ratio,
                 actor_grad_norm=self.actor_grad_norm,
                 critic_grad_norm=self.critic_grad_norm,
-                policy_std=torch.exp(self.log_stds.mean()),
+                policy_std=torch.exp(self.log_stds).mean(),
                 temperature=self.get_temperature().item(),
                 iter=self.iter_count,
                 step=self.step_count,
@@ -925,7 +935,7 @@ class AFRLRunner:
             )
 
             print(
-                "iter {}: ep reward {:.2f}, ep len {:.1f}, rollout reward {:.2f}, rollout reward std {:.2f}, rollout reward positive ratio {:.2f}, fps total {:.3g}, actor grad norm {:.2f}, critic grad norm {:.2f}, temperature {:.2g}".format(
+                "iter {}: ep reward {:.2f}, ep len {:.1f}, rollout reward {:.2f}, rollout reward std {:.2f}, rollout reward positive ratio {:.2f}, fps total {:.3g}, actor grad norm {:.2f}, critic grad norm {:.2f}, std: {:.2g}, temperature {:.2g}".format(
                     self.iter_count,
                     policy_reward,
                     episode_lengths,
@@ -935,6 +945,7 @@ class AFRLRunner:
                     1 / (time_end_epoch - time_start_epoch),
                     self.actor_grad_norm,
                     self.critic_grad_norm,
+                    torch.exp(self.log_stds).mean(),
                     self.get_temperature().item(),
                 )
             )
