@@ -89,13 +89,10 @@ class GenesisEnv(BaseEnv):
 
         # Buffers
         self._progress_buf = torch.zeros(self._num_envs, device=self._device)
-        self._obs_buf = {}
-        for key in self.observation_space.keys():
-            self._obs_buf[key] = torch.zeros((self._num_envs, *self.observation_space[key].shape), device=self._device)
         self._truncated_buf = torch.zeros(self._num_envs, device=self._device, dtype=torch.bool)
         self._terminated_buf = torch.zeros(self._num_envs, device=self._device, dtype=torch.bool)
         self._reset_buf = torch.zeros(self._num_envs, device=self._device, dtype=torch.bool)
-        self._extras = {}
+        self._infos = {}
 
     @abstractmethod
     def build_scene(self) -> None:
@@ -111,10 +108,8 @@ class GenesisEnv(BaseEnv):
 
         states = self.get_states()
         observations = self.compute_observations(states)
-        for key in observations.keys():
-            self._obs_buf[key] = observations[key]
 
-        return observations, {}
+        return observations, self._infos
 
     def step(
         self, actions: torch.Tensor, auto_reset: bool = True
@@ -154,18 +149,12 @@ class GenesisEnv(BaseEnv):
 
         # Reset the done environment if auto_reset is True.
         if auto_reset and len(reset_env_ids) > 0:
-            from utils.tensor_utils import clone_dict_tensors
-
-            obs_buf_before_reset = clone_dict_tensors(self._obs_buf)
-            self._extras["obs_before_reset"] = obs_buf_before_reset
             observations, _ = self.reset(reset_env_ids)
 
         # Compute the observations.
         observations = self.compute_observations(states)
-        for key in observations.keys():
-            self._obs_buf[key] = observations[key]
 
-        return observations, self._reward_buf, self._terminated_buf, self._truncated_buf, {}
+        return observations, self._reward_buf, self._terminated_buf, self._truncated_buf, self._infos
 
     def initialize_trajectory(self) -> Tuple[torch.Tensor, Dict[str, Any]]:
         # TODO
