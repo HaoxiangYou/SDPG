@@ -52,7 +52,7 @@ class AFRLRunner:
         self.grad_norm = self.agent_config.grad_norm
         self.mini_batch_size = self.agent_config.mini_batch_size
         self.critic_iterations = self.agent_config.critic_iterations
-        self.use_auxiliary_envs_for_critic = self.agent_config.use_auxiliary_envs_for_critic
+        self.use_auxiliary_envs_for_critic = getattr(self.agent_config, "use_auxiliary_envs_for_critic", True)
 
         # make the environments
         self.make_envs()
@@ -271,10 +271,10 @@ class AFRLRunner:
         positive_rollout_ratio: float,
         actor_grad_norm: float,
         critic_grad_norm: float,
-        temperature: float,
         policy_std: float,
         iter: int,
         step: int,
+        temperature: float | None = None,
         time_elapse: float | None = None,
         policy_reward: float | None = None,
         episode_lengths: float | None = None,
@@ -309,13 +309,14 @@ class AFRLRunner:
             "rollout_reward_var": rollout_var,
             "rollout_reward_positive_ratio": positive_rollout_ratio,
             "actor_grad_norm": actor_grad_norm,
-            "temperature": temperature,
             "critic_grad_norm": critic_grad_norm,
             "actor_lr": self.actor_optimizer.param_groups[0]["lr"],
             "critic_lr": self.critic_optimizer.param_groups[0]["lr"],
         }
 
         # Add optional metrics
+        if temperature is not None:
+            metrics["temperature"] = temperature
         if policy_reward is not None:
             metrics["rewards"] = policy_reward
         if episode_lengths is not None:
@@ -924,7 +925,7 @@ class AFRLRunner:
                 actor_grad_norm=self.actor_grad_norm,
                 critic_grad_norm=self.critic_grad_norm,
                 policy_std=torch.exp(self.log_stds).mean(),
-                temperature=self.get_temperature().item(),
+                temperature=self.get_temperature().item() if self.get_temperature() is not None else None,
                 iter=self.iter_count,
                 step=self.step_count,
                 time_elapse=time_elapse,
@@ -935,7 +936,7 @@ class AFRLRunner:
             )
 
             print(
-                "iter {}: ep reward {:.2f}, ep len {:.1f}, rollout reward {:.2f}, rollout reward std {:.2f}, rollout reward positive ratio {:.2f}, fps total {:.3g}, actor grad norm {:.2f}, critic grad norm {:.2f}, std: {:.2g}, temperature {:.2g}".format(
+                "iter {}: ep reward {:.2f}, ep len {:.1f}, rollout reward {:.2f}, rollout reward std {:.2f}, rollout reward positive ratio {:.2f}, fps total {:.3g}, actor grad norm {:.2f}, critic grad norm {:.2f}, std: {:.2g}".format(
                     self.iter_count,
                     policy_reward,
                     episode_lengths,
@@ -946,7 +947,6 @@ class AFRLRunner:
                     self.actor_grad_norm,
                     self.critic_grad_norm,
                     torch.exp(self.log_stds).mean(),
-                    self.get_temperature().item(),
                 )
             )
 
@@ -1013,7 +1013,9 @@ class AFRLRunner:
             self.obs_rms[key].update(obs[key])
 
     def get_temperature(self):
-        return torch.exp(self.log_temperature)
+        if hasattr(self, "log_temperature"):
+            return torch.exp(self.log_temperature)
+        return None
 
     def get_actor_obs(self, obs):
         """

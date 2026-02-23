@@ -74,22 +74,22 @@ config:
     # start_factor: 1.0
     # end_factor: 0.1
   
-  entropy_parameters:
-    initial_temperature: 1e-2
-    actor_regularization: true
-    soft_critic: true
-    temperature_auto_tune: true
-    target_std: 0.15
-    temperature_lr: 1e-3
+  # entropy_parameters:
+  #   initial_temperature: 1e-2
+  #   actor_regularization: true
+  #   soft_critic: true
+  #   temperature_auto_tune: true
+  #   target_std: 0.15
+  #   temperature_lr: 1e-3
   
   bounds:
     mean_bounds: [-2, 2]
     log_std_bounds: [-5, 2]
 
   # batch size for training the critic
-  use_auxiliary_envs_for_critic: false
-  mini_batch_size: 512
-  critic_iterations: 16
+  # use_auxiliary_envs_for_critic: true
+  mini_batch_size: 4096
+  critic_iterations: 2
 
   truncated_grads: True
   grad_norm: 1.0
