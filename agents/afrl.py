@@ -394,6 +394,7 @@ class AFRLRunner:
                 # Sample the action perturbations
                 eps_actions = torch.randn_like(nominal_actions)
                 eps_actions[self.nominal_env_ids] = 0.0
+
                 if self.mean_bounds is not None:
                     actions = torch.clamp(nominal_actions + eps_actions * std, self.mean_bounds[0], self.mean_bounds[1])
                 self.actions[:, i] = actions.clone()
@@ -628,7 +629,6 @@ class AFRLRunner:
             "mean": target_mean.view(-1, self.num_actions),
             "log_std": target_log_std.view(-1, self.num_actions),
         }
-        # TODO: the pred_actions may be slightly different from the target_actions (in the magnitude of 1e-6)
         pred_actions = self.actor(obs)
         if self.mean_bounds is not None:
             pred_actions["mean"] = torch.clamp(pred_actions["mean"], self.mean_bounds[0], self.mean_bounds[1])
