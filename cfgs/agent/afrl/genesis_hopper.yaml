@@ -18,7 +18,7 @@ config:
           activation: elu
         # fixed_std true = constant log_std (use log_std_init); false = learn log_std
         fixed_std: false
-        state_dependent_std: true
+        state_dependent_std: false
         log_std_init: 0.0
     
     critic:

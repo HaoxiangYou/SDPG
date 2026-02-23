@@ -394,7 +394,8 @@ class AFRLRunner:
                 # Sample the action perturbations
                 eps_actions = torch.randn_like(nominal_actions)
                 eps_actions[self.nominal_env_ids] = 0.0
-                actions = nominal_actions + eps_actions * std
+                if self.mean_bounds is not None:
+                    actions = torch.clamp(nominal_actions + eps_actions * std, self.mean_bounds[0], self.mean_bounds[1])
                 self.actions[:, i] = actions.clone()
                 self.eps_actions[:, i] = eps_actions.clone()
                 self.log_stds[:, i] = log_std.clone()
