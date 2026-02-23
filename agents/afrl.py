@@ -42,7 +42,6 @@ class AFRLRunner:
         )
         self.max_epochs = self.agent_config.max_epochs
         self.horizon_length = self.agent_config.horizon_length
-        # action perturbation factor
         self.causality = self.agent_config.causality
         self.eligibility_trace = self.agent_config.eligibility_trace
         self.gamma = self.agent_config.gamma
@@ -53,6 +52,7 @@ class AFRLRunner:
         self.grad_norm = self.agent_config.grad_norm
         self.mini_batch_size = self.agent_config.mini_batch_size
         self.critic_iterations = self.agent_config.critic_iterations
+        self.use_auxiliary_envs_for_critic = getattr(self.agent_config, "use_auxiliary_envs_for_critic", True)
 
         # make the environments
         self.make_envs()
@@ -88,6 +88,39 @@ class AFRLRunner:
         if top_k_perturbations is None:
             top_k_perturbations = self.num_action_perturbations + 1
         self.top_k_perturbations = top_k_perturbations
+
+        # Entropy related parameters (from config.entropy_parameters)
+        entropy_params = self.agent_config.get("entropy_parameters", None)
+        if entropy_params is not None:
+            self.actor_regularization = entropy_params.get("actor_regularization")
+            self.soft_critic = entropy_params.get("soft_critic")
+            initial_temperature = entropy_params.get("initial_temperature", 1.0)
+            log_temp_init = math.log(initial_temperature)
+            self.target_std = entropy_params.get("target_std", 0.15)
+            self.temperature_auto_tune = entropy_params.get("temperature_auto_tune", True)
+            self.temperature_lr = entropy_params.get("temperature_lr", 1e-3)
+            if self.temperature_auto_tune:
+                self.log_temperature = torch.nn.Parameter(
+                    torch.tensor(log_temp_init, device=self.device, dtype=torch.float32)
+                )
+                self.temperature_optimizer = torch.optim.Adam([self.log_temperature], lr=self.temperature_lr)
+            else:
+                self.log_temperature = torch.tensor(log_temp_init, device=self.device, dtype=torch.float32)
+                self.temperature_optimizer = None
+
+        else:
+            self.actor_regularization = False
+            self.soft_critic = False
+            self.temperature_auto_tune = False
+
+        # bounds
+        bounds = self.agent_config.get("bounds", None)
+        if bounds is not None:
+            self.mean_bounds = bounds.get("mean_bounds", None)
+            self.log_std_bounds = bounds.get("log_std_bounds", None)
+        else:
+            self.mean_bounds = None
+            self.log_std_bounds = None
 
         # Performance metrics recorder
         self.episode_reward_meter = AverageMeter(1, 100).to(self.device)
@@ -241,6 +274,7 @@ class AFRLRunner:
         policy_std: float,
         iter: int,
         step: int,
+        temperature: float | None = None,
         time_elapse: float | None = None,
         policy_reward: float | None = None,
         episode_lengths: float | None = None,
@@ -255,6 +289,7 @@ class AFRLRunner:
             rollout_reward: Rollout reward
             rollout_var: Variance of rollout rewards
             positive_rollout_ratio: Ratio of positive rollout rewards
+            temperature: Temperature for entropy regularization
             actor_grad_norm: Actor gradient norm
             critic_grad_norm: Critic gradient norm
             iter: Iteration number
@@ -280,6 +315,8 @@ class AFRLRunner:
         }
 
         # Add optional metrics
+        if temperature is not None:
+            metrics["temperature"] = temperature
         if policy_reward is not None:
             metrics["rewards"] = policy_reward
         if episode_lengths is not None:
@@ -348,11 +385,18 @@ class AFRLRunner:
                 out = self.actor(actor_obs)
                 nominal_actions = out["mean"].repeat_interleave(self.num_action_perturbations + 1, dim=0)
                 log_std = out["log_std"].repeat_interleave(self.num_action_perturbations + 1, dim=0)
+                # Bounds the action and log std
+                if self.mean_bounds is not None:
+                    nominal_actions = torch.clamp(nominal_actions, self.mean_bounds[0], self.mean_bounds[1])
+                if self.log_std_bounds is not None:
+                    log_std = torch.clamp(log_std, self.log_std_bounds[0], self.log_std_bounds[1])
                 std = torch.exp(log_std)
                 # Sample the action perturbations
                 eps_actions = torch.randn_like(nominal_actions)
                 eps_actions[self.nominal_env_ids] = 0.0
-                actions = nominal_actions + eps_actions * std
+
+                if self.mean_bounds is not None:
+                    actions = torch.clamp(nominal_actions + eps_actions * std, self.mean_bounds[0], self.mean_bounds[1])
                 self.actions[:, i] = actions.clone()
                 self.eps_actions[:, i] = eps_actions.clone()
                 self.log_stds[:, i] = log_std.clone()
@@ -446,21 +490,31 @@ class AFRLRunner:
             value=curr_J - curr_J[self.get_nominal_idx_of_auxiliary_env(torch.arange(self.num_envs, device=device))],
         )
 
-    def _compute_return_to_go(self, use_eligibility_trace: bool) -> None:
+    @torch.no_grad()
+    def _compute_return_to_go(self, use_eligibility_trace: bool, include_entropy: bool = False) -> None:
         """Compute the return-to-go for each environment."""
         Ai = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         Bi = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         lam = torch.ones(self.num_envs, dtype=torch.float32, device=self.device)
         dones = self.dones.clone().to(torch.float32)
+        rewards = self.rewards.clone()
+
+        if include_entropy:
+            # NOTE: soft critic is meaningful only when the log std is state-dependent
+            # for state-independent log std, the entropy is simply an same offset to all states
+            # TODO: for auxiliary environments, the std is copy from the nominal environment
+            # would this cause problem if we use all auxiliary environments for training the critic?
+            rewards += self.get_temperature() * torch.mean(self.log_stds - self.target_std, dim=-1)
+
         J = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
         for i in reversed(range(self.horizon_length)):
             lam = lam * self.lam * (1.0 - dones[:, i]) + dones[:, i]
             Ai = (1.0 - dones[:, i]) * (
                 self.lam * self.gamma * Ai
                 + self.gamma * self.next_values[:, i]
-                + (1.0 - lam) / (1.0 - self.lam) * self.rewards[:, i]
+                + (1.0 - lam) / (1.0 - self.lam) * rewards[:, i]
             )
-            Bi = self.gamma * (self.next_values[:, i] * dones[:, i] + Bi * (1.0 - dones[:, i])) + self.rewards[:, i]
+            Bi = self.gamma * (self.next_values[:, i] * dones[:, i] + Bi * (1.0 - dones[:, i])) + rewards[:, i]
             if use_eligibility_trace:
                 J[:, i] = (1.0 - self.lam) * Ai + lam * Bi
             else:
@@ -469,7 +523,7 @@ class AFRLRunner:
 
     def _compute_delta_J_causal(self) -> None:
         """Causal delta_J: per-timestep return-to-go difference; optionally TD(lambda) eligibility trace."""
-        J = self._compute_return_to_go(self.eligibility_trace)
+        J = self._compute_return_to_go(self.eligibility_trace, include_entropy=False)
 
         nominal_ids = self.get_nominal_idx_of_auxiliary_env(torch.arange(self.num_envs, device=self.device))
         self.delta_J[:] = J - J[nominal_ids]
@@ -555,7 +609,7 @@ class AFRLRunner:
         """
         This function computes the target values using TD(lambda) method.
         """
-        self.target_values = self._compute_return_to_go(use_eligibility_trace=True)
+        self.target_values = self._compute_return_to_go(use_eligibility_trace=True, include_entropy=self.soft_critic)
 
     def train_actor(self):
         # Compute the incremental trajectory rewards
@@ -567,12 +621,21 @@ class AFRLRunner:
 
         target_mean = self.actions[self.nominal_env_ids] + mean_ascent_direction
         target_log_std = self.log_stds[self.nominal_env_ids] + log_std_ascent_direction
+        if self.mean_bounds is not None:
+            target_mean = torch.clamp(target_mean, self.mean_bounds[0], self.mean_bounds[1])
+        if self.log_std_bounds is not None:
+            target_log_std = torch.clamp(target_log_std, self.log_std_bounds[0], self.log_std_bounds[1])
         target_actions = {
             "mean": target_mean.view(-1, self.num_actions),
             "log_std": target_log_std.view(-1, self.num_actions),
         }
-        # TODO: the pred_actions may be slightly different from the target_actions (in the magnitude of 1e-6)
         pred_actions = self.actor(obs)
+        if self.mean_bounds is not None:
+            pred_actions["mean"] = torch.clamp(pred_actions["mean"], self.mean_bounds[0], self.mean_bounds[1])
+        if self.log_std_bounds is not None:
+            pred_actions["log_std"] = torch.clamp(
+                pred_actions["log_std"], self.log_std_bounds[0], self.log_std_bounds[1]
+            )
 
         # Update the actor
         # TODO: currently we use all trajectory as single batch, and update the actor once.
@@ -582,19 +645,36 @@ class AFRLRunner:
         actor_loss = F.mse_loss(pred_actions["mean"], target_actions["mean"]) + F.mse_loss(
             pred_actions["log_std"], target_actions["log_std"]
         )
+        if self.actor_regularization:
+            actor_loss -= self.get_temperature() * torch.mean(pred_actions["log_std"])
         actor_loss.backward()
         self.actor_grad_norm = compute_grad_norm(self.actor.parameters())
         if self.truncated_grads:
             torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.grad_norm)
         self.actor_optimizer.step()
+        if self.temperature_auto_tune:
+            self.temperature_optimizer.zero_grad()
+            temperature_loss = self.get_temperature() * torch.mean(
+                torch.exp(pred_actions["log_std"].detach()) - self.target_std
+            )
+            temperature_loss.backward()
+            self.temperature_optimizer.step()
         return actor_loss.item()
 
     def train_critic(self):
         # NOTE: currently we use both nominal and auxiliary rollout for training the critic
         self.compute_target_values()
         # Flatten first two dimensions (num_envs, horizon_length) for all observation keys
-        obs = flatten_dict(self.critic_obs_buf, start_dim=0, end_dim=1)
-        target_values = self.target_values.view(-1, 1)
+        if self.use_auxiliary_envs_for_critic:
+            obs = flatten_dict(self.critic_obs_buf, start_dim=0, end_dim=1)
+            target_values = self.target_values.view(-1, 1)
+        else:
+            obs = {}
+            for key in self.critic_obs_buf.keys():
+                obs[key] = self.critic_obs_buf[key][self.nominal_env_ids]
+            obs = flatten_dict(obs, start_dim=0, end_dim=1)
+            target_values = self.target_values[self.nominal_env_ids].view(-1, 1)
+
         # Get dataset size from first observation key
         dataset_size = list(obs.values())[0].shape[0]
 
@@ -845,7 +925,8 @@ class AFRLRunner:
                 positive_rollout_ratio=self.positive_rollout_ratio,
                 actor_grad_norm=self.actor_grad_norm,
                 critic_grad_norm=self.critic_grad_norm,
-                policy_std=torch.exp(self.log_stds.mean()),
+                policy_std=torch.exp(self.log_stds).mean(),
+                temperature=self.get_temperature().item() if self.get_temperature() is not None else None,
                 iter=self.iter_count,
                 step=self.step_count,
                 time_elapse=time_elapse,
@@ -856,7 +937,7 @@ class AFRLRunner:
             )
 
             print(
-                "iter {}: ep reward {:.2f}, ep len {:.1f}, rollout reward {:.2f}, rollout reward std {:.2f}, rollout reward positive ratio {:.2f}, fps total {:.3g}, actor grad norm {:.2f}, critic grad norm {:.2f},".format(
+                "iter {}: ep reward {:.2f}, ep len {:.1f}, rollout reward {:.2f}, rollout reward std {:.2f}, rollout reward positive ratio {:.2f}, fps total {:.3g}, actor grad norm {:.2f}, critic grad norm {:.2f}, std: {:.2g}".format(
                     self.iter_count,
                     policy_reward,
                     episode_lengths,
@@ -866,6 +947,7 @@ class AFRLRunner:
                     1 / (time_end_epoch - time_start_epoch),
                     self.actor_grad_norm,
                     self.critic_grad_norm,
+                    torch.exp(self.log_stds).mean(),
                 )
             )
 
@@ -930,6 +1012,11 @@ class AFRLRunner:
         """
         for key in self.obs_rms.keys():
             self.obs_rms[key].update(obs[key])
+
+    def get_temperature(self):
+        if hasattr(self, "log_temperature"):
+            return torch.exp(self.log_temperature)
+        return None
 
     def get_actor_obs(self, obs):
         """
