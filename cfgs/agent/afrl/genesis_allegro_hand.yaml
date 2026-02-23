@@ -33,6 +33,10 @@ config:
           units: [1024, 512, 256, 128]
           activation: elu
 
+  bounds:
+    mean_bounds: [-2, 2]
+    log_std_bounds: [-5, 2]
+
   # Number of base environments for rollout
   num_base_envs: 256
   # Number of auxiliary environments for estimating the descent direction

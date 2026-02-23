@@ -344,6 +344,7 @@ class AllegroHand(GenesisEnv):
 
         quat_diff = transform_quat_by_quat(inv_quat(target_quat), cube_quat)
         rot_dist = 2.0 * torch.asin(torch.clamp(torch.norm(quat_diff[:, 1:4], p=2, dim=-1), max=1.0))
+        self._infos["angle_diff"] = torch.rad2deg(2 * torch.norm(quat_diff[:, 1:4], p=2, dim=-1)).mean().item()
         rot_rew = 1.0 / (torch.abs(rot_dist) + self._rot_eps) * self._rot_reward_scale
 
         action_penalty = self._action_penalty * torch.sum(actions**2, dim=-1)
