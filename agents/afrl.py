@@ -148,6 +148,7 @@ class AFRLRunner:
         # Buffer
         self.actor_obs_buf = {}
         self.critic_obs_buf = {}
+        self.infos = {}
         self.actions = torch.zeros(
             (self.num_envs, self.horizon_length, self.num_actions), dtype=torch.float32, device=self.device
         )
@@ -280,6 +281,7 @@ class AFRLRunner:
         episode_lengths: float | None = None,
         best_policy_reward: float | None = None,
         time_report: TimeReport | None = None,
+        infos: dict | None = None,
     ):
         """Write training statistics to both TensorBoard and wandb.
 
@@ -299,6 +301,7 @@ class AFRLRunner:
             episode_lengths: Episode lengths (optional)
             best_policy_reward: Best policy reward (optional)
             time_report: recorder for the time elapsed in each portion of the training process (optional)
+            infos: Dictionary of info values from environment to log (optional)
         """
         # Prepare metrics dictionary
         metrics = {
@@ -323,6 +326,25 @@ class AFRLRunner:
             metrics["episode_lengths"] = episode_lengths
         if best_policy_reward is not None:
             metrics["best_policy"] = best_policy_reward
+
+        # Log infos from environment if provided
+        if infos is not None:
+            for key, value in infos.items():
+                # Convert to scalar if needed
+                if isinstance(value, torch.Tensor):
+                    if len(value.shape) == 0:
+                        value = value.item()
+                    else:
+                        # Take mean if tensor has values
+                        value = value.float().mean().item()
+                elif isinstance(value, (list, tuple)):
+                    value = sum(value) / len(value) if len(value) > 0 else float("nan")
+
+                # Only log if value is not nan
+                if isinstance(value, (float, int)):
+                    if isinstance(value, float) and (value != value or value == float("inf") or value == float("-inf")):
+                        continue  # Skip NaN and inf
+                    metrics[f"infos/{key}"] = value
 
         # Log to TensorBoard with different step types
         for metric_name, value in metrics.items():
@@ -406,6 +428,10 @@ class AFRLRunner:
                 # Step the environment
                 # TODO: currently assume the action is bounded by [-1, 1], and we step using tanh
                 obs, rewards, terminated, truncated, info = self.env.step(torch.tanh(actions), auto_reset=False)
+
+                # Update infos after each step
+                if isinstance(info, dict):
+                    self.infos.update(info)
 
                 # Normalize the reward
                 raw_rewards = rewards.clone()
@@ -936,6 +962,7 @@ class AFRLRunner:
                 episode_lengths=episode_lengths if episode_lengths > 0 else None,
                 best_policy_reward=current_best_policy_reward,
                 time_report=self.time_report,
+                infos=self.infos,
             )
 
             print(
