@@ -211,7 +211,7 @@ class AllegroHand(GenesisEnv):
         self._fall_distance = 0.2
         self._dist_reward_scale = -10.0
         self._rot_reward_scale = 1.0
-        self._rot_eps = 0.1
+        self._healthy_reward = 3.0
         self._action_penalty = -0.0002
 
         # Initialize the sensors
@@ -345,12 +345,15 @@ class AllegroHand(GenesisEnv):
 
         quat_diff = transform_quat_by_quat(inv_quat(target_quat), cube_quat)
         rot_dist = 2.0 * torch.asin(torch.clamp(torch.norm(quat_diff[:, 1:4], p=2, dim=-1), max=1.0))
-        self._infos["angle_diff"] = torch.rad2deg(2 * torch.norm(quat_diff[:, 1:4], p=2, dim=-1)).mean().item()
+
         rot_rew = -(rot_dist**2) * self._rot_reward_scale
 
         action_penalty = self._action_penalty * torch.sum(actions**2, dim=-1)
 
-        return dist_reward + rot_rew + action_penalty + 3.0
+        # restore the average angle difference between the cube and the target in degrees
+        self._infos["angle_diff"] = torch.rad2deg(2 * torch.norm(quat_diff[:, 1:4], p=2, dim=-1)).mean().item()
+
+        return dist_reward + rot_rew + action_penalty + self._healthy_reward
 
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
         robot_states = states["robot_states"]
