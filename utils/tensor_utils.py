@@ -528,22 +528,21 @@ def concat_dict_list(dict_list: Sequence[Dict[str, torch.Tensor]], dim: int = 0)
     return result
 
 
-def stack_dict_list(dict_list: Sequence[Dict[str, torch.Tensor]], dim: int = 0) -> Dict[str, torch.Tensor]:
-    """Stack a list of dictionaries with same keys into a single dictionary.
+def stack_dict_list(dict_list: Sequence[Dict[str, Any]], dim: int = 0) -> Dict[str, Any]:
+    """Stack a list of dictionaries with same keys into a single dictionary (recursive).
 
-    Takes a list of dictionaries where each dictionary has the same keys,
-    and stacks the corresponding tensors along a new dimension.
+    Takes a list of dictionaries where each dictionary has the same keys.
+    Values may be tensors or nested dicts: tensors are stacked along dim;
+    nested dicts are processed recursively.
 
     Args:
-        dict_list: List of dictionaries, each with same keys and tensor values.
+        dict_list: List of dictionaries, each with same keys and tensor or dict values.
                   Example: [{"key1": tensor1_t0, "key2": tensor2_t0},
                            {"key1": tensor1_t1, "key2": tensor2_t1}, ...]
         dim: Dimension along which to stack. Default is 0 (creates new leading dimension).
 
     Returns:
-        Single dictionary with stacked tensors.
-        Example: {"key1": stack([tensor1_t0, tensor1_t1, ...], dim=0),
-                 "key2": stack([tensor2_t0, tensor2_t1, ...], dim=0)}
+        Single dictionary with stacked tensors (same nested structure).
         If input tensors have shape (N, ...), output will have shape (len(dict_list), N, ...)
 
     Example:
@@ -558,57 +557,61 @@ def stack_dict_list(dict_list: Sequence[Dict[str, torch.Tensor]], dim: int = 0) 
     if not dict_list:
         return {}
 
-    # Get keys from first dictionary (assume all dicts have same keys)
     keys = dict_list[0].keys()
-
-    # Verify all dictionaries have the same keys
     for i, d in enumerate(dict_list[1:], 1):
         if set(d.keys()) != set(keys):
             raise ValueError(f"Dictionary at index {i} has different keys than the first dictionary")
 
-    # Stack tensors for each key
     result = {}
     for key in keys:
-        tensors = [d[key] for d in dict_list]
-        result[key] = torch.stack(tensors, dim=dim)
-
+        first_val = dict_list[0][key]
+        if isinstance(first_val, dict):
+            sub_list = [d[key] for d in dict_list]
+            result[key] = stack_dict_list(sub_list, dim=dim)
+        elif isinstance(first_val, torch.Tensor):
+            tensors = [d[key] for d in dict_list]
+            result[key] = torch.stack(tensors, dim=dim)
+        else:
+            raise TypeError(f"stack_dict_list expects dict or tensor values, got {type(first_val)}")
     return result
 
 
 def moveaxis_dict(
-    tensor_dict: Dict[str, torch.Tensor], source: Union[int, Sequence[int]], destination: Union[int, Sequence[int]]
-) -> Dict[str, torch.Tensor]:
-    """Move axes of tensors in a dictionary.
+    tensor_dict: Dict[str, Any],
+    source: Union[int, Sequence[int]],
+    destination: Union[int, Sequence[int]],
+) -> Dict[str, Any]:
+    """Move axes of tensors in a dictionary (recursive).
 
-    Applies `torch.moveaxis` to each tensor in the dictionary, moving the specified
-    source axes to the destination positions.
+    Applies `torch.moveaxis` to each tensor. Values may be tensors or nested dicts;
+    nested dicts are processed recursively.
 
     Args:
-        tensor_dict: Dictionary with string keys and tensor values.
+        tensor_dict: Dictionary with string keys and tensor or nested-dict values.
         source: Original positions of the axes to move. Can be int or sequence of ints.
         destination: Destination positions for each of the original axes.
                     Must have the same length as source.
 
     Returns:
-        Dictionary with same keys, but tensors have axes moved.
+        Dictionary with same structure, but tensors have axes moved.
 
     Example:
         >>> obs = {
         ...     "privileged_observations": torch.randn(2, 64, 11),  # (time, batch, features)
         ...     "RGB": torch.randn(2, 64, 9, 256, 256),  # (time, batch, channels, H, W)
         ... }
-        >>> # Move time dimension (dim 0) to last position
-        >>> obs_moved = moveaxis_dict(obs, source=0, destination=-1)
-        >>> # obs_moved["privileged_observations"] has shape (64, 11, 2)
-        >>> # obs_moved["RGB"] has shape (64, 9, 256, 256, 2)
-        >>> # Move time dimension to position 1 (after batch)
         >>> obs_moved = moveaxis_dict(obs, source=0, destination=1)
         >>> # obs_moved["privileged_observations"] has shape (64, 2, 11)
         >>> # obs_moved["RGB"] has shape (64, 2, 9, 256, 256)
     """
     result = {}
-    for key, tensor in tensor_dict.items():
-        result[key] = torch.moveaxis(tensor, source, destination)
+    for key, val in tensor_dict.items():
+        if isinstance(val, dict):
+            result[key] = moveaxis_dict(val, source, destination)
+        elif isinstance(val, torch.Tensor):
+            result[key] = torch.moveaxis(val, source, destination)
+        else:
+            raise TypeError(f"moveaxis_dict expects dict or tensor values, got {type(val)}")
     return result
 
 

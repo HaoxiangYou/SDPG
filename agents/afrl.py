@@ -875,7 +875,7 @@ class AFRLRunner:
         self.env.set_states(states=nominal_states, env_ids=auxiliary_env_ids)
 
     @torch.no_grad()
-    def evaluate_policy(self, maximum_trajectory_length=None):
+    def evaluate_policy(self, maximum_trajectory_length=None, save_trajectory=True):
         """
         TODO currently this function is only for play mode to evaluate the trained policy.
         """
@@ -883,10 +883,14 @@ class AFRLRunner:
         episode_length_meter = AverageMeter(1, 100).to(self.device)
         episode_reward = torch.zeros(self.num_envs, device=self.device)
         episode_reward_meter = AverageMeter(1, 100).to(self.device)
+        if save_trajectory:
+            states_history = []
         if maximum_trajectory_length is None:
             maximum_trajectory_length = self.env.episode_length
 
         obs, _ = self.env.reset()
+        if save_trajectory:
+            states_history.append(self.env.get_states())
         for t in range(maximum_trajectory_length):
             # process the observations with the running statistics
             obs = self.process_observations(obs, self.obs_rms)
@@ -896,6 +900,8 @@ class AFRLRunner:
             done_env_ids = dones.nonzero(as_tuple=False).squeeze(-1).to(torch.int32)
             episode_length += 1
             episode_reward += rewards
+            if save_trajectory:
+                states_history.append(self.env.get_states())
             if len(done_env_ids) > 0:
                 episode_length_meter.update(episode_length[done_env_ids])
                 episode_reward_meter.update(episode_reward[done_env_ids])
@@ -905,6 +911,14 @@ class AFRLRunner:
         print_info(
             f"Episode length: {episode_length_meter.get_mean().item()}, Episode reward: {episode_reward_meter.get_mean().item()}"
         )
+
+        if save_trajectory:
+            eval_dir = os.path.join(self.log_dir, "eval")
+            os.makedirs(eval_dir, exist_ok=True)
+            save_path = os.path.join(eval_dir, "trajectory.pt")
+            states_history = stack_dict_list(states_history)
+            states_history = moveaxis_dict(states_history, source=0, destination=1)
+            torch.save(states_history, save_path)
 
     def train(self):
         self.time_report.add_timer("rollout")
