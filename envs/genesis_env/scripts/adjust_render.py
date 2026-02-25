@@ -15,21 +15,21 @@ from envs.genesis_env.genesis_env import GenesisEnv
 from utils.common_utils import snakecase_to_pascalcase
 from utils.tensor_utils import enumerate_states
 
-env_name = "hopper"
+env_name = "allegro_hand"
 num_envs = 4
 device = "cuda"
-sim_options = gs.options.SimOptions(dt=1e-2, substeps=1)
+sim_options = gs.options.SimOptions(dt=3e-2, substeps=4)
 env_kwargs = {
-    "show_viewer": False,
+    "show_viewer": True,
     "randomize_init": False,  # Set to False when loading states
     "vis_obs": True,
     "nominal_env_ids": None,
     "sensors_args": {
         "camera": {
             "res": (84, 84),
-            "pos": (0.0, -2.0, -0.5),
-            "lookat": (0.0, 0.0, -0.5),
-            "fov": 60.0,
+            "pos": (0.40, 0.05, 0.425),
+            "lookat": (0.25, -0.10, 0.275),
+            "fov": 80.0,
             "lights": {
                 "pos": (0.0, 0.0, 2.0),
                 "intensity": 0.8,

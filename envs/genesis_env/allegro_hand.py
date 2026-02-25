@@ -6,6 +6,7 @@ import numpy as np
 import torch
 from genesis.utils.geom import (
     inv_quat,
+    pos_lookat_up_to_T,
     transform_quat_by_quat,
 )
 from gym import spaces
@@ -41,42 +42,43 @@ class AllegroHand(GenesisEnv):
 
         self._vis_obs = vis_obs
 
-        # if sensors_args is None:
-        #     sensors_args = {
-        #         "camera": {
-        #             "res": [256, 256],
-        #             "pos": [-3.0, 0.0, 1.0],
-        #             "lookat": [0.0, 0.0, 0.0],
-        #             "fov": 60.0,
-        #             "lights": {
-        #                 "pos": [0.0, 0.0, 2.0],
-        #                 "dir": [0.0, 0.0, -1.0],
-        #                 "intensity": 0.8,
-        #                 "color": [1.0, 1.0, 1.0],
-        #             },
-        #             "directional": True,
-        #             "castshadow": False,
-        #         }
-        #     }
+        if sensors_args is None:
+            sensors_args = {
+                "camera": {
+                    "res": [256, 256],
+                    "pos": [0.40, 0.05, 0.425],
+                    "lookat": [0.25, -0.10, 0.275],
+                    "fov": 80.0,
+                    "lights": {
+                        "pos": [0.0, 0.0, 2.0],
+                        "dir": [0.0, 0.0, -1.0],
+                        "intensity": 0.8,
+                        "color": [1.0, 1.0, 1.0],
+                    },
+                    "directional": True,
+                    "castshadow": False,
+                }
+            }
 
         if vis_obs:
-            pass
-            # self._num_image_stack = 3
-            # self._observation_space = spaces.Dict(
-            #     {
-            #         "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(76,)),
-            #         "RGB": spaces.Box(
-            #             low=0,
-            #             high=255,
-            #             dtype=np.uint8,
-            #             shape=(
-            #                 self._num_image_stack * 3,
-            #                 sensors_args["camera"]["res"][0],
-            #                 sensors_args["camera"]["res"][1],
-            #             ),
-            #         ),
-            #     }
-            # )
+            self._num_image_stack = 3
+            self._observation_space = spaces.Dict(
+                {
+                    "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(76,)),
+                    # observation that ignores cube information (infer from images)
+                    "proprioception_and_target": spaces.Box(low=-np.inf, high=np.inf, shape=(124,)),
+                    "RGB": spaces.Box(
+                        low=0,
+                        high=255,
+                        dtype=np.uint8,
+                        shape=(
+                            self._num_image_stack * 3,
+                            sensors_args["camera"]["res"][0],
+                            sensors_args["camera"]["res"][1],
+                        ),
+                    ),
+                }
+            )
         else:
             self._observation_space = spaces.Dict(
                 {
@@ -129,7 +131,7 @@ class AllegroHand(GenesisEnv):
                 file=os.path.join(os.path.dirname(__file__), "../../assets/dexcube/meshes/cube.obj"),
                 scale=0.03,
                 collision=False,
-                pos=(0.325, 0.17, 0.2475),
+                pos=(0.325, 0.3, 0.2475),
             ),
             material=gs.materials.Rigid(gravity_compensation=1),
             surface=gs.surfaces.Rough(
@@ -212,41 +214,41 @@ class AllegroHand(GenesisEnv):
 
         # Initialize the sensors
         # TODO: genesis at commit id 7db43e4caef2b185bf691d29fc545d6480cd224d only supports offset_T
-        # offset_T = self._sensors_args["camera"].get("offset_T", None)
-        # lookat = self._sensors_args["camera"].get("lookat", None)
-        # if offset_T is not None:
-        #     offset_T = torch.tensor(offset_T, device=self._device)
-        # else:
-        #     if lookat is not None:
-        #         offset_T = pos_lookat_up_to_T(
-        #             np.array(self._sensors_args["camera"]["pos"]), np.array(lookat), np.array((0.0, 0.0, 1.0))
-        #         )
-        #     else:
-        #         offset_T = np.eye(4)
-        # NOTE: A dummy link for the camera to attach to, genesis sensor camera does not support fixed rotation or axis
-        # self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.01, collision=False, fixed=True))
-        # self._torso_link = self._robot.get_link("torso")
-        # self._camera = self._scene.add_sensor(
-        #     gs.sensors.BatchRendererCameraOptions(
-        #         res=self._sensors_args["camera"]["res"],
-        #         pos=self._sensors_args["camera"]["pos"],
-        #         offset_T=offset_T,
-        #         fov=self._sensors_args["camera"]["fov"],
-        #         entity_idx=self._camera_mount.idx,
-        #         lights=[self._sensors_args["camera"]["lights"]],
-        #     )
-        # )
+        offset_T = self._sensors_args["camera"].get("offset_T", None)
+        lookat = self._sensors_args["camera"].get("lookat", None)
+        if offset_T is not None:
+            offset_T = torch.tensor(offset_T, device=self._device)
+        else:
+            if lookat is not None:
+                offset_T = pos_lookat_up_to_T(
+                    np.array(self._sensors_args["camera"]["pos"]), np.array(lookat), np.array((0.0, 0.0, 1.0))
+                )
+            else:
+                offset_T = np.eye(4)
+        # NOTE: A dummy link for the camera to attach to; without entity_idx the batch renderer
+        # uses a single world pose, only env 0 is in view and other envs render black.
+        self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.01, collision=False, fixed=True))
+        self._camera = self._scene.add_sensor(
+            gs.sensors.BatchRendererCameraOptions(
+                res=self._sensors_args["camera"]["res"],
+                pos=self._sensors_args["camera"]["pos"],
+                offset_T=offset_T,
+                fov=self._sensors_args["camera"]["fov"],
+                entity_idx=self._camera_mount.idx,
+                lights=[self._sensors_args["camera"]["lights"]],
+            )
+        )
 
-        # if self._vis_obs:
-        #     self._imgs_buf = torch.zeros(
-        #         self.nominal_env_ids.shape[0],
-        #         self._num_image_stack,
-        #         self._sensors_args["camera"]["res"][0],
-        #         self._sensors_args["camera"]["res"][1],
-        #         3,
-        #         device=self._device,
-        #         dtype=torch.uint8,
-        #     )
+        if self._vis_obs:
+            self._imgs_buf = torch.zeros(
+                self.nominal_env_ids.shape[0],
+                self._num_image_stack,
+                self._sensors_args["camera"]["res"][0],
+                self._sensors_args["camera"]["res"][1],
+                3,
+                device=self._device,
+                dtype=torch.uint8,
+            )
 
     def build_scene(self) -> None:
         self._scene.build(n_envs=self._num_envs, env_spacing=(1.0, 1.0))
@@ -321,13 +323,35 @@ class AllegroHand(GenesisEnv):
         )
         observations["privileged_observations"] = privileged_observations
 
-        # if self._vis_obs:
-        #     batch_size, num_stack, height, width, rgb = self._imgs_buf.shape
-        #     # NOTE: for AFRL agent, RGB observation and privileged observations may has different shapes
-        #     # Reshape: (batch, num_stack, H, W, 3) -> (batch, num_stack * 3, H, W)
-        #     observations["RGB"] = self._imgs_buf.permute(0, 1, 4, 2, 3).reshape(
-        #         batch_size, num_stack * rgb, height, width
-        #     )
+        if self._vis_obs:
+            proprioception_and_target = torch.cat(
+                [
+                    # hand
+                    scaled_hand_dof_pos,
+                    scaled_hand_dof_vel,
+                    # goal
+                    self._in_hand_pos,
+                    target_quat,
+                    rot_diff,
+                    # finger_tip
+                    finger_tip_pos,
+                    finger_tip_quat,
+                    finger_tip_vel,
+                    finger_tip_angular_vel,
+                    # actions
+                    prev_actions,
+                ],
+                dim=-1,
+            )
+
+            observations["proprioception_and_target"] = proprioception_and_target
+
+            batch_size, num_stack, height, width, rgb = self._imgs_buf.shape
+            # NOTE: for AFRL agent, RGB observation and privileged observations may has different shapes
+            # Reshape: (batch, num_stack, H, W, 3) -> (batch, num_stack * 3, H, W)
+            observations["RGB"] = self._imgs_buf.permute(0, 1, 4, 2, 3).reshape(
+                batch_size, num_stack * rgb, height, width
+            )
 
         return observations
 
@@ -420,20 +444,20 @@ class AllegroHand(GenesisEnv):
 
         self._prev_actions[env_ids] = prev_actions
 
-        # if self._vis_obs:
-        #     # Find which nominal environments are being reset
-        #     # self.nominal_env_ids contains the global env_ids of nominal environments
-        #     # We need to find the indices within nominal_env_ids that match env_ids
-        #     mask = torch.isin(self.nominal_env_ids, env_ids)
-        #     nominal_idx_to_reset = torch.nonzero(mask, as_tuple=True)[0]
+        if self._vis_obs:
+            # Find which nominal environments are being reset
+            # self.nominal_env_ids contains the global env_ids of nominal environments
+            # We need to find the indices within nominal_env_ids that match env_ids
+            mask = torch.isin(self.nominal_env_ids, env_ids)
+            nominal_idx_to_reset = torch.nonzero(mask, as_tuple=True)[0]
 
-        #     if len(nominal_idx_to_reset) > 0:
-        #         # Render fresh images for the reset nominal environments
-        #         reset_nominal_env_ids = self.nominal_env_ids[nominal_idx_to_reset]
-        #         new_img = self.render(env_ids=reset_nominal_env_ids)
+            if len(nominal_idx_to_reset) > 0:
+                # Render fresh images for the reset nominal environments
+                reset_nominal_env_ids = self.nominal_env_ids[nominal_idx_to_reset]
+                new_img = self.render(env_ids=reset_nominal_env_ids)
 
-        #         # Initialize the image buffer for these environments
-        #         self._imgs_buf[nominal_idx_to_reset] = new_img.unsqueeze(1)
+                # Initialize the image buffer for these environments
+                self._imgs_buf[nominal_idx_to_reset] = new_img.unsqueeze(1)
 
     def _set_actions(self, actions: torch.Tensor) -> None:
         actions = actions.view(self._num_envs, self._num_actions)
@@ -449,13 +473,12 @@ class AllegroHand(GenesisEnv):
 
     def _post_physics_step(self) -> None:
         # TODO:
-        # if self._vis_obs:
-        #     new_img = self.render(env_ids=self.nominal_env_ids)
-        #     # Roll the buffer to shift old frames: [t-2, t-1, t-0] -> [t-1, t-0, None]
-        #     # This moves older frames "to the left" and makes room for the new frame
-        #     self._imgs_buf = torch.roll(self._imgs_buf, shifts=-1, dims=1)
-        #     self._imgs_buf[:, -1] = new_img
-        pass
+        if self._vis_obs:
+            new_img = self.render(env_ids=self.nominal_env_ids)
+            # Roll the buffer to shift old frames: [t-2, t-1, t-0] -> [t-1, t-0, None]
+            # This moves older frames "to the left" and makes room for the new frame
+            self._imgs_buf = torch.roll(self._imgs_buf, shifts=-1, dims=1)
+            self._imgs_buf[:, -1] = new_img
 
     def render(self, env_ids: Optional[Sequence[int]] = None) -> None:
         if env_ids is None:
@@ -465,9 +488,10 @@ class AllegroHand(GenesisEnv):
 
         # TODO: genesis will refresh the image when the scene._dt is different from the last render time
         # TODO: temporarily we hack by setting the last render time to 0 to force render the new image
-        # self._camera._shared_metadata.last_render_timestep = 0
+        self._camera._shared_metadata.last_render_timestep = 0
         # TODO: the batch renderer will first render for all envs, and then return the data for the envs_idx, this may significantly increase the render memory
-        # data = self._camera.read(envs_idx=env_ids)
+        data = self._camera.read(envs_idx=env_ids)
+        return data.rgb
 
     def get_states(self, env_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
         if env_ids is None:
@@ -528,4 +552,5 @@ class AllegroHand(GenesisEnv):
         self._prev_actions[env_ids] = robot_states["prev_actions"].clone()
 
         # TODO: shall we update the image buffer here?
+
         self._progress_buf[env_ids] = states["progress_buf"].clone()
