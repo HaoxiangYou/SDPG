@@ -66,7 +66,7 @@ class AllegroHand(GenesisEnv):
                 {
                     "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(124,)),
                     # observation that ignores cube information (infer from images)
-                    "proprioception_and_target": spaces.Box(low=-np.inf, high=np.inf, shape=(111,)),
+                    "proprioception_and_target": spaces.Box(low=-np.inf, high=np.inf, shape=(107,)),
                     "RGB": spaces.Box(
                         low=0,
                         high=255,
@@ -332,7 +332,6 @@ class AllegroHand(GenesisEnv):
                     # goal
                     self._in_hand_pos,
                     target_quat,
-                    rot_diff,
                     # finger_tip
                     finger_tip_pos,
                     finger_tip_quat,
