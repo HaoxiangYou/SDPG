@@ -64,9 +64,9 @@ class AllegroHand(GenesisEnv):
             self._num_image_stack = 3
             self._observation_space = spaces.Dict(
                 {
-                    "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(76,)),
+                    "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(124,)),
                     # observation that ignores cube information (infer from images)
-                    "proprioception_and_target": spaces.Box(low=-np.inf, high=np.inf, shape=(124,)),
+                    "proprioception_and_target": spaces.Box(low=-np.inf, high=np.inf, shape=(111,)),
                     "RGB": spaces.Box(
                         low=0,
                         high=255,
