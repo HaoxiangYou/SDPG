@@ -13,7 +13,7 @@ from matplotlib.animation import FuncAnimation
 
 from envs.genesis_env.genesis_env import GenesisEnv
 from utils.common_utils import snakecase_to_pascalcase
-from utils.tensor_utils import select_entries
+from utils.tensor_utils import enumerate_states
 
 env_name = "hopper"
 num_envs = 4
@@ -50,18 +50,15 @@ def main(traj_path: str = None):
     env_fn = getattr(ENV, snakecase_to_pascalcase(env_name))
 
     if traj_path is not None:
-        # Load state history
+        # Load state history (nested dict with tensors (batch, time, ...))
         states = torch.load(traj_path, weights_only=False)
-        # Select the first trajectory
-        states = [select_entries(state, [0]) for state in states]
         env: GenesisEnv = env_fn(num_envs=1, device=device, seed=0, sim_options=sim_options, **env_kwargs)
 
-        # Render video of the trajectory
         frames = []
-        for i, state in enumerate(states):
+        for batch_idx, time_idx, state in enumerate_states(states):
+            if batch_idx != 0:
+                continue  # only render trajectory for first batch
             env.set_states(state)
-            # NOTE: the scene is updated due to physics step,
-            # but maybe ok as we the state is being updated very frequently from stored trajectory
             env._scene.step()
             img = env.render().cpu().numpy()[0]
             frames.append(img)

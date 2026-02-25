@@ -78,6 +78,47 @@ def select_entries(
         return tensor_input
 
 
+def _infer_batch_time_dims(obj: Any) -> tuple:
+    """Infer (batch_size, time_size) from a nested dict of tensors from the first leaf."""
+    if isinstance(obj, torch.Tensor):
+        if obj.ndim >= 2:
+            return int(obj.shape[0]), int(obj.shape[1])
+        return int(obj.shape[0]), 1
+    if isinstance(obj, dict):
+        for v in obj.values():
+            B, T = _infer_batch_time_dims(v)
+            return B, T
+    return 1, 1
+
+
+def slice_state_at_batch_time(states_dict: Dict[str, Any], batch_idx: int, time_idx: int) -> Dict[str, Any]:
+    """Slice a nested state dict at (batch_idx, time_idx). Tensors become (1, ...) for set_states."""
+    result = {}
+    for key, val in states_dict.items():
+        if isinstance(val, dict):
+            result[key] = slice_state_at_batch_time(val, batch_idx, time_idx)
+        elif isinstance(val, torch.Tensor):
+            if val.ndim >= 2:
+                out = val[batch_idx, time_idx].unsqueeze(0)
+            else:
+                out = val[batch_idx].unsqueeze(0)
+            result[key] = out
+        else:
+            result[key] = val
+    return result
+
+
+def enumerate_states(states_dict: Dict[str, Any]):
+    """Yield (batch_idx, time_idx, state_slice) from a nested state dict with (batch, time, ...) tensors.
+
+    state_slice has the same nested structure with tensors sliced to (1, ...) for set_states.
+    """
+    B, T = _infer_batch_time_dims(states_dict)
+    for b in range(B):
+        for t in range(T):
+            yield b, t, slice_state_at_batch_time(states_dict, b, t)
+
+
 def duplicate_entries(
     tensor_input: Union[torch.Tensor, Dict[str, Union[torch.Tensor, Dict[str, torch.Tensor]]]], num_copies: int
 ) -> Union[torch.Tensor, Dict[str, Union[torch.Tensor, Dict[str, torch.Tensor]]]]:
