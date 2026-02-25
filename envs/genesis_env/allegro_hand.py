@@ -23,7 +23,6 @@ class AllegroHand(GenesisEnv):
         self,
         num_envs: int,
         vis_obs: bool = False,
-        vis_target: bool = False,
         seed: int = 0,
         randomize_init: bool = True,
         nominal_env_ids: Optional[Sequence[int]] = None,
@@ -41,8 +40,6 @@ class AllegroHand(GenesisEnv):
         early_termination = True
 
         self._vis_obs = vis_obs
-        # For debugging and visualization purposes, whether to visualize the target object
-        self._vis_target = vis_target
 
         # if sensors_args is None:
         #     sensors_args = {
@@ -127,21 +124,20 @@ class AllegroHand(GenesisEnv):
         # target quat
         self._target_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device).repeat(self._num_envs, 1)
 
-        if self._vis_target:
-            self._target = self._scene.add_entity(
-                gs.morphs.Mesh(
-                    file=os.path.join(os.path.dirname(__file__), "../../assets/dexcube/meshes/cube.obj"),
-                    scale=0.03,
-                    collision=False,
-                    pos=(0.325, 0.17, 0.2475),
-                ),
-                material=gs.materials.Rigid(gravity_compensation=1),
-                surface=gs.surfaces.Rough(
-                    diffuse_texture=gs.textures.ImageTexture(
-                        image_path=os.path.join(os.path.dirname(__file__), "../../assets/dexcube/textures/cube.png")
-                    )
-                ),
-            )
+        self._target = self._scene.add_entity(
+            gs.morphs.Mesh(
+                file=os.path.join(os.path.dirname(__file__), "../../assets/dexcube/meshes/cube.obj"),
+                scale=0.03,
+                collision=False,
+                pos=(0.325, 0.17, 0.2475),
+            ),
+            material=gs.materials.Rigid(gravity_compensation=1),
+            surface=gs.surfaces.Rough(
+                diffuse_texture=gs.textures.ImageTexture(
+                    image_path=os.path.join(os.path.dirname(__file__), "../../assets/dexcube/textures/cube.png")
+                )
+            ),
+        )
 
         # # A record of the previous actions
         self._prev_actions = torch.zeros(self._num_envs, self._num_actions, device=self._device)
@@ -420,8 +416,7 @@ class AllegroHand(GenesisEnv):
         self._cube.set_pos(cube_pos, envs_idx=env_ids, zero_velocity=True)
         self._cube.set_quat(cube_quat, envs_idx=env_ids, zero_velocity=True)
         self._target_quat[env_ids] = target_quat
-        if self._vis_target:
-            self._target.set_quat(target_quat, envs_idx=env_ids, zero_velocity=True)
+        self._target.set_quat(target_quat, envs_idx=env_ids, zero_velocity=True)
 
         self._prev_actions[env_ids] = prev_actions
 
@@ -527,8 +522,8 @@ class AllegroHand(GenesisEnv):
         self._cube.set_dofs_velocity(robot_states["cube_vel"], envs_idx=env_ids, dofs_idx_local=self._cube_dof_idx)
 
         self._target_quat[env_ids] = robot_states["target_quat"]
-        if self._vis_target:
-            self._target.set_quat(robot_states["target_quat"], envs_idx=env_ids)
+
+        self._target.set_quat(robot_states["target_quat"], envs_idx=env_ids)
 
         self._prev_actions[env_ids] = robot_states["prev_actions"].clone()
 
