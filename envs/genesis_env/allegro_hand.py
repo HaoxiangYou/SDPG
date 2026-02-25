@@ -372,7 +372,7 @@ class AllegroHand(GenesisEnv):
         target_quat = self._default_target_quat[env_ids]
 
         if self._randomize_init:
-            # cube_pos = cube_pos + (torch.rand_like(cube_pos) - 0.5) * 0.02
+            cube_pos = cube_pos + (torch.rand_like(cube_pos) - 0.5) * 0.02
             # cube_random_angle_1 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
             # cube_random_quat_1 = axis_angle_to_quat(
             #     cube_random_angle_1, torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat(len(env_ids), 1)
