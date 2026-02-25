@@ -5,7 +5,6 @@ import genesis as gs
 import numpy as np
 import torch
 from genesis.utils.geom import (
-    axis_angle_to_quat,
     inv_quat,
     transform_quat_by_quat,
 )
@@ -24,7 +23,6 @@ class AllegroHand(GenesisEnv):
         self,
         num_envs: int,
         vis_obs: bool = False,
-        vis_target: bool = False,
         seed: int = 0,
         randomize_init: bool = True,
         nominal_env_ids: Optional[Sequence[int]] = None,
@@ -42,8 +40,6 @@ class AllegroHand(GenesisEnv):
         early_termination = True
 
         self._vis_obs = vis_obs
-        # For debugging and visualization purposes, whether to visualize the target object
-        self._vis_target = vis_target
 
         # if sensors_args is None:
         #     sensors_args = {
@@ -128,21 +124,20 @@ class AllegroHand(GenesisEnv):
         # target quat
         self._target_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device).repeat(self._num_envs, 1)
 
-        if self._vis_target:
-            self._target = self._scene.add_entity(
-                gs.morphs.Mesh(
-                    file=os.path.join(os.path.dirname(__file__), "../../assets/dexcube/meshes/cube.obj"),
-                    scale=0.03,
-                    collision=False,
-                    pos=(0.325, 0.17, 0.2475),
-                ),
-                material=gs.materials.Rigid(gravity_compensation=1),
-                surface=gs.surfaces.Rough(
-                    diffuse_texture=gs.textures.ImageTexture(
-                        image_path=os.path.join(os.path.dirname(__file__), "../../assets/dexcube/textures/cube.png")
-                    )
-                ),
-            )
+        self._target = self._scene.add_entity(
+            gs.morphs.Mesh(
+                file=os.path.join(os.path.dirname(__file__), "../../assets/dexcube/meshes/cube.obj"),
+                scale=0.03,
+                collision=False,
+                pos=(0.325, 0.17, 0.2475),
+            ),
+            material=gs.materials.Rigid(gravity_compensation=1),
+            surface=gs.surfaces.Rough(
+                diffuse_texture=gs.textures.ImageTexture(
+                    image_path=os.path.join(os.path.dirname(__file__), "../../assets/dexcube/textures/cube.png")
+                )
+            ),
+        )
 
         # # A record of the previous actions
         self._prev_actions = torch.zeros(self._num_envs, self._num_actions, device=self._device)
@@ -180,7 +175,9 @@ class AllegroHand(GenesisEnv):
 
         self._finger_tip_link_idx = [self._robot.get_link(name).idx_local for name in self._finger_tip_link_names]
 
-        self._default_target_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device).repeat(self._num_envs, 1)
+        self._default_target_quat = torch.tensor([2**0.5 / 2, 2**0.5 / 2, 0.0, 0.0], device=self._device).repeat(
+            self._num_envs, 1
+        )
         self._default_cube_pos = torch.tensor([0.25, 0.0, 0.275], device=self._device).repeat(self._num_envs, 1)
         self._in_hand_pos = torch.tensor([0.25, 0.0, 0.25], device=self._device).repeat(self._num_envs, 1)
         self._default_cube_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device).repeat(self._num_envs, 1)
@@ -210,7 +207,7 @@ class AllegroHand(GenesisEnv):
         self._fall_distance = 0.2
         self._dist_reward_scale = -10.0
         self._rot_reward_scale = 1.0
-        self._rot_eps = 0.1
+        self._healthy_reward = 3.0
         self._action_penalty = -0.0002
 
         # Initialize the sensors
@@ -344,11 +341,15 @@ class AllegroHand(GenesisEnv):
 
         quat_diff = transform_quat_by_quat(inv_quat(target_quat), cube_quat)
         rot_dist = 2.0 * torch.asin(torch.clamp(torch.norm(quat_diff[:, 1:4], p=2, dim=-1), max=1.0))
-        rot_rew = 1.0 / (torch.abs(rot_dist) + self._rot_eps) * self._rot_reward_scale
+
+        rot_rew = -(rot_dist**2) * self._rot_reward_scale
 
         action_penalty = self._action_penalty * torch.sum(actions**2, dim=-1)
 
-        return dist_reward + rot_rew + action_penalty
+        # restore the average angle difference between the cube and the target in degrees
+        self._infos["angle_diff"] = torch.rad2deg(2 * torch.norm(quat_diff[:, 1:4], p=2, dim=-1)).mean().item()
+
+        return dist_reward + rot_rew + action_penalty + self._healthy_reward
 
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
         robot_states = states["robot_states"]
@@ -368,25 +369,25 @@ class AllegroHand(GenesisEnv):
 
         if self._randomize_init:
             cube_pos = cube_pos + (torch.rand_like(cube_pos) - 0.5) * 0.02
-            cube_random_angle_1 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
-            cube_random_quat_1 = axis_angle_to_quat(
-                cube_random_angle_1, torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat(len(env_ids), 1)
-            )
-            cube_random_angle_2 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
-            cube_random_quat_2 = axis_angle_to_quat(
-                cube_random_angle_2, torch.tensor([0.0, 1.0, 0.0], device=self.device).repeat(len(env_ids), 1)
-            )
-            cube_quat = transform_quat_by_quat(cube_random_quat_2, cube_random_quat_1)
+            # cube_random_angle_1 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
+            # cube_random_quat_1 = axis_angle_to_quat(
+            #     cube_random_angle_1, torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat(len(env_ids), 1)
+            # )
+            # cube_random_angle_2 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
+            # cube_random_quat_2 = axis_angle_to_quat(
+            #     cube_random_angle_2, torch.tensor([0.0, 1.0, 0.0], device=self.device).repeat(len(env_ids), 1)
+            # )
+            # cube_quat = transform_quat_by_quat(cube_random_quat_2, cube_random_quat_1)
 
-            target_random_angle_1 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
-            target_random_quat_1 = axis_angle_to_quat(
-                target_random_angle_1, torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat((len(env_ids), 1))
-            )
-            target_random_angle_2 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
-            target_random_quat_2 = axis_angle_to_quat(
-                target_random_angle_2, torch.tensor([0.0, 1.0, 0.0], device=self.device).repeat((len(env_ids), 1))
-            )
-            target_quat = transform_quat_by_quat(target_random_quat_2, target_random_quat_1)
+            # target_random_angle_1 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
+            # target_random_quat_1 = axis_angle_to_quat(
+            #     target_random_angle_1, torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat((len(env_ids), 1))
+            # )
+            # target_random_angle_2 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
+            # target_random_quat_2 = axis_angle_to_quat(
+            #     target_random_angle_2, torch.tensor([0.0, 1.0, 0.0], device=self.device).repeat((len(env_ids), 1))
+            # )
+            # target_quat = transform_quat_by_quat(target_random_quat_2, target_random_quat_1)
 
             ctrl_range = self._hand_motors_ctrl_upper - self._hand_motors_ctrl_lower
             hand_dof_pos = hand_dof_pos + (torch.rand_like(hand_dof_pos) - 0.5) * ctrl_range * 0.2
@@ -395,9 +396,10 @@ class AllegroHand(GenesisEnv):
                 self._hand_motors_ctrl_lower,
                 self._hand_motors_ctrl_upper,
             )
-            prev_actions = (hand_dof_pos - self._hand_motors_ctrl_lower) / (
-                self._hand_motors_ctrl_upper - self._hand_motors_ctrl_lower
-            ) * 2 - 1.0
+
+        prev_actions = (hand_dof_pos - self._hand_motors_ctrl_lower) / (
+            self._hand_motors_ctrl_upper - self._hand_motors_ctrl_lower
+        ) * 2 - 1.0
 
         self._robot.set_dofs_position(
             position=hand_dof_pos,
@@ -414,8 +416,7 @@ class AllegroHand(GenesisEnv):
         self._cube.set_pos(cube_pos, envs_idx=env_ids, zero_velocity=True)
         self._cube.set_quat(cube_quat, envs_idx=env_ids, zero_velocity=True)
         self._target_quat[env_ids] = target_quat
-        if self._vis_target:
-            self._target.set_quat(target_quat, envs_idx=env_ids, zero_velocity=True)
+        self._target.set_quat(target_quat, envs_idx=env_ids, zero_velocity=True)
 
         self._prev_actions[env_ids] = prev_actions
 
@@ -521,8 +522,8 @@ class AllegroHand(GenesisEnv):
         self._cube.set_dofs_velocity(robot_states["cube_vel"], envs_idx=env_ids, dofs_idx_local=self._cube_dof_idx)
 
         self._target_quat[env_ids] = robot_states["target_quat"]
-        if self._vis_target:
-            self._target.set_quat(robot_states["target_quat"], envs_idx=env_ids)
+
+        self._target.set_quat(robot_states["target_quat"], envs_idx=env_ids)
 
         self._prev_actions[env_ids] = robot_states["prev_actions"].clone()
 

@@ -18,7 +18,6 @@ config:
     rendered_envs_idx: null
 
   vis_obs: False
-  vis_target: False
   sensors_args: null
       
   show_viewer: False
@@ -30,4 +29,3 @@ play:
   randomize_init: True
   show_viewer: True
   show_FPS: True
-  vis_target: True

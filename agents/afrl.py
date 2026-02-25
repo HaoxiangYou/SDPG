@@ -327,7 +327,7 @@ class AFRLRunner:
         if best_policy_reward is not None:
             metrics["best_policy"] = best_policy_reward
 
-        # Log infos from environment if provided
+        # Log infos from environment if provided (consistent with rl-games)
         if infos is not None:
             for key, value in infos.items():
                 # Convert to scalar if needed
@@ -344,7 +344,7 @@ class AFRLRunner:
                 if isinstance(value, (float, int)):
                     if isinstance(value, float) and (value != value or value == float("inf") or value == float("-inf")):
                         continue  # Skip NaN and inf
-                    metrics[f"infos/{key}"] = value
+                    metrics[f"{key}"] = value
 
         # Log to TensorBoard with different step types
         for metric_name, value in metrics.items():
