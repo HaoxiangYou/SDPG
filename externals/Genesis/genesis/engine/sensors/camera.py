@@ -184,6 +184,8 @@ class BatchRendererCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMe
     last_render_timestep: int = -1
     # MinimalVisualizerWrapper instance
     visualizer_wrapper: Optional["MinimalVisualizerWrapper"] = None
+    # If set, only these env indices are stored in image_cache (saves memory)
+    env_idx: Optional[np.ndarray] = None
 
 
 # ========================== Base Camera Sensor ==========================
@@ -356,11 +358,21 @@ def _camera_read_from_image_cache(sensor, cached_image, envs_idx, *, to_numpy: b
         cached_image = tensor_to_array(cached_image)
 
     n_envs = sensor._manager._sim.n_envs
+    env_idx_cache = getattr(sensor._shared_metadata, "env_idx", None)
 
     if envs_idx is None:
         if n_envs == 0:
             return sensor._return_data_class(rgb=cached_image[0])
         return sensor._return_data_class(rgb=cached_image)
+    # Map actual env indices to cache indices when only a subset is stored
+    if env_idx_cache is not None:
+        if isinstance(envs_idx, torch.Tensor):
+            envs_idx = envs_idx.cpu().numpy()
+        envs_idx = np.atleast_1d(envs_idx)
+        cache_idx = np.array([np.where(env_idx_cache == e)[0][0] for e in envs_idx])
+        if isinstance(cached_image, torch.Tensor):
+            cache_idx = torch.as_tensor(cache_idx, device=cached_image.device)
+        return sensor._return_data_class(rgb=cached_image[cache_idx])
     if isinstance(envs_idx, (int, np.integer)):
         return sensor._return_data_class(rgb=cached_image[envs_idx])
     return sensor._return_data_class(rgb=cached_image[envs_idx])
@@ -739,6 +751,13 @@ class BatchRendererCameraSensor(BaseCameraSensor):
                     f"All BatchRendererCameraSensor instances must have the same resolution. Found: {set(resolutions)}"
                 )
 
+            # Optional subset of envs to store in cache (saves memory; render still runs for all envs)
+            ridx = getattr(all_sensors[0]._options, "env_idx", None)
+            if ridx is not None:
+                ridx = np.asarray(ridx, dtype=np.int64)
+            self._shared_metadata.env_idx = ridx
+            envs_idx_vis = list(ridx) if ridx is not None else list(range(max(self._manager._sim._B, 1)))
+
             br_options = BatchRendererOptions(
                 use_rasterizer=self._options.use_rasterizer,
             )
@@ -747,7 +766,7 @@ class BatchRendererCameraSensor(BaseCameraSensor):
                 show_world_frame=False,
                 show_link_frame=False,
                 show_cameras=False,
-                rendered_envs_idx=range(max(self._manager._sim._B, 1)),
+                rendered_envs_idx=envs_idx_vis,
             )
 
             self._shared_metadata.visualizer_wrapper = MinimalVisualizerWrapper(scene, all_sensors, vis_options)
@@ -768,7 +787,8 @@ class BatchRendererCameraSensor(BaseCameraSensor):
             self._shared_metadata.visualizer_wrapper._cameras = [s._camera_obj for s in self._shared_metadata.sensors]
             self._shared_metadata.renderer.build()
 
-        n_envs = max(self._manager._sim._B, 1)
+        ridx = self._shared_metadata.env_idx
+        n_envs = len(ridx) if ridx is not None else max(self._manager._sim._B, 1)
         h, w = self._options.res[1], self._options.res[0]
         self._shared_metadata.image_cache[self._idx] = torch.zeros(
             (n_envs, h, w, 3), dtype=torch.uint8, device=gs.device
@@ -800,8 +820,12 @@ class BatchRendererCameraSensor(BaseCameraSensor):
         else:
             rgb_arr = torch.as_tensor(rgb_arr).to(dtype=torch.uint8, device=gs.device)
 
+        ridx = self._shared_metadata.env_idx
         for cam_idx, sensor in enumerate(sensors):
-            sensor._shared_metadata.image_cache[sensor._idx] = rgb_arr[cam_idx]
+            if ridx is not None:
+                sensor._shared_metadata.image_cache[sensor._idx] = rgb_arr[cam_idx][ridx].clone()
+            else:
+                sensor._shared_metadata.image_cache[sensor._idx] = rgb_arr[cam_idx]
             sensor._stale = False
 
         self._shared_metadata.last_render_timestep = self._manager._sim.scene.t

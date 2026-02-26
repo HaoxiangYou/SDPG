@@ -2,7 +2,7 @@
 Camera sensor options for Rasterizer, Raytracer, and Batch Renderer backends.
 """
 
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import numpy as np
 import genesis as gs
@@ -149,6 +149,10 @@ class BatchRendererCameraOptions(BaseCameraOptions):
     ----------
     use_rasterizer : bool
         Whether to use rasterizer mode. Default is True.
+    env_idx : sequence of int, optional
+        If set, only these environment indices are rendered and stored in the
+        image cache (saves memory). Render compute still runs for all envs
+        unless the backend supports subset rendering. If None, all envs are used.
     """
 
     model: str = "pinhole"
@@ -156,6 +160,7 @@ class BatchRendererCameraOptions(BaseCameraOptions):
     far: float = 100.0
     use_rasterizer: bool = True
     update_ground_truth_only: bool = True
+    env_idx: Optional[Sequence[int]] = None
 
     def model_post_init(self, _):
         super().model_post_init(_)
