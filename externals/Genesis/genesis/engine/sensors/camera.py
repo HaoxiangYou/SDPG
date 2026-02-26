@@ -751,7 +751,7 @@ class BatchRendererCameraSensor(BaseCameraSensor):
                     f"All BatchRendererCameraSensor instances must have the same resolution. Found: {set(resolutions)}"
                 )
 
-            # Optional subset of envs to store in cache (saves memory; render still runs for all envs)
+            # Optional subset of envs to render
             ridx = getattr(all_sensors[0]._options, "env_idx", None)
             if ridx is not None:
                 ridx = np.asarray(ridx, dtype=np.int64)
@@ -820,12 +820,8 @@ class BatchRendererCameraSensor(BaseCameraSensor):
         else:
             rgb_arr = torch.as_tensor(rgb_arr).to(dtype=torch.uint8, device=gs.device)
 
-        ridx = self._shared_metadata.env_idx
         for cam_idx, sensor in enumerate(sensors):
-            if ridx is not None:
-                sensor._shared_metadata.image_cache[sensor._idx] = rgb_arr[cam_idx][ridx].clone()
-            else:
-                sensor._shared_metadata.image_cache[sensor._idx] = rgb_arr[cam_idx]
+            sensor._shared_metadata.image_cache[sensor._idx] = rgb_arr[cam_idx]
             sensor._stale = False
 
         self._shared_metadata.last_render_timestep = self._manager._sim.scene.t
