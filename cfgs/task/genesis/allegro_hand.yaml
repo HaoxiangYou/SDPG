@@ -18,8 +18,21 @@ config:
     rendered_envs_idx: null
 
   vis_obs: False
-  sensors_args: null
-      
+  sensors_args:
+    camera:
+      res: [84, 84]
+      pos: [0.40, 0.05, 0.425]
+      lookat: [0.25, -0.10, 0.275]
+      fov: 80.0
+      lights:
+        pos: [0.0, 0.0, 2.0]
+        intensity: 0.8
+        color: [1.0, 1.0, 1.0]
+        dir: [0.0, 0.0, -1.0]
+        cutoff: 100
+        directional: True
+        castshadow: False
+
   show_viewer: False
   show_FPS: False
 
