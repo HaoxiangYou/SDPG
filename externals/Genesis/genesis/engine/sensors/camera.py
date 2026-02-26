@@ -366,6 +366,8 @@ def _camera_read_from_image_cache(sensor, cached_image, envs_idx, *, to_numpy: b
         return sensor._return_data_class(rgb=cached_image)
     # Map actual env indices to cache indices when only a subset is stored
     if env_idx_cache is not None:
+        if isinstance(envs_idx, torch.Tensor):
+            envs_idx = envs_idx.cpu().numpy()
         envs_idx = np.atleast_1d(envs_idx)
         cache_idx = np.array([np.where(env_idx_cache == e)[0][0] for e in envs_idx])
         if isinstance(cached_image, torch.Tensor):
