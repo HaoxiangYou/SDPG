@@ -13,23 +13,23 @@ from matplotlib.animation import FuncAnimation
 
 from envs.genesis_env.genesis_env import GenesisEnv
 from utils.common_utils import snakecase_to_pascalcase
-from utils.tensor_utils import select_entries
+from utils.tensor_utils import enumerate_states
 
-env_name = "hopper"
+env_name = "allegro_hand"
 num_envs = 4
 device = "cuda"
-sim_options = gs.options.SimOptions(dt=1e-2, substeps=1)
+sim_options = gs.options.SimOptions(dt=3e-2, substeps=4)
 env_kwargs = {
-    "show_viewer": False,
+    "show_viewer": True,
     "randomize_init": False,  # Set to False when loading states
     "vis_obs": True,
     "nominal_env_ids": None,
     "sensors_args": {
         "camera": {
             "res": (84, 84),
-            "pos": (0.0, -2.0, -0.5),
-            "lookat": (0.0, 0.0, -0.5),
-            "fov": 60.0,
+            "pos": (0.40, 0.05, 0.425),
+            "lookat": (0.25, -0.10, 0.275),
+            "fov": 80.0,
             "lights": {
                 "pos": (0.0, 0.0, 2.0),
                 "intensity": 0.8,
@@ -50,18 +50,15 @@ def main(traj_path: str = None):
     env_fn = getattr(ENV, snakecase_to_pascalcase(env_name))
 
     if traj_path is not None:
-        # Load state history
+        # Load state history (nested dict with tensors (batch, time, ...))
         states = torch.load(traj_path, weights_only=False)
-        # Select the first trajectory
-        states = [select_entries(state, [0]) for state in states]
         env: GenesisEnv = env_fn(num_envs=1, device=device, seed=0, sim_options=sim_options, **env_kwargs)
 
-        # Render video of the trajectory
         frames = []
-        for i, state in enumerate(states):
+        for batch_idx, time_idx, state in enumerate_states(states):
+            if batch_idx != 0:
+                continue  # only render trajectory for first batch
             env.set_states(state)
-            # NOTE: the scene is updated due to physics step,
-            # but maybe ok as we the state is being updated very frequently from stored trajectory
             env._scene.step()
             img = env.render().cpu().numpy()[0]
             frames.append(img)

@@ -20,7 +20,6 @@ config:
   # state or rgb based observation
   vis_obs: False
   sensors_args:
-    # which envs_idx to acquire the sensor data from
     camera:
       res: [84, 84]
       pos: [0.0, -2.0, -0.5]

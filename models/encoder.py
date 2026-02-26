@@ -29,16 +29,16 @@ class MLPEncoder(nn.Module):
         super(MLPEncoder, self).__init__()
         self.device = device
 
-        # Calculate input dimension
+        # Calculate input dimension (use Python int for OmegaConf compatibility)
         if isinstance(input_shape, tuple):
-            input_dim = np.prod(input_shape)
+            input_dim = int(np.prod(input_shape))
         else:
-            input_dim = input_shape
+            input_dim = int(input_shape)
 
-        # Get encoder config
-        units = encoder_cfg.get("units", [])
+        # Get encoder config (convert to Python ints so OmegaConf never sees numpy/torch scalars)
+        units = [int(u) for u in encoder_cfg.get("units", [])]
         activation = encoder_cfg.get("activation", "elu")
-        output_dim = encoder_cfg.get("output_dim", units[-1] if units else input_dim)
+        output_dim = int(encoder_cfg.get("output_dim", units[-1] if units else input_dim))
 
         # Build MLP
         layer_dims = [input_dim] + units
