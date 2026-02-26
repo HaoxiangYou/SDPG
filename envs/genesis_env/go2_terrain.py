@@ -8,13 +8,14 @@ from genesis.utils.geom import axis_angle_to_quat, inv_quat, quat_to_xyz, transf
 from gym import spaces
 
 from envs.genesis_env.genesis_env import GenesisEnv
+from utils.terrain import Terrain
 
 
 def torch_rand_float(lower: float, upper: float, shape: Tuple[int, int], device: torch.device) -> torch.Tensor:
     return (upper - lower) * torch.rand(*shape, device=device) + lower
 
 
-class Go2(GenesisEnv):
+class Go2Terrain(GenesisEnv):
     """Go2 environment."""
 
     _num_actions = 12
@@ -118,7 +119,7 @@ class Go2(GenesisEnv):
 
         # Command configuration
         self._command_cfg = {
-            "num_commands": 3,
+            "num_commands": 4,
             "lin_vel_x_range": [-1.0, 1.0],
             "lin_vel_y_range": [-1.0, 1.0],
             "ang_vel_range": [-1.0, 1.0],
@@ -156,12 +157,17 @@ class Go2(GenesisEnv):
         self._num_feet = 4
 
         # Add plane
-        self._plane = self._scene.add_entity(
-            gs.morphs.URDF(
-                file="urdf/plane/plane.urdf",
-                fixed=True,
+        if self._domain_rand_options["use_terrain"]:
+            self._terrain_cfg = self._domain_rand_options["terrain_cfg"]
+            self._terrain = Terrain(self._terrain_cfg)
+            self._create_heightfield()
+        else:
+            self._plane = self._scene.add_entity(
+                gs.morphs.URDF(
+                    file="urdf/plane/plane.urdf",
+                    fixed=True,
+                )
             )
-        )
 
         # Add go2 robot
         self._robot = self._scene.add_entity(
@@ -231,8 +237,8 @@ class Go2(GenesisEnv):
             "tracking_ang_vel": 0.5,
             "lin_vel_z": -2.0,
             "ang_vel_xy": -0.05,
-            "orientation": -10.0,
-            "base_height": -50.0,
+            # "orientation": -10.0,
+            # "base_height": -50.0,
             "torques": -0.0002,
             "collision": -1.0,
             "dof_vel": -0.0005,
@@ -328,6 +334,10 @@ class Go2(GenesisEnv):
             device=self._device,
             dtype=torch.float,
         )
+
+        # Terrain parameters
+        self._terrain_heights = torch.zeros((self._num_envs,), device=self._device, dtype=torch.float)
+
         self._motor_offsets = torch.zeros((self._num_envs, self._num_actions), dtype=torch.float)
         self._motor_strengths = torch.ones((self._num_envs, self._num_actions), device=self._device, dtype=torch.float)
 
@@ -337,13 +347,19 @@ class Go2(GenesisEnv):
         )
         self._foot_velocities = torch.zeros((self._num_envs, self._num_feet, 3), device=self._device, dtype=torch.float)
 
+        # terrain related buffers
+        self._env_origins = torch.zeros(self._num_envs, 3, device=self._device, requires_grad=False)
+
+        self._custom_origins = False
+
     def build_scene(self) -> None:
         self._set_camera()
 
-        self._scene.build(n_envs=self._num_envs, env_spacing=(0.0, 1.0), n_envs_per_row=self._num_envs)
+        self._scene.build(n_envs=self._num_envs, env_spacing=(0.0, 0.0), n_envs_per_row=self._num_envs)
 
         self._init_buffers()
         self._compare_reward_functions()
+        self._get_env_origns()
 
         # Set PD control parameters
         self._robot.set_dofs_kp([self._kp] * self._num_actions, self._motors_dof_idx)
@@ -502,7 +518,12 @@ class Go2(GenesisEnv):
         if len(env_ids) == 0:
             return
 
-        base_pos = self._base_init_pos.unsqueeze(0).repeat(len(env_ids), 1)
+        if self._terrain_cfg["curriculum"]:
+            self._update_terrain_curriculum(env_ids)
+
+        # TODO: update command curriculum
+
+        base_pos = self._base_init_pos.unsqueeze(0).repeat(len(env_ids), 1) + self._env_origins[env_ids]
         base_quat = self._base_init_quat.unsqueeze(0).repeat(len(env_ids), 1)
         motor_dof_pos = self._default_dof_pos.unsqueeze(0).repeat(len(env_ids), 1)
 
@@ -573,6 +594,8 @@ class Go2(GenesisEnv):
         )
         self._progress_buf[env_ids] = torch.zeros(len(env_ids), device=self._device, dtype=torch.float)
 
+        # self._scene.draw_debug_spheres(self._terrain_origins[:, 0, :], radius=0.2, color=(0, 1, 0, 0.7))
+
     def _set_actions(self, actions: torch.Tensor) -> None:
         """Set actions using position control (PD control)."""
         actions = actions.view(self._num_envs, self._num_actions)
@@ -611,11 +634,47 @@ class Go2(GenesisEnv):
             device=self._device,
             dtype=torch.float,
         )
-        # self._com[:] = self._rigid_solver.get_links_COM([self._base_link_index,]).squeeze(dim=1)
 
         self._foot_positions[:] = self._rigid_solver.get_links_pos(self._feet_link_indices_world_frame)
         self._foot_quaternions[:] = self._rigid_solver.get_links_quat(self._feet_link_indices_world_frame)
         self._foot_velocities[:] = self._rigid_solver.get_links_vel(self._feet_link_indices_world_frame)
+
+    def _get_env_origns(self):
+        max_init_level = self._terrain_cfg["max_init_terrain_level"]
+        if not self._terrain_cfg["curriculum"]:
+            max_init_level = self._terrain_cfg["num_rows"] - 1
+        self._terrain_levels = torch.randint(0, max_init_level + 1, (self._num_envs,), device=self._device)
+        self._terrain_types = torch.div(
+            torch.arange(self._num_envs, device=self._device),
+            (self._num_envs / self._terrain_cfg["num_cols"]),
+            rounding_mode="floor",
+        ).to(torch.long)
+        self._max_terrain_level = self._terrain_cfg["num_rows"]
+        self._terrain_origins = torch.from_numpy(self._terrain.env_origins).to(self._device).to(torch.float)
+        self._env_origins[:] = self._terrain_origins[self._terrain_levels, self._terrain_types]
+        self._custom_origins = True
+
+    def _update_terrain_curriculum(self, env_ids):
+        """Implements the game-inspired curriculum.
+
+        Args:
+            env_ids (List[int]): ids of environments being reset
+        """
+
+        distance = torch.norm(self._base_pos[env_ids, :2] - self._env_origins[env_ids, :2], dim=1)
+        max_episode_length_s = self._episode_length * self._dt
+        # robots that walked far enough progress to harder terains
+        move_up = distance > self._terrain.env_length / 2
+        # robots that walked less than half of their required distance go to simpler terrains
+        move_down = (distance < torch.norm(self._commands[env_ids, :2], dim=1) * max_episode_length_s * 0.5) * ~move_up
+
+        self._terrain_levels[env_ids] += 1 * move_up - 1 * move_down
+        self._terrain_levels[env_ids] = torch.where(
+            self._terrain_levels[env_ids] >= self._max_terrain_level,
+            torch.randint_like(self._terrain_levels[env_ids], self._max_terrain_level),
+            torch.clip(self._terrain_levels[env_ids], 0),
+        )  # (the minumum level is zero)
+        self._env_origins[env_ids] = self._terrain_origins[self._terrain_levels[env_ids], self._terrain_types[env_ids]]
 
     def get_states(self, env_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
         """Get robot states for computing observations and rewards."""
@@ -953,6 +1012,22 @@ class Go2(GenesisEnv):
         if save_path is not None:
             print("fps", int(1 / self._dt))
             self._floating_camera.stop_recording(save_path, fps=int(1 / self._dt))
+
+    def _create_heightfield(self):
+        """Adds a heightfield terrain to the simulation, sets parameters based on the cfg."""
+        self._gs_terrain = self._scene.add_entity(
+            gs.morphs.Terrain(
+                pos=(-self._terrain_cfg["border_size"], -self._terrain_cfg["border_size"], 0.0),
+                horizontal_scale=self._terrain_cfg["horizontal_scale"],
+                vertical_scale=self._terrain_cfg["vertical_scale"],
+                height_field=self._terrain.height_field_raw,
+            ),
+        )
+        self._height_samples = (
+            torch.tensor(self._terrain.heightsamples)
+            .view(self._terrain.tot_rows, self._terrain.tot_cols)
+            .to(self._device)
+        )
 
     @property
     def num_privileged_obs(self) -> int:
