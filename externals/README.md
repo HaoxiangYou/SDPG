@@ -50,6 +50,15 @@ Changes in `externals/Genesis/genesis/engine/sensors/camera.py`:
 
 Note: this is a bug-fix and **may be resolved by future Genesis updates**. If it gets fixed upstream, this patch can be dropped.
 
+#### Patch 03: camera `env_idx` to save memory (subset of envs for image cache)
+
+Batch-renderer camera supports an optional **`env_idx`** so that only a subset of envs are stored in the image cache (saves GPU memory). Render compute still runs for all envs unless the backend supports subset rendering.
+
+- **Options**: `externals/Genesis/genesis/options/sensors/camera.py` — `BatchRendererCameraOptions.env_idx` (optional sequence of int).
+- **Engine**: `externals/Genesis/genesis/engine/sensors/camera.py` — shared metadata `env_idx`, cache allocation and `read()` mapping when `env_idx` is set; CUDA tensor handling in `_camera_read_from_image_cache`.
+
+Introduced in commit: `0ceb3ed2b1dc4a6d220c02df3a116c3c7ffcd879`.
+
 Example update command (adjust ref as needed):
 
 ```bash
