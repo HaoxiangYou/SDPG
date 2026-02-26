@@ -212,34 +212,35 @@ class AllegroHand(GenesisEnv):
         self._healthy_reward = 3.0
         self._action_penalty = -0.0002
 
-        # Initialize the sensors
-        # TODO: genesis at commit id 7db43e4caef2b185bf691d29fc545d6480cd224d only supports offset_T
-        offset_T = self._sensors_args["camera"].get("offset_T", None)
-        lookat = self._sensors_args["camera"].get("lookat", None)
-        if offset_T is not None:
-            offset_T = torch.tensor(offset_T, device=self._device)
-        else:
-            if lookat is not None:
-                offset_T = pos_lookat_up_to_T(
-                    np.array(self._sensors_args["camera"]["pos"]), np.array(lookat), np.array((0.0, 0.0, 1.0))
-                )
-            else:
-                offset_T = np.eye(4)
-        # NOTE: A dummy link for the camera to attach to; without entity_idx the batch renderer
-        # uses a single world pose, only env 0 is in view and other envs render black.
-        self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.01, collision=False, fixed=True))
-        self._camera = self._scene.add_sensor(
-            gs.sensors.BatchRendererCameraOptions(
-                res=self._sensors_args["camera"]["res"],
-                pos=self._sensors_args["camera"]["pos"],
-                offset_T=offset_T,
-                fov=self._sensors_args["camera"]["fov"],
-                entity_idx=self._camera_mount.idx,
-                lights=[self._sensors_args["camera"]["lights"]],
-            )
-        )
-
         if self._vis_obs:
+            # Initialize the sensors
+            # TODO: genesis at commit id 7db43e4caef2b185bf691d29fc545d6480cd224d only supports offset_T
+            offset_T = self._sensors_args["camera"].get("offset_T", None)
+            lookat = self._sensors_args["camera"].get("lookat", None)
+            if offset_T is not None:
+                offset_T = torch.tensor(offset_T, device=self._device)
+            else:
+                if lookat is not None:
+                    offset_T = pos_lookat_up_to_T(
+                        np.array(self._sensors_args["camera"]["pos"]), np.array(lookat), np.array((0.0, 0.0, 1.0))
+                    )
+                else:
+                    offset_T = np.eye(4)
+            # NOTE: A dummy link for the camera to attach to; without entity_idx the batch renderer
+            # uses a single world pose, only env 0 is in view and other envs render black.
+            self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.01, collision=False, fixed=True))
+            self._camera = self._scene.add_sensor(
+                gs.sensors.BatchRendererCameraOptions(
+                    res=self._sensors_args["camera"]["res"],
+                    pos=self._sensors_args["camera"]["pos"],
+                    offset_T=offset_T,
+                    fov=self._sensors_args["camera"]["fov"],
+                    entity_idx=self._camera_mount.idx,
+                    lights=[self._sensors_args["camera"]["lights"]],
+                    env_idx=self._nominal_env_ids.cpu().tolist(),
+                )
+            )
+
             self._imgs_buf = torch.zeros(
                 self.nominal_env_ids.shape[0],
                 self._num_image_stack,
@@ -480,17 +481,18 @@ class AllegroHand(GenesisEnv):
             self._imgs_buf[:, -1] = new_img
 
     def render(self, env_ids: Optional[Sequence[int]] = None) -> None:
-        if env_ids is None:
-            env_ids = self.nominal_env_ids
+        if self._vis_obs:
+            if env_ids is None:
+                env_ids = self.nominal_env_ids
 
-        # TODO
-
-        # TODO: genesis will refresh the image when the scene._dt is different from the last render time
-        # TODO: temporarily we hack by setting the last render time to 0 to force render the new image
-        self._camera._shared_metadata.last_render_timestep = 0
-        # TODO: the batch renderer will first render for all envs, and then return the data for the envs_idx, this may significantly increase the render memory
-        data = self._camera.read(envs_idx=env_ids)
-        return data.rgb
+            # TODO: genesis will refresh the image when the scene._dt is different from the last render time
+            # TODO: temporarily we hack by setting the last render time to 0 to force render the new image
+            self._camera._shared_metadata.last_render_timestep = 0
+            # TODO: the batch renderer will first render for all envs, and then return the data for the envs_idx, this may significantly increase the render memory
+            data = self._camera.read(envs_idx=env_ids)
+            return data.rgb
+        else:
+            return None
 
     def get_states(self, env_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
         if env_ids is None:

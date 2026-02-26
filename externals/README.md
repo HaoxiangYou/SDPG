@@ -50,14 +50,15 @@ Changes in `externals/Genesis/genesis/engine/sensors/camera.py`:
 
 Note: this is a bug-fix and **may be resolved by future Genesis updates**. If it gets fixed upstream, this patch can be dropped.
 
-#### Patch 03: camera `env_idx` to save memory (subset of envs for image cache)
+#### Patch 03: camera `env_idx` and subset rendering (save memory)
 
-Batch-renderer camera supports an optional **`env_idx`** so that only a subset of envs are stored in the image cache (saves GPU memory). Render compute still runs for all envs unless the backend supports subset rendering.
+Patch 03 incorporates the changes from commits `0ceb3ed2` (camera sensor `env_idx` / cache) and `7f2ae64` (batch render subset). Batch-renderer camera supports an optional **`env_idx`** so that only a **subset of envs** is rendered and stored, reducing GPU memory for visual observations.
 
 - **Options**: `externals/Genesis/genesis/options/sensors/camera.py` — `BatchRendererCameraOptions.env_idx` (optional sequence of int).
-- **Engine**: `externals/Genesis/genesis/engine/sensors/camera.py` — shared metadata `env_idx`, cache allocation and `read()` mapping when `env_idx` is set; CUDA tensor handling in `_camera_read_from_image_cache`.
+- **Engine**: `externals/Genesis/genesis/engine/sensors/camera.py` — shared metadata `env_idx`, cache allocation and `read()` mapping; `_camera_read_from_image_cache` uses `renderer._rendered_envs_idx` then `env_idx` for cache indexing; CUDA tensor handling.
+- **Batch renderer**: `externals/Genesis/genesis/vis/batch_renderer.py` — `BatchRenderer` uses `rendered_envs_idx`, passes it to the adapter and slices camera poses; `GenesisGeomRetriever` takes `env_ids` and `retrieve_rigid_state_torch()` returns state only for those envs.
 
-Introduced in commit: `0ceb3ed2b1dc4a6d220c02df3a116c3c7ffcd879`.
+Reference commits: `0ceb3ed2b1dc4a6d220c02df3a116c3c7ffcd879`, `db92b374144f77df6270bc579ade0232bf4680c2`,`7f2ae642fd55bd18ac7532cd55df6e63924815b5`.
 
 Example update command (adjust ref as needed):
 

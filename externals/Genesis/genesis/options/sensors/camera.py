@@ -151,8 +151,7 @@ class BatchRendererCameraOptions(BaseCameraOptions):
         Whether to use rasterizer mode. Default is True.
     env_idx : sequence of int, optional
         If set, only these environment indices are rendered and stored in the
-        image cache (saves memory). Render compute still runs for all envs
-        unless the backend supports subset rendering. If None, all envs are used.
+        image cache (saves memory). If None, all envs are used.
     """
 
     model: str = "pinhole"
