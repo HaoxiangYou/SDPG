@@ -31,11 +31,13 @@ def _make_tensor(data, *, dtype: torch.dtype = torch.float32):
 
 
 class GenesisGeomRetriever:
-    def __init__(self, rigid_solver, seg_level):
+    def __init__(self, rigid_solver, seg_level, env_ids=None):
         self.rigid_solver = rigid_solver
         self.seg_color_map = SegmentationColorMap(to_torch=True)
         self.seg_level = seg_level
         self.geom_idxc = None
+        # When set, retrieve_rigid_state_torch() returns state only for these env indices (for subset rendering).
+        self.env_ids = list(env_ids) if env_ids is not None else None
 
         self.default_geom_group = 2
         self.default_enabled_geom_groups = np.array([self.default_geom_group], dtype=np.int32)
@@ -198,6 +200,10 @@ class GenesisGeomRetriever:
         geom_rot = ti_to_torch(self.rigid_solver.vgeoms_state.quat)
         geom_pos = geom_pos.transpose(0, 1).contiguous()
         geom_rot = geom_rot.transpose(0, 1).contiguous()
+        if self.env_ids is not None:
+            idx = _make_tensor(self.env_ids, dtype=torch.int64)
+            geom_pos = geom_pos[idx]
+            geom_rot = geom_rot[idx]
         return geom_pos, geom_rot
 
 
@@ -259,7 +265,13 @@ class BatchRenderer(RBC):
         self._lights = gs.List()
         self._use_rasterizer = renderer_options.use_rasterizer
         self._renderer = None
-        self._geom_retriever = GenesisGeomRetriever(self._visualizer.scene.rigid_solver, vis_options.segmentation_level)
+        ridx = getattr(vis_options, "rendered_envs_idx", None)
+        self._rendered_envs_idx = list(ridx) if ridx is not None else None
+        self._geom_retriever = GenesisGeomRetriever(
+            self._visualizer.scene.rigid_solver,
+            vis_options.segmentation_level,
+            env_ids=self._rendered_envs_idx,
+        )
         self._data_cache = {}
         self._t = -1
 
@@ -291,10 +303,13 @@ class BatchRenderer(RBC):
         except ValueError as e:
             gs.raise_exception_from("All cameras must have the exact same resolution when using BatchRender.", e)
 
+        n_envs = max(self._visualizer.scene.n_envs, 1)
+        num_worlds = len(self._rendered_envs_idx) if self._rendered_envs_idx is not None else n_envs
+
         self._renderer = MadronaBatchRendererAdapter(
             geom_retriever=self._geom_retriever,
             gpu_id=gs.device.index if gs.device.index is not None else 0,
-            num_worlds=max(self._visualizer.scene.n_envs, 1),
+            num_worlds=num_worlds,
             num_lights=len(self._lights),
             cam_fovs_tensor=_make_tensor([camera.fov for camera in self._cameras]),
             cam_znears_tensor=_make_tensor([camera.near for camera in self._cameras]),
@@ -378,6 +393,9 @@ class BatchRenderer(RBC):
         # Render only what is needed (flags still passed to renderer)
         cameras_pos = torch.stack([torch.atleast_2d(camera.get_pos()) for camera in self._cameras], dim=1)
         cameras_quat = torch.stack([torch.atleast_2d(camera.get_quat()) for camera in self._cameras], dim=1)
+        if self._rendered_envs_idx is not None:
+            cameras_pos = cameras_pos[self._rendered_envs_idx]
+            cameras_quat = cameras_quat[self._rendered_envs_idx]
         cameras_quat = _transform_camera_quat(cameras_quat)
         render_flags = np.array(
             (
