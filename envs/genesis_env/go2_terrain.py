@@ -15,6 +15,21 @@ def torch_rand_float(lower: float, upper: float, shape: Tuple[int, int], device:
     return (upper - lower) * torch.rand(*shape, device=device) + lower
 
 
+def wrap_to_pi(angles):
+    angles %= 2 * np.pi
+    angles -= 2 * np.pi * (angles > np.pi)
+    return angles
+
+
+def quat_apply(a, b):
+    shape = b.shape
+    a = a.reshape(-1, 4)
+    b = b.reshape(-1, 3)
+    xyz = a[:, :3]
+    t = xyz.cross(b, dim=-1) * 2
+    return (b + a[:, 3:] * t + xyz.cross(t, dim=-1)).view(shape)
+
+
 class Go2Terrain(GenesisEnv):
     """Go2 environment."""
 
@@ -123,6 +138,7 @@ class Go2Terrain(GenesisEnv):
             "lin_vel_x_range": [-1.0, 1.0],
             "lin_vel_y_range": [-1.0, 1.0],
             "ang_vel_range": [-1.0, 1.0],
+            "heading_range": [-3.14, 3.14],
         }
 
         self._commands_scale = torch.tensor(
@@ -233,21 +249,24 @@ class Go2Terrain(GenesisEnv):
         self._foot_height_offset = 0.022  # height of the foot coordinate origin above ground [m]
 
         self._reward_scales = {
+            # limitation
+            "dof_pos_limits": -2.0,
+            "collision": -1.0,
+            # command tracking
             "tracking_lin_vel": 1.0,
             "tracking_ang_vel": 0.5,
+            # smoothness
             "lin_vel_z": -2.0,
             "ang_vel_xy": -0.05,
-            # "orientation": -10.0,
-            # "base_height": -50.0,
-            "torques": -0.0002,
-            "collision": -1.0,
-            "dof_vel": -0.0005,
+            "dof_power": -2.0e-4,
             "dof_acc": -2.5e-7,
-            "action_smoothness": -0.01,
-            "feet_air_time": 1.0,
             "action_rate": -0.01,
-            "stand_still": -0.5,
+            "action_smoothness": -0.01,
+            # gait
+            # "stand_still": -0.5,
+            "feet_air_time": 1.0,
             "feet_contact_stand_still": 0.5,
+            "feet_clearance": 0.2,
         }
 
         # PD control parameters
@@ -391,6 +410,15 @@ class Go2Terrain(GenesisEnv):
         # update buffers has been called in get_states
         env_ids = (self._progress_buf % int(self._episode_length / 5) == 0).nonzero(as_tuple=False).flatten()
         self._resample_commands(env_ids)
+
+        forward = quat_apply(self._base_quat, self._forward_vec)
+        heading = torch.atan2(forward[:, 1], forward[:, 0])
+        self._commands[:, 2] = torch.clip(
+            0.5 * wrap_to_pi(self._commands[:, 3] - heading),
+            self._command_cfg["ang_vel_range"][0],
+            self._command_cfg["ang_vel_range"][1],
+        )
+
         self._randomize_rigids(env_ids)
         self._randomize_controls(env_ids)
 
@@ -505,13 +533,19 @@ class Go2Terrain(GenesisEnv):
             (len(envs_idx), 1),
             self._device,
         ).squeeze(1)
-        self._commands[envs_idx, 2] = torch_rand_float(
-            self._command_cfg["ang_vel_range"][0],
-            self._command_cfg["ang_vel_range"][1],
+        # self._commands[envs_idx, 2] = torch_rand_float(
+        # self._command_cfg["ang_vel_range"][0],
+        # self._command_cfg["ang_vel_range"][1],
+        # (len(envs_idx), 1),
+        # self._device,
+        # ).squeeze(1)
+        self._commands[envs_idx, 3] = torch_rand_float(
+            self._command_cfg["heading_range"][0],
+            self._command_cfg["heading_range"][1],
             (len(envs_idx), 1),
-            self._device,
+            device=self.device,
         ).squeeze(1)
-        self._commands[envs_idx, :2] *= (torch.norm(self._commands[envs_idx, :2], dim=1) > 0.2).unsqueeze(1)
+        self._commands[envs_idx, :3] *= (torch.norm(self._commands[envs_idx, :3], dim=1) > 0.2).unsqueeze(1)
 
     def _reset_idx(self, env_ids: torch.Tensor) -> None:
         """Reset environments by index."""
