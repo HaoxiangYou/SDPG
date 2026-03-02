@@ -14,6 +14,21 @@ def torch_rand_float(lower: float, upper: float, shape: Tuple[int, int], device:
     return (upper - lower) * torch.rand(*shape, device=device) + lower
 
 
+def wrap_to_pi(angles):
+    angles %= 2 * np.pi
+    angles -= 2 * np.pi * (angles > np.pi)
+    return angles
+
+
+def quat_apply(a, b):
+    shape = b.shape
+    a = a.reshape(-1, 4)
+    b = b.reshape(-1, 3)
+    xyz = a[:, :3]
+    t = xyz.cross(b, dim=-1) * 2
+    return (b + a[:, 3:] * t + xyz.cross(t, dim=-1)).view(shape)
+
+
 class Go2(GenesisEnv):
     """Go2 environment."""
 
@@ -118,10 +133,11 @@ class Go2(GenesisEnv):
 
         # Command configuration
         self._command_cfg = {
-            "num_commands": 3,
+            "num_commands": 4,
             "lin_vel_x_range": [-1.0, 1.0],
             "lin_vel_y_range": [-1.0, 1.0],
             "ang_vel_range": [-1.0, 1.0],
+            "heading_range": [-3.14, 3.14],
         }
 
         self._commands_scale = torch.tensor(
@@ -156,33 +172,12 @@ class Go2(GenesisEnv):
         self._num_feet = 4
 
         # Add plane
-        if self._domain_rand_options["use_terrain"]:
-            self._terrain_cfg = self._domain_rand_options["terrain_cfg"]
-            self._terrain = self._scene.add_entity(
-                gs.morphs.Terrain(
-                    n_subterrains=self._terrain_cfg["n_subterrains"],
-                    horizontal_scale=self._terrain_cfg["horizontal_scale"],
-                    vertical_scale=self._terrain_cfg["vertical_scale"],
-                    subterrain_size=self._terrain_cfg["subterrain_size"],
-                    subterrain_types=self._terrain_cfg["subterrain_types"],
-                ),
+        self._plane = self._scene.add_entity(
+            gs.morphs.URDF(
+                file="urdf/plane/plane.urdf",
+                fixed=True,
             )
-            terrain_margin_x = self._terrain_cfg["n_subterrains"][0] * self._terrain_cfg["subterrain_size"][0]
-            terrain_margin_y = self._terrain_cfg["n_subterrains"][1] * self._terrain_cfg["subterrain_size"][1]
-            self._terrain_margin = torch.tensor(
-                [terrain_margin_x, terrain_margin_y], device=self.device, dtype=gs.tc_float
-            )
-            height_field = self._terrain.geoms[0].metadata["height_field"]
-            self._height_field = (
-                torch.tensor(height_field, device=self._device, dtype=gs.tc_float) * self._terrain_cfg["vertical_scale"]
-            )
-        else:
-            self._plane = self._scene.add_entity(
-                gs.morphs.URDF(
-                    file="urdf/plane/plane.urdf",
-                    fixed=True,
-                )
-            )
+        )
 
         # Add go2 robot
         self._robot = self._scene.add_entity(
@@ -248,21 +243,39 @@ class Go2(GenesisEnv):
         self._foot_height_offset = 0.022  # height of the foot coordinate origin above ground [m]
 
         self._reward_scales = {
+            # "tracking_lin_vel": 1.0,
+            # "tracking_ang_vel": 0.5,
+            # "lin_vel_z": -2.0,
+            # "ang_vel_xy": -0.05,
+            # "orientation": -10.0,
+            # "base_height": -50.0,
+            # "torques": -0.0002,
+            # "collision": -1.0,
+            # "dof_vel": -0.0005,
+            # "dof_acc": -2.5e-7,
+            # "action_smoothness": -0.01,
+            # "feet_air_time": 1.0,
+            # "action_rate": -0.01,
+            # "stand_still": -0.5,
+            # "feet_contact_stand_still": 0.5,
+            # limitation
+            "dof_pos_limits": -2.0,
+            "collision": -1.0,
+            # command tracking
             "tracking_lin_vel": 1.0,
             "tracking_ang_vel": 0.5,
+            # smoothness
             "lin_vel_z": -2.0,
             "ang_vel_xy": -0.05,
-            "orientation": -10.0,
-            "base_height": -50.0,
-            "torques": -0.0002,
-            "collision": -1.0,
-            "dof_vel": -0.0005,
+            # "dof_power": -2.e-4,
             "dof_acc": -2.5e-7,
-            "action_smoothness": -0.01,
-            "feet_air_time": 1.0,
             "action_rate": -0.01,
-            "stand_still": -0.5,
+            "action_smoothness": -0.01,
+            # gait
+            # "stand_still": -0.5,
+            "feet_air_time": 1.0,
             "feet_contact_stand_still": 0.5,
+            "feet_clearance": 0.2,
         }
 
         # PD control parameters
@@ -349,10 +362,6 @@ class Go2(GenesisEnv):
             device=self._device,
             dtype=torch.float,
         )
-
-        # Terrain parameters
-        self._terrain_heights = torch.zeros((self._num_envs,), device=self._device, dtype=torch.float)
-
         self._motor_offsets = torch.zeros((self._num_envs, self._num_actions), dtype=torch.float)
         self._motor_strengths = torch.ones((self._num_envs, self._num_actions), device=self._device, dtype=torch.float)
 
@@ -399,7 +408,17 @@ class Go2(GenesisEnv):
         # resample commands when is half of the episode lenght
         # update buffers has been called in get_states
         env_ids = (self._progress_buf % int(self._episode_length / 5) == 0).nonzero(as_tuple=False).flatten()
+
         self._resample_commands(env_ids)
+
+        forward = quat_apply(self._base_quat, self._forward_vec)
+        heading = torch.atan2(forward[:, 1], forward[:, 0])
+        self._commands[:, 2] = torch.clip(
+            0.5 * wrap_to_pi(self._commands[:, 3] - heading),
+            self._command_cfg["ang_vel_range"][0],
+            self._command_cfg["ang_vel_range"][1],
+        )
+
         self._randomize_rigids(env_ids)
         self._randomize_controls(env_ids)
 
@@ -491,11 +510,6 @@ class Go2(GenesisEnv):
             # Terminate if roll or pitch exceeds threshold
             termination |= torch.abs(self._base_euler[:, 0]) > self._termination_roll_threshold
             termination |= torch.abs(self._base_euler[:, 1]) > self._termination_pitch_threshold
-            if self._domain_rand_options["use_terrain"]:
-                termination |= self._base_pos[:, 0] > self._terrain_margin[0]
-                termination |= self._base_pos[:, 1] > self._terrain_margin[1]
-                termination |= self._base_pos[:, 0] < 1
-                termination |= self._base_pos[:, 1] < 1
         # terminate if base height is less than 0.0
         termination |= self._base_pos[:, 2] < 0.0
         return termination
@@ -519,13 +533,20 @@ class Go2(GenesisEnv):
             (len(envs_idx), 1),
             self._device,
         ).squeeze(1)
-        self._commands[envs_idx, 2] = torch_rand_float(
-            self._command_cfg["ang_vel_range"][0],
-            self._command_cfg["ang_vel_range"][1],
+        # self._commands[envs_idx, 2] = torch_rand_float(
+        #     self._command_cfg["ang_vel_range"][0],
+        #     self._command_cfg["ang_vel_range"][1],
+        #     (len(envs_idx), 1),
+        #     self._device,
+        # ).squeeze(1)
+        # self._commands[envs_idx, :2] *= (torch.norm(self._commands[envs_idx, :2], dim=1) > 0.2).unsqueeze(1)
+        self._commands[envs_idx, 3] = torch_rand_float(
+            self._command_cfg["heading_range"][0],
+            self._command_cfg["heading_range"][1],
             (len(envs_idx), 1),
-            self._device,
+            device=self.device,
         ).squeeze(1)
-        self._commands[envs_idx, :2] *= (torch.norm(self._commands[envs_idx, :2], dim=1) > 0.2).unsqueeze(1)
+        self._commands[envs_idx, :3] *= (torch.norm(self._commands[envs_idx, :3], dim=1) > 0.2).unsqueeze(1)
 
     def _reset_idx(self, env_ids: torch.Tensor) -> None:
         """Reset environments by index."""
@@ -646,14 +667,6 @@ class Go2(GenesisEnv):
         self._foot_positions[:] = self._rigid_solver.get_links_pos(self._feet_link_indices_world_frame)
         self._foot_quaternions[:] = self._rigid_solver.get_links_quat(self._feet_link_indices_world_frame)
         self._foot_velocities[:] = self._rigid_solver.get_links_vel(self._feet_link_indices_world_frame)
-
-        if self._domain_rand_options["use_terrain"]:
-            clipped_base_pos = self._base_pos[:, :2].clamp(
-                min=torch.zeros(2, device=self._device), max=self._terrain_margin
-            )
-            height_field_ids = (clipped_base_pos / self._terrain_cfg["horizontal_scale"] - 0.5).floor().int()
-            height_field_ids.clamp(min=0)
-            self._terrain_heights = self._height_field[height_field_ids[:, 0], height_field_ids[:, 1]]
 
     def get_states(self, env_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
         """Get robot states for computing observations and rewards."""
@@ -825,7 +838,7 @@ class Go2(GenesisEnv):
         return action_smoothness_cost
 
     def _reward_stand_still(self) -> torch.Tensor:
-        cmd_norm = torch.norm(self._commands, dim=1)
+        cmd_norm = torch.norm(self._commands[:, :3], dim=1)
         return torch.sum(torch.square(self._dof_pos - self._default_dof_pos), dim=1) * (cmd_norm < 0.01)
 
     def _reward_feet_contact_stand_still(self):

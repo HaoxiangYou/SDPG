@@ -32,16 +32,6 @@ config:
     kp_scale_range: [0.8, 1.2]
     randomize_kd_scale: True
     kd_scale_range: [0.8, 1.2]
-    use_terrain: False
-    terrain_cfg:
-      n_subterrains: [2, 2]
-      horizontal_scale: 0.25
-      vertical_scale: 0.005
-      subterrain_size: [6.0, 6.0]
-      subterrain_types: [
-            ["flat_terrain", "random_uniform_terrain"],
-            ["pyramid_sloped_terrain", "discrete_obstacles_terrain"]]
-
 
 play:
   num_envs: 64
