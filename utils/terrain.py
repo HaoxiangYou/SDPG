@@ -143,15 +143,25 @@ class Terrain:
                 platform_size=self.platform_size,
                 terrain_type=self.type,
             )
-        elif choice < self.proportions[4]:  # discrete obstacles
+        elif choice < self.proportions[4]:  # discrete obstacles (hurtle)
+            args = self.cfg.get("hurtle_args") or {}
+            sl = args.get("stone_len", {"offset": 0.8, "scale": 0.3})
+            so, ss = sl["offset"], sl["scale"]
+            hr = args.get(
+                "hurtle_height_range", {"low": {"offset": 0.15, "scale": 0.1}, "high": {"offset": 0.20, "scale": 0.25}}
+            )
+            ho_lo, hs_lo = hr["low"]["offset"], hr["low"]["scale"]
+            ho_hi, hs_hi = hr["high"]["offset"], hr["high"]["scale"]
+            num_stones = args.get("num_stones", 2)
+            x_range = args.get("x_range", [1.5, 2.5])
             terrain_utils.parkour_hurtle_terrain(
                 terrain,
-                num_stones=2,
-                platform_len=1.0,
-                stone_len=0.8 + 0.3 * difficulty,
-                hurtle_height_range=[0.15 + 0.1 * difficulty, 0.20 + 0.25 * difficulty],
+                num_stones=num_stones,
+                platform_len=self.platform_size,
+                stone_len=so + ss * difficulty,
+                hurtle_height_range=[ho_lo + hs_lo * difficulty, ho_hi + hs_hi * difficulty],
                 pad_height=0,
-                x_range=[1.5, 2.5],
+                x_range=x_range,
                 y_range=[0.0, 0.0],
                 half_valid_width=[0.6, 0.9],
             )
