@@ -108,7 +108,6 @@ class WalkerHurtle(GenesisEnv):
             gs.morphs.MJCF(file=os.path.join(os.path.dirname(__file__), "../../assets/walker.xml")),
             surface=gs.surfaces.Default(color=(1.0, 0.5, 0.0, 1.0)),
         )
-        self._plane = self._scene.add_entity(gs.morphs.Plane())
 
         self._root_joint_names = ["rootx", "rooty", "rootz"]
         self._motor_joint_names = ["right_hip", "right_knee", "right_ankle", "left_hip", "left_knee", "left_ankle"]
