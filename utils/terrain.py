@@ -144,12 +144,12 @@ class Terrain:
                 terrain_type=self.type,
             )
         elif choice < self.proportions[4]:  # discrete obstacles
-            terrain_utils.parkour_hurdle_terrain(
+            terrain_utils.parkour_hurtle_terrain(
                 terrain,
                 num_stones=2,
                 platform_len=1.0,
                 stone_len=0.8 + 0.3 * difficulty,
-                hurdle_height_range=[0.15 + 0.1 * difficulty, 0.20 + 0.25 * difficulty],
+                hurtle_height_range=[0.15 + 0.1 * difficulty, 0.20 + 0.25 * difficulty],
                 pad_height=0,
                 x_range=[1.5, 2.5],
                 y_range=[0.0, 0.0],
