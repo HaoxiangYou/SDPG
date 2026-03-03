@@ -40,30 +40,6 @@ class WalkerHurtle(GenesisEnv):
 
         self._debug = debug
         self._vis_obs = vis_obs
-        if vis_obs:
-            pass
-            # self._num_image_stack = 3
-            # self._observation_space = spaces.Dict(
-            #     {
-            #         "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(11,)),
-            #         "RGB": spaces.Box(
-            #             low=0,
-            #             high=255,
-            #             dtype=np.uint8,
-            #             shape=(
-            #                 self._num_image_stack * 3,
-            #                 sensors_args["camera"]["res"][0],
-            #                 sensors_args["camera"]["res"][1],
-            #             ),
-            #         ),
-            #     }
-            # )
-        else:
-            self._observation_space = spaces.Dict(
-                {
-                    "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(17,)),
-                }
-            )
 
         self._terrain_args = terrain_args
 
@@ -108,6 +84,12 @@ class WalkerHurtle(GenesisEnv):
         self._health_bonus = 1.0
         self._action_penalty_scale = -1e-1
 
+        privileged_observations_dim = 17
+
+        observation_space_dict = {
+            "proprioceptive_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(17,)),
+        }
+
         if self._terrain_args is not None:
             self._create_terrain()
             if self._sensors_args is not None and "heightfield" in self._sensors_args:
@@ -118,6 +100,16 @@ class WalkerHurtle(GenesisEnv):
                     device=self._device,
                     dtype=torch.float,
                 )
+
+                observation_space_dict["height_field"] = spaces.Box(
+                    low=-np.inf, high=np.inf, shape=(self._num_height_points,)
+                )
+
+                privileged_observations_dim += self._num_height_points
+
+        observation_space_dict["privileged_observations"] = spaces.Box(
+            low=-np.inf, high=np.inf, shape=(privileged_observations_dim,)
+        )
 
         # if self._vis_obs:
         #     # Initialize the sensors
@@ -157,6 +149,8 @@ class WalkerHurtle(GenesisEnv):
         #         dtype=torch.uint8,
         #     )
 
+        self._observation_space = spaces.Dict(observation_space_dict)
+
     def _create_terrain(self):
         self._terrain = Terrain(self._terrain_args)
         self._gs_terrain = self._scene.add_entity(
@@ -179,7 +173,7 @@ class WalkerHurtle(GenesisEnv):
     def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         observations = {}
         robot_states = states["robot_states"]
-        privileged_observations = torch.cat(
+        proprioceptive_observations = torch.cat(
             [
                 robot_states["root_joints_pos"][:, 1:],
                 robot_states["motor_joints_pos"],
@@ -188,6 +182,15 @@ class WalkerHurtle(GenesisEnv):
             ],
             dim=-1,
         )
+        observations["proprioceptive_observations"] = proprioceptive_observations
+
+        if hasattr(self, "_measured_heights"):
+            height_field = self._measured_heights.clone()
+            privileged_observations = torch.cat([proprioceptive_observations, height_field], dim=-1)
+            observations["height_field"] = height_field
+        else:
+            privileged_observations = proprioceptive_observations
+
         observations["privileged_observations"] = privileged_observations
 
         # if self._vis_obs:
