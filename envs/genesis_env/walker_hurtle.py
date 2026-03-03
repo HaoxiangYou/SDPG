@@ -31,32 +31,14 @@ class WalkerHurtle(GenesisEnv):
         sim_options: gs.options.SimOptions | None = None,
         viewer_options: gs.options.ViewerOptions | None = None,
         vis_options: gs.options.VisOptions | None = None,
+        debug: bool = False,
         show_viewer: bool = False,
         show_FPS: bool = False,
     ) -> None:
         episode_length = 1000
         early_termination = True
 
-        # if sensors_args is None:
-        #     sensors_args = {
-        #         "camera": {
-        #             "res": [256, 256],
-        #             "pos": [0.0, -2.0, -0.5],
-        #             "lookat": [0.0, 0.0, -0.5],
-        #             "fov": 60.0,
-        #             "lights": {
-        #                 "pos": [0.0, 0.0, 1.3],
-        #                 "dir": [0.0, 0.0, -1.0],
-        #                 "intensity": 0.8,
-        #                 "color": [1.0, 1.0, 1.0],
-        #                 "cutoff": 100,
-        #                 "directional": True,
-        #                 "castshadow": False,
-        #             },
-        #         },
-        #         "directional": True,
-        #         "castshadow": False,
-        #     }
+        self._debug = debug
         self._vis_obs = vis_obs
         if vis_obs:
             pass
@@ -128,6 +110,14 @@ class WalkerHurtle(GenesisEnv):
 
         if self._terrain_args is not None:
             self._create_terrain()
+            if self._sensors_args is not None and "heightfield" in self._sensors_args:
+                self._init_height_points()
+                self._measured_heights = torch.zeros(
+                    self._num_envs,
+                    self._num_height_points,
+                    device=self._device,
+                    dtype=torch.float,
+                )
 
         # if self._vis_obs:
         #     # Initialize the sensors
@@ -256,6 +246,8 @@ class WalkerHurtle(GenesisEnv):
             zero_velocity=True,
         )
 
+        self._update_height_measurements(env_ids)
+
         # if self._vis_obs:
         #     # Find which nominal environments are being reset
         #     # self.nominal_env_ids contains the global env_ids of nominal environments
@@ -276,8 +268,60 @@ class WalkerHurtle(GenesisEnv):
         actions = actions.clamp(min=-1.0, max=1.0) * self._motor_strength
         self._robot.control_dofs_force(actions, dofs_idx_local=self._motors_dof_idx)
 
+    def _init_height_points(self) -> None:
+        """Initialize height sample points along X (2D motion). Uses sensors_args['heightfield']."""
+        hf = self._sensors_args["heightfield"]
+        res = float(hf.get("res", 0.2))
+        ahead = float(hf.get("ahead", 8.0))
+        backward = float(hf.get("backward", 2.0))
+        n = int(round((ahead + backward) / res)) + 1
+        x_offsets = torch.linspace(-backward, ahead, n, device=self._device, dtype=torch.float)
+        self._num_height_points = n
+        # (num_envs, num_points, 3): X offsets along forward, Y=0, Z=0 (robot frame, 2D)
+        self._height_points = torch.zeros(
+            self._num_envs, self._num_height_points, 3, device=self._device, dtype=torch.float
+        )
+        self._height_points[:, :, 0] = x_offsets.unsqueeze(0).expand(self._num_envs, -1)
+
+    def _update_height_measurements(self, env_ids: Optional[Sequence[int]] = None) -> None:
+        """Sample terrain height along X at current base pose (2D: same Y as base)."""
+        if env_ids is None:
+            env_ids = torch.arange(self._num_envs, device=self._device, dtype=torch.int32)
+        if not hasattr(self, "_measured_heights") or len(env_ids) == 0:
+            return
+        base_pos = self._robot.get_pos(envs_idx=env_ids)[:, :3]
+        # World positions: base + Y offsets
+        points_continuous = base_pos.unsqueeze(1) + self._height_points[env_ids]
+        points_continuous[:, :, 1] += self._terrain_args["border_size"] + self._terrain_args["terrain_width"] / 2.0
+
+        points_grid = (points_continuous / self._terrain_args["horizontal_scale"]).long()
+        px = points_grid[:, :, 0].view(-1).clamp(0, self._height_samples.shape[0] - 2)
+        py = points_grid[:, :, 1].view(-1).clamp(0, self._height_samples.shape[1] - 2)
+
+        heights1 = self._height_samples[px, py]
+        heights2 = self._height_samples[px + 1, py]
+        heights3 = self._height_samples[px, py + 1]
+        heights = torch.min(torch.min(heights1, heights2), heights3) * self._terrain_args["vertical_scale"]
+
+        self._measured_heights[env_ids] = heights.view(env_ids.shape[0], -1)
+
+        if self._debug:
+            points_to_draw = points_continuous.clone()
+            points_to_draw[:, :, 2] = heights.view(env_ids.shape[0], -1)
+            points_to_draw[:, :, 1] -= self._terrain_args["border_size"] + self._terrain_args["terrain_width"] / 2.0
+
+            center_env_id = (self._num_envs - 1) / 2.0
+            y_offset = (env_ids - center_env_id) * 2.0
+            points_to_draw[:, :, 1] += y_offset.unsqueeze(1)
+
+            points_to_draw = points_to_draw.view(-1, 3)
+
+            self._scene.clear_debug_objects()
+            self._scene.draw_debug_spheres(points_to_draw, radius=0.01, color=(1.0, 0.0, 0.0, 0.5))
+
     def _post_physics_step(self) -> None:
-        """Update image buffer by rolling frames and appending new image."""
+        """Post physics step"""
+        self._update_height_measurements()
         # if self._vis_obs:
         #     new_img = self.render(env_ids=self.nominal_env_ids)
         #     # Roll the buffer to shift old frames: [t-2, t-1, t-0] -> [t-1, t-0, None]

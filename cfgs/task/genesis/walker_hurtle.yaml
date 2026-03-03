@@ -22,7 +22,7 @@ config:
   sensors_args: 
     heightfield:
       res: 0.2 # resolution to sample the heightfield in meters
-      ahead: 8.0 # distance to sample the heightfield ahead in meters
+      ahead: 5.0 # distance to sample the heightfield ahead in meters
       backward: 2.0 # distance to sample the heightfield backward in meters
 
   terrain_args:

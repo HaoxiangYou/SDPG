@@ -2,6 +2,7 @@ import importlib
 
 # from typing import Any, Dict, Tuple
 import genesis as gs
+import torch
 
 from envs.genesis_env import GenesisEnv
 from utils.common_utils import snakecase_to_pascalcase
@@ -43,7 +44,21 @@ terrain_args = {
     },
 }
 
-env_kwargs = {"show_viewer": True, "randomize_init": True, "terrain_args": terrain_args}
+sensors_args = {
+    "heightfield": {
+        "res": 0.2,
+        "ahead": 5.0,
+        "backward": 2.0,
+    },
+}
+
+env_kwargs = {
+    "show_viewer": True,
+    "randomize_init": True,
+    "terrain_args": terrain_args,
+    "debug": True,
+    "sensors_args": sensors_args,
+}
 
 
 def main():
@@ -52,6 +67,9 @@ def main():
     env: GenesisEnv = env_fn(num_envs=num_envs, device=device, seed=0, sim_options=sim_options, **env_kwargs)
 
     env.reset()
+
+    for _ in range(1000):
+        env.step(torch.randn(num_envs, env.num_actions))
 
 
 if __name__ == "__main__":
