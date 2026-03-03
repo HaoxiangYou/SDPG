@@ -557,7 +557,7 @@ def pit_terrain(
     return terrain
 
 
-def parkour_hurdle_terrain(
+def parkour_hurtle_terrain(
     terrain,
     platform_len=1.0,
     platform_height=0.0,
@@ -566,7 +566,7 @@ def parkour_hurdle_terrain(
     x_range=(1.5, 2.4),
     y_range=(-0.4, 0.4),
     half_valid_width=(0.4, 0.8),
-    hurdle_height_range=(0.2, 0.3),
+    hurtle_height_range=(0.2, 0.3),
     pad_width=0.1,
     pad_height=0.5,
     flat=False,
@@ -583,8 +583,8 @@ def parkour_hurdle_terrain(
 
     # half_valid_width = round(np.random.uniform(y_range[1]+0.2, y_range[1]+1) / terrain.horizontal_scale)
     half_valid_width = round(np.random.uniform(half_valid_width[0], half_valid_width[1]) / terrain.horizontal_scale)
-    hurdle_height_max = round(hurdle_height_range[1] / terrain.vertical_scale)
-    hurdle_height_min = round(hurdle_height_range[0] / terrain.vertical_scale)
+    hurtle_height_max = round(hurtle_height_range[1] / terrain.vertical_scale)
+    hurtle_height_min = round(hurtle_height_range[0] / terrain.vertical_scale)
 
     platform_len = round(platform_len / terrain.horizontal_scale)
     platform_height = round(platform_height / terrain.vertical_scale)
@@ -610,7 +610,7 @@ def parkour_hurdle_terrain(
         dis_x += rand_x
         if not flat:
             terrain.height_field_raw[dis_x - stone_len // 2 : dis_x + stone_len // 2,] = np.random.randint(
-                hurdle_height_min, hurdle_height_max
+                hurtle_height_min, hurtle_height_max
             )
             terrain.height_field_raw[
                 dis_x - stone_len // 2 : dis_x + stone_len // 2, : mid_y + rand_y - half_valid_width
