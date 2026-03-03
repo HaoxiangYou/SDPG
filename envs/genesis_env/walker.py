@@ -189,8 +189,6 @@ class Walker(GenesisEnv):
         return observations
 
     def compute_reward(self, states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
-        # Reward from the Emergence of Locomotion Behaviours in Rich Environments
-        # https://arxiv.org/abs/1811.09656
         forward_vel = states["robot_states"]["root_joints_vel"][:, 0]
         forward_reward = forward_vel * self._forward_reward_scale
 
