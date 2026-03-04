@@ -15,32 +15,73 @@ from envs.genesis_env.genesis_env import GenesisEnv
 from utils.common_utils import snakecase_to_pascalcase
 from utils.tensor_utils import enumerate_states
 
-env_name = "allegro_hand"
+env_name = "walker_hurtle"
 num_envs = 4
 device = "cuda"
-sim_options = gs.options.SimOptions(dt=3e-2, substeps=4)
+sim_options = gs.options.SimOptions(dt=0.01, substeps=1)
+
+terrain_args = {
+    "mesh_type": "heightfield",
+    "curriculum": True,
+    "selected": False,
+    "border_size": 0.0,
+    "border_height": 0.0,
+    "terrain_length": 5.0,
+    "terrain_width": 2.0,
+    "platform_size": 0.0,
+    "num_rows": 5,  # number of terrain rows (levels)
+    "num_cols": 1,  # number of terrain cols (types)
+    "num_subterrains": 5,
+    "horizontal_scale": 0.05,  # [m] distance between height samples in x and y direction
+    "vertical_scale": 0.005,  # [m] distance between height samples in z direction
+    "static_friction": 1.0,  # TODO currently not implemented, coefficient of static friction of the terrain
+    "dynamic_friction": 1.0,  # TODO currently not implemented, coefficient of dynamic friction of the terrain
+    "restitution": 0.0,  # TODO currently not implemented, coefficient of restitution of the terrain
+    "max_init_terrain_level": 1,  # starting curriculum level
+    # terrain types: [smooth slope, rough slope, stairs up, stairs down, hurtle, stepping stones, gap, pit]
+    "terrain_proportions": [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+    # Optional: hurtle terrain (offset + scale*difficulty).
+    "hurtle_args": {
+        "num_stones": 2,
+        "x_range": [2.4, 2.5],  # range of x position between the stone
+        "stone_len": {"offset": 0.2, "scale": 0.0},
+        "hurtle_height_range": {
+            "low": {"offset": 0.20, "scale": 1.0},
+            "high": {"offset": 0.30, "scale": 1.5},
+        },
+    },
+}
+
+sensors_args = {
+    "heightfield": {
+        "res": 0.2,
+        "ahead": 5.0,
+        "backward": 2.0,
+    },
+    "camera": {
+        "res": (84, 84),
+        "pos": (0.2, 0.0, -0.1),
+        "lookat": (0.8, 0.0, -0.3),
+        "fov": 80.0,
+        "lights": {
+            "pos": (8.0, 0.0, 2.0),
+            "intensity": 0.8,
+            "color": (1.0, 1.0, 1.0),
+            "dir": (0.0, 0.0, -1.0),
+            "cutoff": 100,
+            "directional": True,
+            "castshadow": False,
+        },
+    },
+}
+
 env_kwargs = {
     "show_viewer": True,
     "randomize_init": False,  # Set to False when loading states
     "vis_obs": True,
     "nominal_env_ids": None,
-    "sensors_args": {
-        "camera": {
-            "res": (84, 84),
-            "pos": (0.40, 0.05, 0.425),
-            "lookat": (0.25, -0.10, 0.275),
-            "fov": 80.0,
-            "lights": {
-                "pos": (0.0, 0.0, 2.0),
-                "intensity": 0.8,
-                "color": (1.0, 1.0, 1.0),
-                "dir": (0.0, 0.0, -1.0),
-                "cutoff": 100,
-                "directional": True,
-                "castshadow": False,
-            },
-        },
-    },
+    "sensors_args": sensors_args,
+    "terrain_args": terrain_args,
 }
 
 
