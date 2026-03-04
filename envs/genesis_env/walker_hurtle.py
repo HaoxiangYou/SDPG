@@ -39,7 +39,6 @@ class WalkerHurtle(GenesisEnv):
 
         self._debug = debug
         self._vis_obs = vis_obs
-        self._num_image_stack = 3
         self._terrain_args = terrain_args
 
         super().__init__(
@@ -111,6 +110,19 @@ class WalkerHurtle(GenesisEnv):
         )
 
         if self._vis_obs:
+            self._num_image_stack = 3
+            observation_space_dict["ego-centric_camera_observation"] = (
+                spaces.Box(
+                    low=0,
+                    high=255,
+                    dtype=np.uint8,
+                    shape=(
+                        self._num_image_stack * 3,
+                        self._sensors_args["camera"]["res"][0],
+                        self._sensors_args["camera"]["res"][1],
+                    ),
+                ),
+            )
             # Initialize the sensors
             # TODO: genesis at commit id 7db43e4caef2b185bf691d29fc545d6480cd224d only supports offset_T
             offset_T = self._sensors_args["camera"].get("offset_T", None)
