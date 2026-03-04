@@ -17,13 +17,26 @@ config:
   vis_options:
     rendered_envs_idx: null
 
-  # state or rgb based observation
+  # whether to use ego-centric camera
   vis_obs: False
-  sensors_args: 
+  sensors_args:
     heightfield:
       res: 0.2 # resolution to sample the heightfield in meters
       ahead: 5.0 # distance to sample the heightfield ahead in meters
       backward: 2.0 # distance to sample the heightfield backward in meters
+    camera:
+      res: [84, 84]
+      pos: [0.2, 0.0, -0.1]
+      lookat: [0.8, 0.0, -0.3]
+      fov: 80.0
+      lights:
+        pos: [8.0, 0.0, 2.0]
+        intensity: 0.8
+        color: [1.0, 1.0, 1.0]
+        dir: [0.0, 0.0, -1.0]
+        cutoff: 100
+        directional: true
+        castshadow: false
 
   terrain_args:
     mesh_type: heightfield

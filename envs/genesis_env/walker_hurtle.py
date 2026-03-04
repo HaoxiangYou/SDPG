@@ -4,8 +4,7 @@ from typing import Any, Dict, Optional, Sequence
 import genesis as gs
 import numpy as np
 import torch
-
-# from genesis.utils.geom import pos_lookat_up_to_T
+from genesis.utils.geom import pos_lookat_up_to_T
 from gym import spaces
 
 from envs.genesis_env.genesis_env import GenesisEnv
@@ -40,7 +39,6 @@ class WalkerHurtle(GenesisEnv):
 
         self._debug = debug
         self._vis_obs = vis_obs
-
         self._terrain_args = terrain_args
 
         super().__init__(
@@ -111,55 +109,90 @@ class WalkerHurtle(GenesisEnv):
             low=-np.inf, high=np.inf, shape=(privileged_observations_dim,)
         )
 
-        # if self._vis_obs:
-        #     # Initialize the sensors
-        #     # TODO: genesis at commit id 7db43e4caef2b185bf691d29fc545d6480cd224d only supports offset_T
-        #     offset_T = self._sensors_args["camera"].get("offset_T", None)
-        #     lookat = self._sensors_args["camera"].get("lookat", None)
-        #     if offset_T is not None:
-        #         offset_T = torch.tensor(offset_T, device=self._device)
-        #     else:
-        #         if lookat is not None:
-        #             offset_T = pos_lookat_up_to_T(
-        #                 np.array(self._sensors_args["camera"]["pos"]), np.array(lookat), np.array((0.0, 0.0, 1.0))
-        #             )
-        #         else:
-        #             offset_T = np.eye(4)
-        #     # NOTE: A dummy link for the camera to attach to, genesis sensor camera does not support fixed rotation or axis
-        #     self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.01, collision=False, fixed=True))
-        #     self._torso_link = self._robot.get_link("torso")
-        #     self._camera = self._scene.add_sensor(
-        #         gs.sensors.BatchRendererCameraOptions(
-        #             res=self._sensors_args["camera"]["res"],
-        #             pos=self._sensors_args["camera"]["pos"],
-        #             offset_T=offset_T,
-        #             fov=self._sensors_args["camera"]["fov"],
-        #             entity_idx=self._camera_mount.idx,
-        #             lights=[self._sensors_args["camera"]["lights"]],
-        #             env_idx=self._nominal_env_ids.cpu().tolist(),
-        #         )
-        #     )
-        #     self._imgs_buf = torch.zeros(
-        #         self.nominal_env_ids.shape[0],
-        #         self._num_image_stack,
-        #         self._sensors_args["camera"]["res"][0],
-        #         self._sensors_args["camera"]["res"][1],
-        #         3,
-        #         device=self._device,
-        #         dtype=torch.uint8,
-        #     )
+        if self._vis_obs:
+            self._num_image_stack = 3
+            observation_space_dict["ego_centric_camera_observation"] = spaces.Box(
+                low=0,
+                high=255,
+                dtype=np.uint8,
+                shape=(
+                    self._num_image_stack * 3,
+                    self._sensors_args["camera"]["res"][0],
+                    self._sensors_args["camera"]["res"][1],
+                ),
+            )
+            # Initialize the sensors
+            # TODO: genesis at commit id 7db43e4caef2b185bf691d29fc545d6480cd224d only supports offset_T
+            offset_T = self._sensors_args["camera"].get("offset_T", None)
+            lookat = self._sensors_args["camera"].get("lookat", None)
+            if offset_T is not None:
+                offset_T = torch.tensor(offset_T, device=self._device)
+            else:
+                if lookat is not None:
+                    offset_T = pos_lookat_up_to_T(
+                        np.array(self._sensors_args["camera"]["pos"]), np.array(lookat), np.array((0.0, 0.0, 1.0))
+                    )
+                else:
+                    offset_T = np.eye(4)
+            # NOTE: A dummy link for the camera to attach to, genesis sensor camera does not support fixed rotation or axis
+            self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.01, collision=False, fixed=True))
+            self._torso_link = self._robot.get_link("torso")
+            self._camera = self._scene.add_sensor(
+                gs.sensors.BatchRendererCameraOptions(
+                    res=self._sensors_args["camera"]["res"],
+                    pos=self._sensors_args["camera"]["pos"],
+                    offset_T=offset_T,
+                    fov=self._sensors_args["camera"]["fov"],
+                    entity_idx=self._camera_mount.idx,
+                    lights=[self._sensors_args["camera"]["lights"]],
+                    env_idx=self._nominal_env_ids.cpu().tolist(),
+                )
+            )
+            self._imgs_buf = torch.zeros(
+                self.nominal_env_ids.shape[0],
+                self._num_image_stack,
+                self._sensors_args["camera"]["res"][0],
+                self._sensors_args["camera"]["res"][1],
+                3,
+                device=self._device,
+                dtype=torch.uint8,
+            )
 
         self._observation_space = spaces.Dict(observation_space_dict)
 
+    def _create_terrain_surface(self):
+        """Build a surface for the terrain."""
+        hf = self._terrain.height_field_raw  # (tot_rows, tot_cols), int16
+        rows, cols = hf.shape
+        ground_color = np.array((255, 255, 255), dtype=np.uint8)  # white
+        wall_color = np.array((220, 50, 50), dtype=np.uint8)  # red
+        wall_threshold = 0  # any height above 0 is considered a wall
+        arr = np.zeros((rows, cols, 3), dtype=np.uint8)
+        is_wall = hf > wall_threshold
+        arr[~is_wall] = ground_color
+        arr[is_wall] = wall_color
+        # Mesh UVs: u = normalized x (row), v = normalized y (col). Texture (u,v) -> image col=u, row=v.
+        # So image[row, col] must be color for mesh (row, col) => image[j, i] = arr[i, j]: transpose.
+        # Many renderers put v=0 at bottom, so flip rows to match.
+        texture_array = np.transpose(arr, (1, 0, 2))[::-1, :, :].copy()
+        texture = gs.textures.ImageTexture(image_array=texture_array)
+        uv_scale = 1.0
+        # Smooth Plastic: low roughness (0.1) and ior=1.5 for a bright, shiny look like the default terrain style
+        surface = gs.surfaces.Smooth(diffuse_texture=texture, smooth=False)
+        return surface, uv_scale
+
     def _create_terrain(self):
         self._terrain = Terrain(self._terrain_args)
+        terrain_surface, texture_uv_scale = self._create_terrain_surface()
         self._gs_terrain = self._scene.add_entity(
             gs.morphs.Terrain(
                 pos=(0, -(self._terrain_args["border_size"] + self._terrain_args["terrain_width"] / 2.0), 0.0),
                 horizontal_scale=self._terrain_args["horizontal_scale"],
                 vertical_scale=self._terrain_args["vertical_scale"],
                 height_field=self._terrain.height_field_raw,
+                uv_scale=texture_uv_scale,
             ),
+            surface=terrain_surface,
         )
         self._height_samples = (
             torch.tensor(self._terrain.heightsamples)
@@ -193,19 +226,16 @@ class WalkerHurtle(GenesisEnv):
 
         observations["privileged_observations"] = privileged_observations
 
-        # if self._vis_obs:
-        #     batch_size, num_stack, height, width, rgb = self._imgs_buf.shape
-        #     # NOTE: for AFRL agent, RGB observation and privileged observations may has different shapes
-        #     # Reshape: (batch, num_stack, H, W, 3) -> (batch, num_stack * 3, H, W)
-        #     observations["RGB"] = self._imgs_buf.permute(0, 1, 4, 2, 3).reshape(
-        #         batch_size, num_stack * rgb, height, width
-        #     )
+        if self._vis_obs:
+            batch_size, num_stack, height, width, rgb = self._imgs_buf.shape
+            # Reshape: (batch, num_stack, H, W, 3) -> (batch, num_stack * 3, H, W)
+            observations["ego_centric_camera_observation"] = self._imgs_buf.permute(0, 1, 4, 2, 3).reshape(
+                batch_size, num_stack * rgb, height, width
+            )
 
         return observations
 
     def compute_reward(self, states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
-        # Reward from the Emergence of Locomotion Behaviours in Rich Environments
-        # https://arxiv.org/abs/1811.09656
         forward_vel = states["robot_states"]["root_joints_vel"][:, 0]
         forward_reward = forward_vel * self._forward_reward_scale
 
@@ -251,20 +281,20 @@ class WalkerHurtle(GenesisEnv):
 
         self._update_height_measurements(env_ids)
 
-        # if self._vis_obs:
-        #     # Find which nominal environments are being reset
-        #     # self.nominal_env_ids contains the global env_ids of nominal environments
-        #     # We need to find the indices within nominal_env_ids that match env_ids
-        #     mask = torch.isin(self.nominal_env_ids, env_ids)
-        #     nominal_idx_to_reset = torch.nonzero(mask, as_tuple=True)[0]
+        if self._vis_obs:
+            # Find which nominal environments are being reset
+            # self.nominal_env_ids contains the global env_ids of nominal environments
+            # We need to find the indices within nominal_env_ids that match env_ids
+            mask = torch.isin(self.nominal_env_ids, env_ids)
+            nominal_idx_to_reset = torch.nonzero(mask, as_tuple=True)[0]
 
-        #     if len(nominal_idx_to_reset) > 0:
-        #         # Render fresh images for the reset nominal environments
-        #         reset_nominal_env_ids = self.nominal_env_ids[nominal_idx_to_reset]
-        #         new_img = self.render(env_ids=reset_nominal_env_ids)
+            if len(nominal_idx_to_reset) > 0:
+                # Render fresh images for the reset nominal environments
+                reset_nominal_env_ids = self.nominal_env_ids[nominal_idx_to_reset]
+                new_img = self.render(env_ids=reset_nominal_env_ids)
 
-        #         # Initialize the image buffer for these environments
-        #         self._imgs_buf[nominal_idx_to_reset] = new_img.unsqueeze(1)
+                # Initialize the image buffer for these environments
+                self._imgs_buf[nominal_idx_to_reset] = new_img.unsqueeze(1)
 
     def _set_actions(self, actions: torch.Tensor) -> None:
         actions = actions.view(self._num_envs, self._num_actions)
@@ -325,28 +355,27 @@ class WalkerHurtle(GenesisEnv):
     def _post_physics_step(self) -> None:
         """Post physics step"""
         self._update_height_measurements()
-        # if self._vis_obs:
-        #     new_img = self.render(env_ids=self.nominal_env_ids)
-        #     # Roll the buffer to shift old frames: [t-2, t-1, t-0] -> [t-1, t-0, None]
-        #     # This moves older frames "to the left" and makes room for the new frame
-        #     self._imgs_buf = torch.roll(self._imgs_buf, shifts=-1, dims=1)
-        #     self._imgs_buf[:, -1] = new_img
+        if self._vis_obs:
+            new_img = self.render(env_ids=self.nominal_env_ids)
+            # Roll the buffer to shift old frames: [t-2, t-1, t-0] -> [t-1, t-0, None]
+            # This moves older frames "to the left" and makes room for the new frame
+            self._imgs_buf = torch.roll(self._imgs_buf, shifts=-1, dims=1)
+            self._imgs_buf[:, -1] = new_img
 
     def render(self, env_ids: Optional[Sequence[int]] = None) -> None:
         if self._vis_obs:
-            # if env_ids is None:
-            #     env_ids = self.nominal_env_ids
-            # # Attach the camera to the torso pose
-            # pos = self._torso_link.get_pos()
-            # self._camera_mount.set_pos(pos)
+            if env_ids is None:
+                env_ids = self.nominal_env_ids
+            # Attach the camera to the torso pose
+            pos = self._torso_link.get_pos()
+            self._camera_mount.set_pos(pos)
 
-            # # TODO: genesis will refresh the image when the scene._dt is different from the last render time
-            # # TODO: temporarily we hack by setting the last render time to 0 to force render the new image
-            # self._camera._shared_metadata.last_render_timestep = 0
-            # # TODO: the batch renderer will first render for all envs, and then return the data for the envs_idx, this may significantly increase the render memory
-            # data = self._camera.read(envs_idx=env_ids)
-            # return data.rgb
-            return None
+            # TODO: genesis will refresh the image when the scene._dt is different from the last render time
+            # TODO: temporarily we hack by setting the last render time to 0 to force render the new image
+            self._camera._shared_metadata.last_render_timestep = 0
+            # TODO: the batch renderer will first render for all envs, and then return the data for the envs_idx, this may significantly increase the render memory
+            data = self._camera.read(envs_idx=env_ids)
+            return data.rgb
         else:
             return None
 
