@@ -151,15 +151,39 @@ class WalkerHurtle(GenesisEnv):
 
         self._observation_space = spaces.Dict(observation_space_dict)
 
+    def _create_terrain_surface(self):
+        """Build a surface for the terrain."""
+        hf = self._terrain.height_field_raw  # (tot_rows, tot_cols), int16
+        rows, cols = hf.shape
+        ground_color = np.array((255, 255, 255), dtype=np.uint8)  # white
+        wall_color = np.array((220, 50, 50), dtype=np.uint8)  # red
+        wall_threshold = 0  # any height above 0 is considered a wall
+        arr = np.zeros((rows, cols, 3), dtype=np.uint8)
+        is_wall = hf > wall_threshold
+        arr[~is_wall] = ground_color
+        arr[is_wall] = wall_color
+        # Mesh UVs: u = normalized x (row), v = normalized y (col). Texture (u,v) -> image col=u, row=v.
+        # So image[row, col] must be color for mesh (row, col) => image[j, i] = arr[i, j]: transpose.
+        # Many renderers put v=0 at bottom, so flip rows to match.
+        texture_array = np.transpose(arr, (1, 0, 2))[::-1, :, :].copy()
+        texture = gs.textures.ImageTexture(image_array=texture_array)
+        uv_scale = 1.0
+        # Smooth Plastic: low roughness (0.1) and ior=1.5 for a bright, shiny look like the default terrain style
+        surface = gs.surfaces.Smooth(diffuse_texture=texture, smooth=False)
+        return surface, uv_scale
+
     def _create_terrain(self):
         self._terrain = Terrain(self._terrain_args)
+        terrain_surface, texture_uv_scale = self._create_terrain_surface()
         self._gs_terrain = self._scene.add_entity(
             gs.morphs.Terrain(
                 pos=(0, -(self._terrain_args["border_size"] + self._terrain_args["terrain_width"] / 2.0), 0.0),
                 horizontal_scale=self._terrain_args["horizontal_scale"],
                 vertical_scale=self._terrain_args["vertical_scale"],
                 height_field=self._terrain.height_field_raw,
+                uv_scale=texture_uv_scale,
             ),
+            surface=terrain_surface,
         )
         self._height_samples = (
             torch.tensor(self._terrain.heightsamples)
