@@ -111,7 +111,7 @@ class WalkerHurtle(GenesisEnv):
 
         if self._vis_obs:
             self._num_image_stack = 3
-            observation_space_dict["ego-centric_camera_observation"] = (
+            observation_space_dict["ego_centric_camera_observation"] = (
                 spaces.Box(
                     low=0,
                     high=255,
