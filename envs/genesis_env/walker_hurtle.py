@@ -111,16 +111,14 @@ class WalkerHurtle(GenesisEnv):
 
         if self._vis_obs:
             self._num_image_stack = 3
-            observation_space_dict["ego_centric_camera_observation"] = (
-                spaces.Box(
-                    low=0,
-                    high=255,
-                    dtype=np.uint8,
-                    shape=(
-                        self._num_image_stack * 3,
-                        self._sensors_args["camera"]["res"][0],
-                        self._sensors_args["camera"]["res"][1],
-                    ),
+            observation_space_dict["ego_centric_camera_observation"] = spaces.Box(
+                low=0,
+                high=255,
+                dtype=np.uint8,
+                shape=(
+                    self._num_image_stack * 3,
+                    self._sensors_args["camera"]["res"][0],
+                    self._sensors_args["camera"]["res"][1],
                 ),
             )
             # Initialize the sensors
@@ -230,9 +228,8 @@ class WalkerHurtle(GenesisEnv):
 
         if self._vis_obs:
             batch_size, num_stack, height, width, rgb = self._imgs_buf.shape
-            # NOTE: for AFRL agent, RGB observation and privileged observations may has different shapes
             # Reshape: (batch, num_stack, H, W, 3) -> (batch, num_stack * 3, H, W)
-            observations["RGB"] = self._imgs_buf.permute(0, 1, 4, 2, 3).reshape(
+            observations["ego_centric_camera_observation"] = self._imgs_buf.permute(0, 1, 4, 2, 3).reshape(
                 batch_size, num_stack * rgb, height, width
             )
 
