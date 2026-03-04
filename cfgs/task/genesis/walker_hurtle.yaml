@@ -17,7 +17,7 @@ config:
   vis_options:
     rendered_envs_idx: null
 
-  # state or rgb based observation
+  # whether to use ego-centric camera
   vis_obs: False
   sensors_args:
     heightfield:
