@@ -44,28 +44,16 @@ def main(cfg: DictConfig) -> None:
     """
     # Get Hydra's output directory and log file path
     hydra_cfg = HydraConfig.get()
-    if hydra_cfg is not None:
-        output_dir = Path(hydra_cfg.runtime.output_dir)
-        log_file_path = output_dir / "run.log"
+    
+    output_dir = Path(hydra_cfg.runtime.output_dir)
+    log_file_path = output_dir / "run.log"
 
-        # Redirect stdout/stderr to both console and log file
-        with TeeStdoutStderr(log_file_path):
-            # Resolve all interpolations in the config (resolves ${...} references)
-            OmegaConf.resolve(cfg)
-
-            # If not training, merge play config into task config
-            if not cfg.train:
-                cfg.task.config = OmegaConf.merge(cfg.task.config, cfg.task.play)
-                cfg.num_envs = cfg.task.play.num_envs
-                cfg.agent.config.num_envs = cfg.task.play.num_envs
-
-            runner = make_runner(cfg)
-
-            runner.run({"train": cfg.train, "play": not cfg.train, "checkpoint": cfg.checkpoint})
-    else:
-        # Fallback if Hydra is not initialized
+    # Redirect stdout/stderr to both console and log file
+    with TeeStdoutStderr(log_file_path):
+        # Resolve all interpolations in the config (resolves ${...} references)
         OmegaConf.resolve(cfg)
 
+        # If not training, merge play config into task config
         if not cfg.train:
             cfg.task.config = OmegaConf.merge(cfg.task.config, cfg.task.play)
             cfg.num_envs = cfg.task.play.num_envs
