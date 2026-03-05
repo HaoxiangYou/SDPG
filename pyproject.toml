@@ -24,7 +24,7 @@ dependencies = [
     "pyglet",
     "gym==0.23.1",
     "wandb",
-    "genesis-world[dev] @ file:./externals/Genesis",
+    "tensorboardX"
 ]
 dynamic = ["version", "readme"]
 

@@ -3,10 +3,13 @@
 # Setup
 
 ```bash
-conda create -n AFRL python=3.10
+conda create -n AFRL python=3.11
 conda activate AFRL
 
-pip install ".[dev]"
+pip install -e ".[dev]"
+
+cd externals/Genesis
+pip install -e ".[dev]"
 ```
 
 ## Third-party packages
