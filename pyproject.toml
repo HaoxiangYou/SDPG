@@ -22,7 +22,7 @@ dependencies = [
     "hydra-core",
     "hydra_colorlog",
     "pyglet",
-    "gymnasium",
+    "gym==0.23.1",
     "wandb",
     "genesis-world[dev] @ file:./externals/Genesis",
 ]
