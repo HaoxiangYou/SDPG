@@ -7,9 +7,9 @@ defaults:
 # Logging
 hydra:
   run:
-    dir: logs/${task.backend}/${task.name}/${agent.name}/${now:%Y-%m-%d_%H-%M-%S}
+    dir: logs/${task.backend}/${task.name}/${agent.name}/${train_or_eval:${train}}/${now:%Y-%m-%d_%H-%M-%S}
   sweep:
-    dir: logs/${task.backend}/${task.name}/${agent.name}/${now:%Y-%m-%d_%H-%M-%S}
+    dir: logs/${task.backend}/${task.name}/${agent.name}/${train_or_eval:${train}}/${now:%Y-%m-%d_%H-%M-%S}
 
 # Wandb configuration
 wandb:

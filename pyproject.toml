@@ -22,9 +22,9 @@ dependencies = [
     "hydra-core",
     "hydra_colorlog",
     "pyglet",
-    "gymnasium",
-    "wandb"
-    # Add your project dependencies here
+    "gym==0.23.1",
+    "wandb",
+    "tensorboardX"
 ]
 dynamic = ["version", "readme"]
 
@@ -101,3 +101,7 @@ docstring-code-format = true
 
 [tool.ruff.lint.isort]
 known-first-party = ["approximate_forl"]
+
+[tool.pyright]
+extraPaths = ["externals/Genesis"]
+typeCheckingMode = "off"
