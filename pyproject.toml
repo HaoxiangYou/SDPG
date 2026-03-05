@@ -23,8 +23,8 @@ dependencies = [
     "hydra_colorlog",
     "pyglet",
     "gymnasium",
-    "wandb"
-    # Add your project dependencies here
+    "wandb",
+    "genesis-world[dev] @ file:./externals/Genesis",
 ]
 dynamic = ["version", "readme"]
 
