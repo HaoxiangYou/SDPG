@@ -101,3 +101,6 @@ docstring-code-format = true
 
 [tool.ruff.lint.isort]
 known-first-party = ["approximate_forl"]
+
+[tool.pyright]
+extraPaths = ["externals/Genesis"]
