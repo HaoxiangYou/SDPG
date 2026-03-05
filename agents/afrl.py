@@ -40,6 +40,46 @@ class AFRLRunner:
         self.nominal_env_ids = torch.arange(self.num_base_envs, device=self.device, dtype=torch.int32) * (
             self.num_action_perturbations + 1
         )
+
+        # make the environments
+        self.make_envs()
+
+        # make the models
+        self.make_models()
+
+        # Logger directory
+        self.log_dir = config.log_dir
+
+    def _init_wandb(self, config: DictConfig) -> bool:
+        if not hasattr(config, "wandb") or not config.wandb.get("enable", False):
+            return False
+
+        wandb_config = config.wandb
+        # Keep wandb init simple: if a field is null, don't pass it (wandb will auto-generate).
+        wandb_kwargs = {
+            "project": wandb_config.get("project", "afrl"),
+            "entity": wandb_config.get("entity"),
+            "group": wandb_config.get("group"),
+            "job_type": wandb_config.get("job_type"),
+            "name": wandb_config.get("name"),
+            "tags": wandb_config.get("tags", []),
+            "notes": wandb_config.get("notes"),
+        }
+        # Remove None values
+        wandb_kwargs = {k: v for k, v in wandb_kwargs.items() if v is not None}
+
+        wandb.init(**wandb_kwargs)
+
+        # Log config if enabled
+        if wandb_config.get("log_config", True):
+            # Convert OmegaConf to dict for wandb
+            config_dict = OmegaConf.to_container(config, resolve=True)
+            wandb.config.update(config_dict)
+
+        print_info("Wandb logging enabled")
+        return True
+
+    def _train_init(self):
         self.max_epochs = self.agent_config.max_epochs
         self.horizon_length = self.agent_config.horizon_length
         self.causality = self.agent_config.causality
@@ -53,12 +93,6 @@ class AFRLRunner:
         self.mini_batch_size = self.agent_config.mini_batch_size
         self.critic_iterations = self.agent_config.critic_iterations
         self.use_auxiliary_envs_for_critic = getattr(self.agent_config, "use_auxiliary_envs_for_critic", True)
-
-        # make the environments
-        self.make_envs()
-
-        # make the models
-        self.make_models()
 
         # initialize the optimizer
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.agent_config.actor_lr)
@@ -82,6 +116,26 @@ class AFRLRunner:
             self.normalize_delta_J = True
         else:
             self.normalize_delta_J = False
+
+        # Buffer
+        self.actor_obs_buf = {}
+        self.critic_obs_buf = {}
+        self.infos = {}
+        self.actions = torch.zeros(
+            (self.num_envs, self.horizon_length, self.num_actions), dtype=torch.float32, device=self.device
+        )
+        self.eps_actions = torch.zeros(
+            (self.num_envs, self.horizon_length, self.num_actions), dtype=torch.float32, device=self.device
+        )
+        self.log_stds = torch.zeros(
+            (self.num_envs, self.horizon_length, self.num_actions), dtype=torch.float32, device=self.device
+        )
+        self.rewards = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
+        self.ret = torch.zeros(self.num_envs, device=self.device)
+        self.next_values = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
+        self.target_values = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
+        self.dones = torch.zeros(self.num_envs, self.horizon_length, device=self.device, dtype=torch.bool)
+        self.delta_J = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
 
         # Top k perturbations for ascent direction computation
         top_k_perturbations = self.agent_config.get("top_k_perturbations", None)
@@ -130,8 +184,12 @@ class AFRLRunner:
         self.step_count = 0
         self.iter_count = 0
 
-        # Logger directory
-        self.log_dir = config.log_dir
+        # Initialize wandb if enabled
+        self.use_wandb = self._init_wandb(self.config)
+
+        # Timer
+        self.time_report = TimeReport()
+
         self.train_dir = os.path.join(self.log_dir, "train")
         self.nn_dir = os.path.join(self.train_dir, "nn")
         self.summary_dir = os.path.join(self.train_dir, "summary")
@@ -141,61 +199,6 @@ class AFRLRunner:
             os.makedirs(self.summary_dir)
         self.summary_writer = SummaryWriter(self.summary_dir)
         self.save_frequency = self.agent_config.save_frequency
-
-        # Initialize wandb if enabled
-        self.use_wandb = self._init_wandb(config)
-
-        # Buffer
-        self.actor_obs_buf = {}
-        self.critic_obs_buf = {}
-        self.infos = {}
-        self.actions = torch.zeros(
-            (self.num_envs, self.horizon_length, self.num_actions), dtype=torch.float32, device=self.device
-        )
-        self.eps_actions = torch.zeros(
-            (self.num_envs, self.horizon_length, self.num_actions), dtype=torch.float32, device=self.device
-        )
-        self.log_stds = torch.zeros(
-            (self.num_envs, self.horizon_length, self.num_actions), dtype=torch.float32, device=self.device
-        )
-        self.rewards = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
-        self.ret = torch.zeros(self.num_envs, device=self.device)
-        self.next_values = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
-        self.target_values = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
-        self.dones = torch.zeros(self.num_envs, self.horizon_length, device=self.device, dtype=torch.bool)
-        self.delta_J = torch.zeros(self.num_envs, self.horizon_length, device=self.device)
-
-        # Timer
-        self.time_report = TimeReport()
-
-    def _init_wandb(self, config: DictConfig) -> bool:
-        if not hasattr(config, "wandb") or not config.wandb.get("enable", False):
-            return False
-
-        wandb_config = config.wandb
-        # Keep wandb init simple: if a field is null, don't pass it (wandb will auto-generate).
-        wandb_kwargs = {
-            "project": wandb_config.get("project", "afrl"),
-            "entity": wandb_config.get("entity"),
-            "group": wandb_config.get("group"),
-            "job_type": wandb_config.get("job_type"),
-            "name": wandb_config.get("name"),
-            "tags": wandb_config.get("tags", []),
-            "notes": wandb_config.get("notes"),
-        }
-        # Remove None values
-        wandb_kwargs = {k: v for k, v in wandb_kwargs.items() if v is not None}
-
-        wandb.init(**wandb_kwargs)
-
-        # Log config if enabled
-        if wandb_config.get("log_config", True):
-            # Convert OmegaConf to dict for wandb
-            config_dict = OmegaConf.to_container(config, resolve=True)
-            wandb.config.update(config_dict)
-
-        print_info("Wandb logging enabled")
-        return True
 
     def _create_lr_scheduler(
         self, optimizer: torch.optim.Optimizer, schedule_config: dict
@@ -921,6 +924,8 @@ class AFRLRunner:
             torch.save(states_history, save_path)
 
     def train(self):
+        self._train_init()
+
         self.time_report.add_timer("rollout")
         self.time_report.add_timer("train_actor")
         self.time_report.add_timer("train_critic")
