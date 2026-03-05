@@ -17,6 +17,9 @@ def compute_num_envs(num_base_envs: int, num_action_perturbations: int) -> int:
 
 # Register the resolver with OmegaConf
 OmegaConf.register_new_resolver("compute_num_envs", compute_num_envs)
+OmegaConf.register_new_resolver(
+    "train_or_eval", lambda train: "train" if train else "eval"
+)
 
 
 def make_runner(config: DictConfig):
