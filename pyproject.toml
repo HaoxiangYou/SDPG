@@ -104,3 +104,4 @@ known-first-party = ["approximate_forl"]
 
 [tool.pyright]
 extraPaths = ["externals/Genesis"]
+typeCheckingMode = "off"
