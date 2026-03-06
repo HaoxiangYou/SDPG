@@ -91,3 +91,77 @@ Example update command (adjust ref as needed):
 git subtree pull --prefix=externals/rl_games https://github.com/Denys88/rl_games.git <ref> --squash
 ```
 
+## drqv2
+
+DrQ-v2 is vendored under `externals/drqv2/` (upstream: `https://github.com/facebookresearch/drqv2.git`). It is used as an **installable package** so the project’s `utils` package is not shadowed when DataLoader workers (spawn) re-run the main script.
+
+### Package layout and install
+
+- **Package root**: `externals/drqv2/` contains a `pyproject.toml` and a `drqv2/` subpackage (the importable package).
+- **Modules**: The runnable code lives under `externals/drqv2/drqv2/` (e.g. `agent.py`, `utils.py`, `replay_buffer.py`, `logger.py`, `video.py`, `dmc.py`). The original flat `.py` files at the root of `externals/drqv2/` may be kept for reference or removed.
+- **Dependencies**: `externals/drqv2/pyproject.toml` declares `dm-env`, `torchvision`, `termcolor`, plus `torch`, `numpy`, `hydra-core`, `omegaconf`, `imageio`, `opencv-python`. Optional extra: `dm_control` for `drqv2.dmc.make()`.
+- **Main project**: The root `pyproject.toml` depends on drqv2 via `drqv2 @ file:./externals/drqv2`. Install from repo root with `pip install -e .`.
+- **Hydra**: The agent is instantiated as `drqv2.agent.DrQV2Agent` (see `agents/drqv2.py` and the built config).
+
+### Local patches
+
+All of the following refer to files under **`externals/drqv2/drqv2/`** (the package), unless noted.
+
+#### Patch 01: DataLoader worker seed type (Python 3.10+)
+
+In Python 3.10+, `random.seed()` only accepts built-in types (`int`, `float`, etc.) and rejects NumPy scalars. The replay buffer’s worker init used `np.random.get_state()[1][0]`, which is a NumPy scalar, and passed it to `random.seed()`, causing a `TypeError`.
+
+**Change** in `externals/drqv2/drqv2/replay_buffer.py`, in `_worker_init_fn`:
+
+- Use `seed = int(np.random.get_state()[1][0]) + worker_id` so the value passed to `random.seed(seed)` is a Python `int`.
+
+#### Patch 02: CPU collate for pin_memory
+
+When the main process uses CUDA, the DataLoader’s default collate can create tensors on the default device (GPU). `pin_memory` only works on CPU tensors, which caused `RuntimeError: cannot pin 'torch.cuda.ByteTensor'`.
+
+**Change** in `externals/drqv2/drqv2/replay_buffer.py`:
+
+- Add `_replay_collate_cpu(batch)` that builds all batch tensors with `torch.from_numpy(...)` (CPU only).
+- Pass `collate_fn=_replay_collate_cpu` into `torch.utils.data.DataLoader` in `make_replay_loader`.
+
+#### Patch 03: Agent as package submodule and relative imports
+
+To avoid the name collision between the project’s `utils` package and drqv2’s `utils` module, drqv2 is used as an installable package. The agent lives in `drqv2/agent.py` and uses `from . import utils` instead of `import utils`. Hydra target is `drqv2.agent.DrQV2Agent`. The main project’s `agents/drqv2.py` imports from the installed `drqv2` package and no longer mutates `sys.path` or `sys.modules["utils"]`.
+
+Example update command (adjust ref as needed):
+
+```bash
+git subtree pull --prefix=externals/drqv2 https://github.com/facebookresearch/drqv2.git main --squash
+```
+
+#### Patch 04: Agent batch act and optional tensor return (GPU-friendly)
+
+The main project runs the act/step loop on GPU (Genesis env and agent on same device) to avoid repeated GPU↔CPU transfers. The agent is extended to support this.
+
+**Changes** in `externals/drqv2/drqv2/agent.py`, in `act()`:
+
+- **Batch observations**: If `obs` is already a 4D tensor `(N, C, H, W)`, it is not unsqueezed; only 3D single-obs is unsqueezed to 4D. Return shape is `(N, action_dim)` when `N > 1`, else `(action_dim,)` for backward compatibility.
+- **Tensor obs**: If `obs` is a tensor on a different device, it is moved to `self.device` instead of re-creating from numpy.
+- **`return_numpy=True` (default)**: Unchanged behavior — action is returned as numpy (e.g. for replay storage).
+- **`return_numpy=False`**: Return the action tensor on the agent device so the caller can pass it directly to the env without a CPU round-trip.
+
+#### Patch 05: ReplayBufferStorage.store_episode (multi-env)
+
+When using multiple envs, the workspace maintains per-env episode buffers and flushes a full episode to replay when an env hits `last()`. The storage only exposed `add(time_step)` for single transitions.
+
+**Change** in `externals/drqv2/drqv2/replay_buffer.py`:
+
+- Add a public method `store_episode(self, episode)` that calls the existing `_store_episode(episode)`, so the workspace can push a complete episode dict (e.g. from multi-env `process_time_steps`).
+
+### Integration notes (main project, not in externals)
+
+The following are implemented in **`agents/drqv2.py`** and config (not as patches under `externals/drqv2`), but depend on the package patches above:
+
+- **Backend-agnostic naming**: `PixelDMCEnv`, `DrQv2Workspace`, `ActionRepeatWrapper` (no Genesis-specific names) so other backends can be added later.
+- **Logs under Hydra output dir**: TensorBoard, `snapshot.pt`, `train.csv`, and replay buffer are written to Hydra's `runtime.output_dir` (e.g. `logs/.../drqv2/train/<timestamp>/`), same pattern as `agents/afrl.py`.
+- **Parallel simulation**: `num_envs >= 1` supported; env returns a list of `ExtendedTimeStep`; batch act, multiple agent updates per step, and `process_time_steps` for per-env episode storage.
+- **GPU act/step loop**: Obs and actions stay on GPU between env and agent; conversion to CPU numpy only when storing to replay and for video/logging.
+- **Wandb**: Optional Weights & Biases logging via `config.wandb.enable`; same config shape as AFRL (`cfgs/config.yaml`).
+
+After updating, re-apply the package layout (the `drqv2/drqv2/` structure and `pyproject.toml`) and the patches above to the updated files.
+

@@ -34,6 +34,10 @@ def make_runner(config: DictConfig):
             from agents.afrl import make_runner
 
             return make_runner(config)
+        case "drqv2":
+            from agents.drqv2 import make_runner
+
+            return make_runner(config)
         case _:
             raise ValueError(f"Invalid agent name: {agent_name}")
 
