@@ -134,5 +134,34 @@ Example update command (adjust ref as needed):
 git subtree pull --prefix=externals/drqv2 https://github.com/facebookresearch/drqv2.git main --squash
 ```
 
+#### Patch 04: Agent batch act and optional tensor return (GPU-friendly)
+
+The main project runs the act/step loop on GPU (Genesis env and agent on same device) to avoid repeated GPU↔CPU transfers. The agent is extended to support this.
+
+**Changes** in `externals/drqv2/drqv2/agent.py`, in `act()`:
+
+- **Batch observations**: If `obs` is already a 4D tensor `(N, C, H, W)`, it is not unsqueezed; only 3D single-obs is unsqueezed to 4D. Return shape is `(N, action_dim)` when `N > 1`, else `(action_dim,)` for backward compatibility.
+- **Tensor obs**: If `obs` is a tensor on a different device, it is moved to `self.device` instead of re-creating from numpy.
+- **`return_numpy=True` (default)**: Unchanged behavior — action is returned as numpy (e.g. for replay storage).
+- **`return_numpy=False`**: Return the action tensor on the agent device so the caller can pass it directly to the env without a CPU round-trip.
+
+#### Patch 05: ReplayBufferStorage.store_episode (multi-env)
+
+When using multiple envs, the workspace maintains per-env episode buffers and flushes a full episode to replay when an env hits `last()`. The storage only exposed `add(time_step)` for single transitions.
+
+**Change** in `externals/drqv2/drqv2/replay_buffer.py`:
+
+- Add a public method `store_episode(self, episode)` that calls the existing `_store_episode(episode)`, so the workspace can push a complete episode dict (e.g. from multi-env `process_time_steps`).
+
+### Integration notes (main project, not in externals)
+
+The following are implemented in **`agents/drqv2.py`** and config (not as patches under `externals/drqv2`), but depend on the package patches above:
+
+- **Backend-agnostic naming**: `PixelDMCEnv`, `DrQv2Workspace`, `ActionRepeatWrapper` (no Genesis-specific names) so other backends can be added later.
+- **Logs under Hydra output dir**: TensorBoard, `snapshot.pt`, `train.csv`, and replay buffer are written to Hydra's `runtime.output_dir` (e.g. `logs/.../drqv2/train/<timestamp>/`), same pattern as `agents/afrl.py`.
+- **Parallel simulation**: `num_envs >= 1` supported; env returns a list of `ExtendedTimeStep`; batch act, multiple agent updates per step, and `process_time_steps` for per-env episode storage.
+- **GPU act/step loop**: Obs and actions stay on GPU between env and agent; conversion to CPU numpy only when storing to replay and for video/logging.
+- **Wandb**: Optional Weights & Biases logging via `config.wandb.enable`; same config shape as AFRL (`cfgs/config.yaml`).
+
 After updating, re-apply the package layout (the `drqv2/drqv2/` structure and `pyproject.toml`) and the patches above to the updated files.
 

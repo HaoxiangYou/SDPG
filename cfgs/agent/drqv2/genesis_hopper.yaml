@@ -1,0 +1,31 @@
+# DrQ-v2 agent for Genesis Hopper (pixel-based, uses externals/drqv2)
+name: drqv2
+
+config:
+  num_envs: 32
+
+  num_train_frames: 30100000
+  num_seed_frames: 4000
+  action_repeat: 2
+  discount: 0.99
+  replay_buffer_size: 1000000
+  replay_buffer_num_workers: 4
+  batch_size: 256
+  nstep: 3
+  save_snapshot: true
+  save_video: false
+  use_tb: true
+
+  # Eval
+  eval_every_frames: 10000
+  num_eval_episodes: 10
+
+  # Agent (reference hopper stddev_schedule + DrQV2Agent defaults)
+  lr: 1e-4
+  feature_dim: 50
+  hidden_dim: 1024
+  critic_target_tau: 0.01
+  update_every_steps: 2
+  num_expl_steps: 2000
+  stddev_schedule: "linear(1.0,0.1,500000)"
+  stddev_clip: 0.3

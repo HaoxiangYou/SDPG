@@ -60,6 +60,10 @@ class ReplayBufferStorage:
             self._current_episode = defaultdict(list)
             self._store_episode(episode)
 
+    def store_episode(self, episode):
+        """Store a full episode (e.g. from multi-env per-env buffer)."""
+        self._store_episode(episode)
+
     def _preload(self):
         self._num_episodes = 0
         self._num_transitions = 0

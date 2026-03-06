@@ -161,9 +161,14 @@ class DrQV2Agent:
         self.actor.train(training)
         self.critic.train(training)
 
-    def act(self, obs, step, eval_mode):
-        obs = torch.as_tensor(obs, device=self.device)
-        obs = self.encoder(obs.unsqueeze(0))
+    def act(self, obs, step, eval_mode, return_numpy=True):
+        if not isinstance(obs, torch.Tensor):
+            obs = torch.as_tensor(obs, device=self.device)
+        elif obs.device != self.device:
+            obs = obs.to(self.device)
+        if obs.dim() == 3:
+            obs = obs.unsqueeze(0)
+        obs = self.encoder(obs)
         stddev = utils.schedule(self.stddev_schedule, step)
         dist = self.actor(obs, stddev)
         if eval_mode:
@@ -172,7 +177,10 @@ class DrQV2Agent:
             action = dist.sample(clip=None)
             if step < self.num_expl_steps:
                 action.uniform_(-1.0, 1.0)
-        return action.cpu().numpy()[0]
+        if return_numpy:
+            out = action.cpu().numpy()
+            return out[0] if out.shape[0] == 1 else out
+        return action
 
     def update_critic(self, obs, action, reward, discount, next_obs, step):
         metrics = dict()
