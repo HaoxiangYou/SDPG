@@ -294,6 +294,8 @@ class DrQv2Workspace:
 
         self.env = dm_env
         self.num_envs = getattr(self.env, "num_envs", 1)
+        # Agent updates per env step (reference: num_envs; can override via config)
+        self.updates_per_step = getattr(cfg, "updates_per_step", None) or self.num_envs
 
         self.use_wandb = self._init_wandb(full_config) if full_config else False
 
@@ -484,12 +486,9 @@ class DrQv2Workspace:
             if actions.dim() == 1:
                 actions = actions.unsqueeze(0)
 
-            # Multiple agent updates per step (reference: for i in range(global_step, global_step + num_envs))
+            # Multiple agent updates per step (configurable via updates_per_step; default num_envs)
             if not seed_until_step(self.global_step):
-                for i in range(
-                    self._global_step,
-                    self._global_step + self.num_envs,
-                ):
+                for i in range(self.updates_per_step):
                     metrics = self.agent.update(self.replay_iter, i)
                 if metrics:
                     self.logger.log_metrics(
@@ -634,6 +633,7 @@ def make_runner(config: DictConfig):
         "action_repeat": getattr(config.agent.config, "action_repeat", 1),
         "num_train_frames": getattr(config.agent.config, "num_train_frames", 1_000_000),
         "num_seed_frames": getattr(config.agent.config, "num_seed_frames", 4000),
+        "updates_per_step": getattr(config.agent.config, "updates_per_step", None),
         "agent": {
             "_target_": "drqv2.agent.DrQV2Agent",
             "obs_shape": None,
