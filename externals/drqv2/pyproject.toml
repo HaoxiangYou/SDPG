@@ -19,6 +19,7 @@ dependencies = [
     "termcolor",
     "imageio",
     "opencv-python",
+    "tensorboard",
 ]
 
 [project.optional-dependencies]
