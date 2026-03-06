@@ -91,3 +91,48 @@ Example update command (adjust ref as needed):
 git subtree pull --prefix=externals/rl_games https://github.com/Denys88/rl_games.git <ref> --squash
 ```
 
+## drqv2
+
+DrQ-v2 is vendored under `externals/drqv2/` (upstream: `https://github.com/facebookresearch/drqv2.git`). It is used as an **installable package** so the project’s `utils` package is not shadowed when DataLoader workers (spawn) re-run the main script.
+
+### Package layout and install
+
+- **Package root**: `externals/drqv2/` contains a `pyproject.toml` and a `drqv2/` subpackage (the importable package).
+- **Modules**: The runnable code lives under `externals/drqv2/drqv2/` (e.g. `agent.py`, `utils.py`, `replay_buffer.py`, `logger.py`, `video.py`, `dmc.py`). The original flat `.py` files at the root of `externals/drqv2/` may be kept for reference or removed.
+- **Dependencies**: `externals/drqv2/pyproject.toml` declares `dm-env`, `torchvision`, `termcolor`, plus `torch`, `numpy`, `hydra-core`, `omegaconf`, `imageio`, `opencv-python`. Optional extra: `dm_control` for `drqv2.dmc.make()`.
+- **Main project**: The root `pyproject.toml` depends on drqv2 via `drqv2 @ file:./externals/drqv2`. Install from repo root with `pip install -e .`.
+- **Hydra**: The agent is instantiated as `drqv2.agent.DrQV2Agent` (see `agents/drqv2.py` and the built config).
+
+### Local patches
+
+All of the following refer to files under **`externals/drqv2/drqv2/`** (the package), unless noted.
+
+#### Patch 01: DataLoader worker seed type (Python 3.10+)
+
+In Python 3.10+, `random.seed()` only accepts built-in types (`int`, `float`, etc.) and rejects NumPy scalars. The replay buffer’s worker init used `np.random.get_state()[1][0]`, which is a NumPy scalar, and passed it to `random.seed()`, causing a `TypeError`.
+
+**Change** in `externals/drqv2/drqv2/replay_buffer.py`, in `_worker_init_fn`:
+
+- Use `seed = int(np.random.get_state()[1][0]) + worker_id` so the value passed to `random.seed(seed)` is a Python `int`.
+
+#### Patch 02: CPU collate for pin_memory
+
+When the main process uses CUDA, the DataLoader’s default collate can create tensors on the default device (GPU). `pin_memory` only works on CPU tensors, which caused `RuntimeError: cannot pin 'torch.cuda.ByteTensor'`.
+
+**Change** in `externals/drqv2/drqv2/replay_buffer.py`:
+
+- Add `_replay_collate_cpu(batch)` that builds all batch tensors with `torch.from_numpy(...)` (CPU only).
+- Pass `collate_fn=_replay_collate_cpu` into `torch.utils.data.DataLoader` in `make_replay_loader`.
+
+#### Patch 03: Agent as package submodule and relative imports
+
+To avoid the name collision between the project’s `utils` package and drqv2’s `utils` module, drqv2 is used as an installable package. The agent lives in `drqv2/agent.py` and uses `from . import utils` instead of `import utils`. Hydra target is `drqv2.agent.DrQV2Agent`. The main project’s `agents/drqv2.py` imports from the installed `drqv2` package and no longer mutates `sys.path` or `sys.modules["utils"]`.
+
+Example update command (adjust ref as needed):
+
+```bash
+git subtree pull --prefix=externals/drqv2 https://github.com/facebookresearch/drqv2.git main --squash
+```
+
+After updating, re-apply the package layout (the `drqv2/drqv2/` structure and `pyproject.toml`) and the patches above to the updated files.
+

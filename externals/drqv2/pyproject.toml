@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "drqv2"
+version = "0.1.0"
+description = "DrQ-v2 agent and replay buffer (Facebook/MIT)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+dependencies = [
+    "torch",
+    "numpy",
+    "hydra-core",
+    "omegaconf",
+    "dm-env",
+    "torchvision",
+    "termcolor",
+    "imageio",
+    "opencv-python",
+]
+
+[project.optional-dependencies]
+dm_control = ["dm_control"]  # only needed for drqv2.dmc.make() (DM Control envs)
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["drqv2*"]

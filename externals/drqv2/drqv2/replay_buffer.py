@@ -165,9 +165,21 @@ class ReplayBuffer(IterableDataset):
 
 
 def _worker_init_fn(worker_id):
-    seed = np.random.get_state()[1][0] + worker_id
+    seed = int(np.random.get_state()[1][0]) + worker_id
     np.random.seed(seed)
     random.seed(seed)
+
+
+def _replay_collate_cpu(batch):
+    """Collate replay samples into CPU tensors so pin_memory can pin them."""
+    obs, action, reward, discount, next_obs = zip(*batch)
+    return (
+        torch.from_numpy(np.stack(obs)),  # uint8, CPU
+        torch.from_numpy(np.stack(action)).float(),
+        torch.from_numpy(np.stack(reward)).float(),
+        torch.from_numpy(np.stack(discount)).float(),
+        torch.from_numpy(np.stack(next_obs)),  # uint8, CPU
+    )
 
 
 def make_replay_loader(replay_dir, max_size, batch_size, num_workers,
@@ -182,9 +194,12 @@ def make_replay_loader(replay_dir, max_size, batch_size, num_workers,
                             fetch_every=1000,
                             save_snapshot=save_snapshot)
 
-    loader = torch.utils.data.DataLoader(iterable,
-                                         batch_size=batch_size,
-                                         num_workers=num_workers,
-                                         pin_memory=True,
-                                         worker_init_fn=_worker_init_fn)
+    loader = torch.utils.data.DataLoader(
+        iterable,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=True,
+        worker_init_fn=_worker_init_fn,
+        collate_fn=_replay_collate_cpu,
+    )
     return loader
