@@ -38,6 +38,10 @@ def make_runner(config: DictConfig):
             from agents.drqv2 import make_runner
 
             return make_runner(config)
+        case "teacher_student":
+            from agents.teacher_student import make_runner
+
+            return make_runner(config)
         case _:
             raise ValueError(f"Invalid agent name: {agent_name}")
 
@@ -51,7 +55,7 @@ def main(cfg: DictConfig) -> None:
     """
     # Get Hydra's output directory and log file path
     hydra_cfg = HydraConfig.get()
-    
+
     output_dir = Path(hydra_cfg.runtime.output_dir)
     log_file_path = output_dir / "run.log"
 

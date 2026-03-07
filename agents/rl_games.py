@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
@@ -65,10 +65,10 @@ class RlGamesGpuEnv(vecenv.IVecEnv):
         return info
 
 
-def make_runner(config: DictConfig):
-    # Following the IsaacLab implementation:
-    # First initialize the environment and use wrapper to fit RL-Games runner.
-    env = make_envs(config)
+def make_runner(config: DictConfig, env: Optional[BaseEnv] = None):
+    """Create PPO runner. If env is provided (e.g. teacher's env from teacher_student), use it; else create from config."""
+    if env is None:
+        env = make_envs(config)
 
     # Extract input_keys from config
     input_keys = OmegaConf.to_container(config.agent.config.input_keys, resolve=True)
@@ -93,12 +93,11 @@ def make_runner(config: DictConfig):
     agent_config["config"]["player"]["num_actors"] = config.agent.config.num_envs
     agent_config["config"]["player"]["games_num"] = config.agent.config.num_envs
 
-    # Get Hydra's output directory - this uses the already-resolved path with timestamp
-    # from when Hydra initialized, not generating a new timestamp
-    hydra_cfg = HydraConfig.get()
-    if hydra_cfg is not None:
-        # hydra_cfg.run.dir contains the already-resolved path (with timestamp from initialization)
-        output_dir = hydra_cfg.run.dir
+    # Output directory: use config.log_dir if set (e.g. teacher_student teacher subdir), else Hydra run dir
+    output_dir = getattr(config, "log_dir", None)
+    if not output_dir and HydraConfig.get() is not None:
+        output_dir = HydraConfig.get().run.dir
+    if output_dir:
         agent_config["config"]["log_path"] = output_dir
         agent_config["config"]["train_dir"] = output_dir
         print(f"Output directory: {output_dir}")
