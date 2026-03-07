@@ -204,7 +204,7 @@ class TeacherStudentRunner:
             return 0, 0.0
         max_step = 0
         wall_times = []
-        acc = EventAccumulator(str(summaries_dir), size_guidance={EventAccumulator.SCALARS: 0})
+        acc = EventAccumulator(str(summaries_dir), size_guidance={"scalars": 0})
         acc.Reload()
         for tag in acc.Tags().get("scalars", []):
             for event in acc.Scalars(tag):
@@ -258,10 +258,25 @@ class TeacherStudentRunner:
         from rl_games.algos_torch import players
         from rl_games.common import tr_helpers
         config["reward_shaper"] = tr_helpers.DefaultRewardsShaper(**config["reward_shaper"])
-        player = players.PpoPlayerContinuous(params)
-        player.restore(ckpt_path)
+        # No-op torch.compile while building player so teacher runs eager (rl_games compiles forward in __init__;
+        # compiled path then fails with dynamo symbolic shapes even when input is e.g. (65536, 11))
+        _compile = getattr(torch, "compile", None)
+        if _compile is not None:
+            def _noop_compile(fn=None, *a, **kw):
+                if fn is not None:
+                    return fn  # torch.compile(fn, ...)
+                return lambda f: f  # torch.compile(mode=...)(fn) two-step call
+            torch.compile = _noop_compile
+        try:
+            player = players.PpoPlayerContinuous(params)
+            player.restore(ckpt_path)
+        finally:
+            if _compile is not None:
+                torch.compile = _compile
         player.model.to(self.device)
         player.device = self.device
+        # We pass (batch, obs_dim) e.g. (65536, 11); avoid unsqueeze_obs turning it into (1, 65536, 11) -> (1, 720896)
+        player.has_batch_dimension = True
         return TeacherPolicy(player, device=self.device)
 
     def make_models(self):
@@ -386,6 +401,7 @@ class TeacherStudentRunner:
         best_policy_reward = -float("inf")
         start_time = time.time()
         self._student_start_time = start_time
+        print_info("========== Student (DAgger) training start ==========")
 
         for epoch in range(self.max_epochs):
             time_start_epoch = time.time()
@@ -461,6 +477,7 @@ class TeacherStudentRunner:
             if epoch % self.save_frequency == 0 or epoch == self.max_epochs - 1:
                 self.save(filename="iter_{}_reward_{:.2f}".format(epoch, policy_reward))
 
+        print_info("========== Student (DAgger) training done ==========")
         self.time_report.report()
         if self.use_wandb:
             wandb.finish()
@@ -501,6 +518,7 @@ class TeacherStudentRunner:
 
     def _run_train_teacher(self, args) -> None:
         """Train PPO teacher (state-based; vis_obs=False). Writes to run_dir/teacher/ (.hydra, training_logs/nn, training_logs/summaries)."""
+        print_info("========== Teacher (PPO) training start ==========")
         ppo_agent_cfg = self._load_ppo_agent_config()
         cfg_teacher = copy.deepcopy(self.config)
         cfg_teacher.agent = copy.deepcopy(ppo_agent_cfg)
@@ -531,9 +549,15 @@ class TeacherStudentRunner:
             OmegaConf.save(config=cfg_teacher, f=f)
         # Teacher uses its own env (state-only, vis_obs=False)
         teacher_env = make_envs(cfg_teacher)
-        runner = rl_games_agent.make_runner(cfg_teacher, env=teacher_env)
-        checkpoint = args.get("checkpoint") or None
-        runner.run({"train": True, "play": False, "checkpoint": checkpoint})
+        try:
+            runner = rl_games_agent.make_runner(cfg_teacher, env=teacher_env)
+            checkpoint = args.get("checkpoint") or None
+            runner.run({"train": True, "play": False, "checkpoint": checkpoint})
+        finally:
+            # Close teacher env so resources are released; student env will be created from original task in _ensure_env_and_models()
+            if getattr(teacher_env, "close", None) is not None:
+                teacher_env.close()
+        print_info("========== Teacher (PPO) training done ==========")
 
     def save(self, filename=None, save_dir=None):
         save_dir = save_dir or self.nn_dir
