@@ -93,6 +93,7 @@ class GenesisEnv(BaseEnv):
         self._terminated_buf = torch.zeros(self._num_envs, device=self._device, dtype=torch.bool)
         self._reset_buf = torch.zeros(self._num_envs, device=self._device, dtype=torch.bool)
         self._infos = {}
+        self._closed = False
 
     @abstractmethod
     def build_scene(self) -> None:
@@ -348,6 +349,34 @@ class GenesisEnv(BaseEnv):
     @property
     def num_auxiliary_envs(self) -> int:
         return self.num_envs // self.num_nominal_envs - 1
+
+    def close(self) -> None:
+        """Release all resources and clear this instance.
+
+        Destroys this environment's scene, calls gs.destroy() to release
+        all GPU memory and reset the backend, then clears attributes so
+        the instance can be garbage-collected. Call gs.init() again before
+        creating any new Genesis envs.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        if getattr(self, "_scene", None) is not None:
+            self._scene.destroy()
+            self._scene = None
+        gs.destroy()
+        # Clear references so the instance can be collected
+        self._renderer = None
+        self._progress_buf = None
+        self._truncated_buf = None
+        self._terminated_buf = None
+        self._reset_buf = None
+        self._infos = None
+
+    def __del__(self) -> None:
+        """Clean up if close() was not called (e.g. del env)."""
+        if not getattr(self, "_closed", True):
+            self.close()
 
 
 def make_envs(config: DictConfig) -> GenesisEnv:
