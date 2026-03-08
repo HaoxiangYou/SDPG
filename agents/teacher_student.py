@@ -106,9 +106,10 @@ class TeacherStudentRunner:
         self.teacher_step_offset = 0
         self.teacher_time_offset = 0.0
 
-    def _ensure_env_and_models(self):
-        """Create env (vis_obs=True) and teacher+student models when running DAgger or eval. Idempotent."""
-        if self._env_and_models_initialized:
+    def _ensure_env_and_models(self, require_teacher=True):
+        """Create env (vis_obs=True) and models. If require_teacher=False (e.g. play mode), only load student. Idempotent when require_teacher=True.
+        num_envs follows config (in play mode run.py overwrites agent.config.num_envs from task.play.num_envs, like rl_games/afrl)."""
+        if require_teacher and self._env_and_models_initialized:
             return
         OmegaConf.set_struct(self.config, False)
         if not self.config.task.config.get("vis_obs", False):
@@ -116,9 +117,10 @@ class TeacherStudentRunner:
         OmegaConf.set_struct(self.config, True)
         self.make_envs()
         self.num_actions = self.env.num_actions
-        self.num_envs = self._student_cfg.num_envs
-        self.make_models()
-        self._env_and_models_initialized = True
+        self.num_envs = self.config.agent.config.num_envs
+        self.make_models(require_teacher=require_teacher)
+        if require_teacher:
+            self._env_and_models_initialized = True
 
     def _init_wandb(self, config: DictConfig) -> bool:
         if not getattr(config, "wandb", None) or not config.wandb.get("enable", False):
@@ -279,8 +281,11 @@ class TeacherStudentRunner:
         player.has_batch_dimension = True
         return TeacherPolicy(player, device=self.device)
 
-    def make_models(self):
-        self.teacher = self._load_teacher()
+    def make_models(self, require_teacher=True):
+        if require_teacher:
+            self.teacher = self._load_teacher()
+        else:
+            self.teacher = None
 
         student_actor_config = self._student_cfg.actor
         self.student_input_keys = [input.name for input in student_actor_config.inputs]
@@ -333,6 +338,8 @@ class TeacherStudentRunner:
         self.supervised_iter_count = 0
         self.episode_reward_meter = AverageMeter(1, 100).to(self.device)
         self.episode_length_meter = AverageMeter(1, 100).to(self.device)
+        self.episode_length = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
+        self.episode_reward = torch.zeros(self.num_envs, device=self.device)
         self.save_frequency = self._student_cfg.get("save_frequency", 100)
         self._student_start_time = None  # set at start of train loop for time offset
 
@@ -348,8 +355,6 @@ class TeacherStudentRunner:
         Uses runner.initialize_trajectory() (get_states + compute_observations), then steps_per_epoch steps with auto_reset=True."""
         obs = self.initialize_trajectory()
         vis_list, state_list = [], []
-        episode_reward = torch.zeros(self.num_envs, device=self.device)
-        episode_length = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
 
         for _ in range(self.steps_per_epoch):
             vis = obs["RGB"]
@@ -361,14 +366,14 @@ class TeacherStudentRunner:
             actions = self.student(student_obs)["mean"]
             obs, rewards, terminated, truncated, _ = self.env.step(actions, auto_reset=True)
             dones = terminated | truncated
-            episode_length += 1
-            episode_reward += rewards
+            self.episode_length += 1
+            self.episode_reward += rewards
             if dones.any():
                 done_ids = dones.nonzero(as_tuple=False).squeeze(-1)
-                self.episode_reward_meter.update(episode_reward[done_ids])
-                self.episode_length_meter.update(episode_length[done_ids].float())
-                episode_length[done_ids] = 0
-                episode_reward[done_ids] = 0.0
+                self.episode_reward_meter.update(self.episode_reward[done_ids])
+                self.episode_length_meter.update(self.episode_length[done_ids].float())
+                self.episode_length[done_ids] = 0
+                self.episode_reward[done_ids] = 0.0
 
         self.step_count += self.steps_per_epoch * self.num_envs
         vis_arr = np.concatenate(vis_list, axis=0)
@@ -409,8 +414,10 @@ class TeacherStudentRunner:
         start_time = time.time()
         self._student_start_time = start_time
         print_info("========== Student (DAgger) training start ==========")
-        
+
         self.env.reset()
+        self.episode_length.zero_()
+        self.episode_reward.zero_()
 
         for epoch in range(self.max_epochs):
             time_start_epoch = time.time()
@@ -426,15 +433,16 @@ class TeacherStudentRunner:
 
             self.replay_buffer.append(vis_obs_np, expert_actions)
 
+            if self.lr_schedule == "linear":
+                t = epoch / max(1, self.max_epochs)
+                lr = 1e-5 + (self.actor_lr - 1e-5) * max(0, 1 - t)
+                for g in self.student_optimizer.param_groups:
+                    g["lr"] = lr
+
             supervised_loss = float("inf")
             if len(self.replay_buffer) >= self.learning_starts:
                 self.time_report.start_timer("supervised_learning")
                 for _ in range(self.num_update_per_epoch):
-                    if self.lr_schedule == "linear":
-                        t = self.supervised_iter_count / max(1, self.max_epochs * self.num_update_per_epoch)
-                        lr = 1e-5 + (self.actor_lr - 1e-5) * max(0, 1 - t)
-                        for g in self.student_optimizer.param_groups:
-                            g["lr"] = lr
                     b_vis, b_act = self.replay_buffer.sample(self.batch_size)
                     student_out = self.student({"RGB": b_vis})
                     loss = torch.nn.functional.mse_loss(student_out["mean"], b_act)
@@ -539,7 +547,7 @@ class TeacherStudentRunner:
         if args.get("train", False):
             self.train(args)
         elif args.get("play", False):
-            self._ensure_env_and_models()
+            self._ensure_env_and_models(require_teacher=False)
             if args.get("checkpoint") and args["checkpoint"]:
                 self.load(args["checkpoint"])
             self.play()
