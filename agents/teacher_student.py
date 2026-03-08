@@ -336,10 +336,17 @@ class TeacherStudentRunner:
         self.save_frequency = self._student_cfg.get("save_frequency", 100)
         self._student_start_time = None  # set at start of train loop for time offset
 
+    def initialize_trajectory(self):
+        """Initialize trajectory for rollout: get current states and compute observations."""
+        states = self.env.get_states(env_ids=torch.arange(self.num_envs, device=self.device, dtype=torch.int32))
+        obs = self.env.compute_observations(states=states)
+        return obs
+
     @torch.no_grad()
     def _sample_trajectories(self):
-        """Roll out with student (vis_obs -> action), collect state_obs and vis_obs for expert labeling."""
-        obs, _ = self.env.reset()
+        """Short-horizon parallel rollout with student (vis_obs -> action); collect state_obs and vis_obs for expert labeling.
+        Uses runner.initialize_trajectory() (get_states + compute_observations), then steps_per_epoch steps with auto_reset=True."""
+        obs = self.initialize_trajectory()
         vis_list, state_list = [], []
         episode_reward = torch.zeros(self.num_envs, device=self.device)
         episode_length = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
@@ -352,7 +359,7 @@ class TeacherStudentRunner:
 
             student_obs = {"RGB": vis}
             actions = self.student(student_obs)["mean"]
-            obs, rewards, terminated, truncated, _ = self.env.step(torch.tanh(actions), auto_reset=True)
+            obs, rewards, terminated, truncated, _ = self.env.step(actions, auto_reset=True)
             dones = terminated | truncated
             episode_length += 1
             episode_reward += rewards
@@ -402,6 +409,8 @@ class TeacherStudentRunner:
         start_time = time.time()
         self._student_start_time = start_time
         print_info("========== Student (DAgger) training start ==========")
+        
+        self.env.reset()
 
         for epoch in range(self.max_epochs):
             time_start_epoch = time.time()
@@ -446,36 +455,55 @@ class TeacherStudentRunner:
             time_elapse = time.time() - start_time
             global_step = getattr(self, "teacher_step_offset", 0) + self.step_count
             global_time_sec = getattr(self, "teacher_time_offset", 0.0) + time_elapse
-            policy_reward = self.episode_reward_meter.get_mean().item() if self.episode_reward_meter.current_size > 0 else float("-inf")
-            episode_lengths = self.episode_length_meter.get_mean().item() if self.episode_length_meter.current_size > 0 else 0.0
-            current_best = None
-            if self.episode_reward_meter.current_size > 0 and policy_reward > best_policy_reward:
-                best_policy_reward = policy_reward
-                current_best = best_policy_reward
-                print_info("Save best policy with reward: {:.2f}".format(best_policy_reward))
-                self.save(filename="best_policy")
+            collecting_only = len(self.replay_buffer) < self.learning_starts
 
-            self.summary_writer.add_scalar("rewards/iter", policy_reward, epoch)
-            self.summary_writer.add_scalar("rewards/step", policy_reward, global_step)
-            self.summary_writer.add_scalar("episode_lengths/iter", episode_lengths, epoch)
-            self.summary_writer.add_scalar("time_sec", global_time_sec, global_step)
-            if self.use_wandb:
-                wandb.log({
-                    "rewards": policy_reward,
-                    "episode_lengths": episode_lengths,
-                    "supervised_loss": supervised_loss,
-                    "env_step": global_step,
-                    "time_sec": global_time_sec,
-                    "best_policy": current_best or best_policy_reward,
-                }, step=global_step)
-
-            print(
-                "iter {}: ep reward {:.2f}, ep len {:.1f}, sup loss {:.4f}, fps {:.1f}".format(
-                    epoch, policy_reward, episode_lengths, supervised_loss, (self.steps_per_epoch * self.num_envs) / (time.time() - time_start_epoch)
+            if collecting_only:
+                print(
+                    "iter {}: collect data, buffer {}/{}".format(
+                        epoch, len(self.replay_buffer), self.learning_starts
+                    )
                 )
-            )
-            if epoch % self.save_frequency == 0 or epoch == self.max_epochs - 1:
-                self.save(filename="iter_{}_reward_{:.2f}".format(epoch, policy_reward))
+                self.summary_writer.add_scalar("time_sec", global_time_sec, global_step)
+                if self.use_wandb:
+                    wandb.log({"env_step": global_step, "time_sec": global_time_sec}, step=global_step)
+            else:
+                policy_reward = self.episode_reward_meter.get_mean().item() if self.episode_reward_meter.current_size > 0 else float("-inf")
+                episode_lengths = self.episode_length_meter.get_mean().item() if self.episode_length_meter.current_size > 0 else 0.0
+                current_best = None
+                if self.episode_reward_meter.current_size > 0 and policy_reward > best_policy_reward:
+                    best_policy_reward = policy_reward
+                    current_best = best_policy_reward
+                    print_info("Save best policy with reward: {:.2f}".format(best_policy_reward))
+                    self.save(filename="best_policy")
+
+                self.summary_writer.add_scalar("time_sec", global_time_sec, global_step)
+                if self.episode_reward_meter.current_size > 0:
+                    self.summary_writer.add_scalar("rewards/iter", policy_reward, epoch)
+                    self.summary_writer.add_scalar("rewards/step", policy_reward, global_step)
+                if self.episode_length_meter.current_size > 0:
+                    self.summary_writer.add_scalar("episode_lengths/iter", episode_lengths, epoch)
+                if supervised_loss != float("inf"):
+                    self.summary_writer.add_scalar("supervised_loss/iter", supervised_loss, epoch)
+                    self.summary_writer.add_scalar("supervised_loss/step", supervised_loss, global_step)
+                if self.use_wandb:
+                    wandb_metrics = {"env_step": global_step, "time_sec": global_time_sec}
+                    if self.episode_reward_meter.current_size > 0:
+                        wandb_metrics["rewards"] = policy_reward
+                    if self.episode_length_meter.current_size > 0:
+                        wandb_metrics["episode_lengths"] = episode_lengths
+                    if supervised_loss != float("inf"):
+                        wandb_metrics["supervised_loss"] = supervised_loss
+                    if current_best is not None or (self.episode_reward_meter.current_size > 0 and best_policy_reward > -float("inf")):
+                        wandb_metrics["best_policy"] = current_best if current_best is not None else best_policy_reward
+                    wandb.log(wandb_metrics, step=global_step)
+
+                print(
+                    "iter {}: ep reward {:.2f}, ep len {:.1f}, sup loss {:.4f}, fps {:.1f}".format(
+                        epoch, policy_reward, episode_lengths, supervised_loss, (self.steps_per_epoch * self.num_envs) / (time.time() - time_start_epoch)
+                    )
+                )
+                if epoch % self.save_frequency == 0 or epoch == self.max_epochs - 1:
+                    self.save(filename="iter_{}_reward_{:.2f}".format(epoch, policy_reward))
 
         print_info("========== Student (DAgger) training done ==========")
         self.time_report.report()
@@ -491,7 +519,7 @@ class TeacherStudentRunner:
         obs, _ = self.env.reset()
         for _ in range(maximum_trajectory_length):
             actions = self.student({"RGB": obs["RGB"]})["mean"]
-            obs, rewards, terminated, truncated, _ = self.env.step(torch.tanh(actions), auto_reset=True)
+            obs, rewards, terminated, truncated, _ = self.env.step(actions, auto_reset=True)
             dones = terminated | truncated
             episode_length += 1
             episode_reward += rewards

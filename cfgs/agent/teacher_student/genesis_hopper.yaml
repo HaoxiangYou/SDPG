@@ -17,25 +17,26 @@ config:
     overrides:
       rl_games:
         config:
-          max_epochs: 10
+          max_epochs: 500
 
   # ---------- Student (DAgger) ----------
+  # Coefficients aligned with reference/D.VA/examples/cfg/teacher_student/hopper.yaml and algorithms/dagger.py
   student:
-    num_envs: 32
+    num_envs: 32  # num_actors in D.VA
 
     # DAgger
-    max_epochs: 500
-    steps_per_epoch: 2048
-    batch_size: 256
-    learning_starts: 1
-    num_update_per_epoch: 50
-    supervised_loss_threshold: 1e-4
-    max_replay_buffer_size: 500000
-    actor_lr: 3e-4
-    betas: [0.9, 0.999]
+    max_epochs: 1000
+    steps_per_epoch: 32  # steps_num
+    batch_size: 128
+    learning_starts: 32000
+    num_update_per_epoch: 2000
+    supervised_loss_threshold: 0.1  # early stop threshold
+    max_replay_buffer_size: 100000
+    actor_lr: 2e-3  # actor_learning_rate
+    betas: [0.7, 0.95]
     lr_schedule: linear
     grad_norm: 1.0
-    save_frequency: 50
+    save_frequency: 400
 
     actor:
       inputs:
