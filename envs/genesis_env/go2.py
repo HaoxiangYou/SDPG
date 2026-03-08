@@ -68,7 +68,7 @@ class Go2(GenesisEnv):
         )
         self._dt = sim_options.dt
         self._domain_rand_options = domain_rand_options
-        self._train = True
+        self._train = False
 
         super().__init__(
             num_envs=num_envs,
@@ -90,7 +90,7 @@ class Go2(GenesisEnv):
         """Initialize the scene."""
 
         # Action parameters
-        self._action_scale = 0.25
+        self._action_scale = 0.5
         self._clip_actions = 100.0
 
         # Observation scales
@@ -203,6 +203,8 @@ class Go2(GenesisEnv):
         self._base_euler = torch.zeros((self._num_envs, 3), device=self._device, dtype=torch.float)
         self._base_lin_vel = torch.zeros((self._num_envs, 3), device=self._device, dtype=torch.float)
         self._base_ang_vel = torch.zeros((self._num_envs, 3), device=self._device, dtype=torch.float)
+        self._base_lin_vel_world = torch.zeros((self._num_envs, 3), device=self._device, dtype=torch.float)
+        self._base_ang_vel_world = torch.zeros((self._num_envs, 3), device=self._device, dtype=torch.float)
         self._projected_gravity = torch.zeros((self._num_envs, 3), device=self._device, dtype=torch.float)
         self._global_gravity = torch.tensor(np.array([0.0, 0.0, -1.0]), device=self._device, dtype=torch.float)
         self._forward_vec = torch.zeros((self._num_envs, 3), device=self._device, dtype=torch.float)
@@ -248,7 +250,7 @@ class Go2(GenesisEnv):
             # "lin_vel_z": -2.0,
             # "ang_vel_xy": -0.05,
             # "orientation": -10.0,
-            # "base_height": -50.0,
+            "base_height": -2.0,
             # "torques": -0.0002,
             # "collision": -1.0,
             # "dof_vel": -0.0005,
@@ -262,8 +264,8 @@ class Go2(GenesisEnv):
             "dof_pos_limits": -2.0,
             "collision": -1.0,
             # command tracking
-            "tracking_lin_vel": 1.0,
-            "tracking_ang_vel": 0.5,
+            "tracking_lin_vel": 5.0,
+            "tracking_ang_vel": 1.5,
             # smoothness
             "lin_vel_z": -2.0,
             "ang_vel_xy": -0.05,
@@ -433,7 +435,8 @@ class Go2(GenesisEnv):
         # Compute privileged observations (matching genesis go2_env.py structure)
 
         _obs_buf = torch.cat(
-            [
+            [   
+                # self._base_lin_vel * self._obs_scales["lin_vel"], # 3
                 self._base_ang_vel * self._obs_scales["ang_vel"],  # 3
                 self._projected_gravity,  # 3
                 self._commands[:, :3] * self._commands_scale,  # 3
@@ -490,6 +493,7 @@ class Go2(GenesisEnv):
         for i in range(len(self._reward_functions)):
             name = self._reward_names[i]
             reward += self._reward_functions[i]() * self._reward_scales[name]
+            self._infos[name] = self._reward_functions[i]() * self._reward_scales[name]
 
         if self._only_positive_rewards:
             reward = torch.clip(reward, min=0.0)
@@ -594,6 +598,8 @@ class Go2(GenesisEnv):
 
         self._base_lin_vel[env_ids] = torch.zeros(len(env_ids), 3, device=self._device, dtype=torch.float)
         self._base_ang_vel[env_ids] = torch.zeros(len(env_ids), 3, device=self._device, dtype=torch.float)
+        self._base_lin_vel_world[env_ids] = torch.zeros(len(env_ids), 3, device=self._device, dtype=torch.float)
+        self._base_ang_vel_world[env_ids] = torch.zeros(len(env_ids), 3, device=self._device, dtype=torch.float)
 
         base_vel = torch.concat([self._base_lin_vel[env_ids], self._base_ang_vel[env_ids]], dim=1)
         self._robot.set_dofs_velocity(
@@ -653,6 +659,8 @@ class Go2(GenesisEnv):
         inv_base_quat = inv_quat(self._base_quat)
         self._base_lin_vel[:] = transform_by_quat(self._robot.get_vel(), inv_quat_yaw)
         self._base_ang_vel[:] = transform_by_quat(self._robot.get_ang(), inv_base_quat)
+        self._base_lin_vel_world[:] = self._robot.get_vel()
+        self._base_ang_vel_world[:] = self._robot.get_ang()
         self._projected_gravity = transform_by_quat(self._global_gravity, inv_base_quat)
 
         self._dof_pos[:] = self._robot.get_dofs_position(self._motors_dof_idx)
@@ -679,6 +687,8 @@ class Go2(GenesisEnv):
             "base_quat": self._base_quat[env_ids].clone(),
             "base_lin_vel": self._base_lin_vel[env_ids].clone(),
             "base_ang_vel": self._base_ang_vel[env_ids].clone(),
+            "base_lin_vel_world": self._base_lin_vel_world[env_ids].clone(),
+            "base_ang_vel_world": self._base_ang_vel_world[env_ids].clone(),
             "projected_gravity": self._projected_gravity[env_ids].clone(),
             "motor_joints_pos": self._dof_pos[env_ids].clone(),
             "motor_joints_vel": self._dof_vel[env_ids].clone(),
@@ -727,12 +737,14 @@ class Go2(GenesisEnv):
         )
 
         # Set base and motor DOF velocities
-        base_dof_vel = torch.cat([robot_states["base_lin_vel"], robot_states["base_ang_vel"]], dim=-1)
+        base_dof_vel = torch.cat([robot_states["base_lin_vel_world"], robot_states["base_ang_vel_world"]], dim=-1)
         self._robot.set_dofs_velocity(
             velocity=torch.cat([base_dof_vel, robot_states["motor_joints_vel"]], dim=-1),
             dofs_idx_local=self._base_dof_idx + self._motors_dof_idx,
             envs_idx=env_ids,
         )
+
+        self._update_buffers()
 
         # Update progress buffer
         self._progress_buf[env_ids] = states["progress_buf"].clone()
