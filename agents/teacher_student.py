@@ -301,9 +301,9 @@ class TeacherStudentRunner:
         )
 
     def _train_init(self):
-        self.train_dir = os.path.join(self.log_dir, "train")
+        self.train_dir = os.path.join(self.log_dir, "training_logs")
         self.nn_dir = os.path.join(self.train_dir, "nn")
-        self.summary_dir = os.path.join(self.train_dir, "summary")
+        self.summary_dir = os.path.join(self.train_dir, "summaries")
         os.makedirs(self.nn_dir, exist_ok=True)
         os.makedirs(self.summary_dir, exist_ok=True)
         self.summary_writer = SummaryWriter(self.summary_dir)
