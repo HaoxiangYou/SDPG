@@ -476,6 +476,10 @@ class DrQv2Workspace:
             getattr(self.cfg, "num_seed_frames", 4000),
             action_repeat,
         )
+        save_snapshot_every_frames = getattr(
+            self.cfg, "save_snapshot_every_frames", 50_000
+        )
+
         time_steps = self.env.reset()
         num_done = self.process_time_steps(time_steps)
         self._global_episode += num_done
@@ -483,6 +487,10 @@ class DrQv2Workspace:
         episode_steps = np.zeros(self.num_envs, dtype=np.int64)
         metrics = None
 
+        if getattr(self.cfg, "save_snapshot", False):
+            self.save_snapshot("initial_snapshot.pt")
+
+        next_save_step = save_snapshot_every_frames
         while train_until_step(self.global_step):
             # Batch act (obs/actions stay on GPU; CPU copy only when storing to replay)
             obs_batch = torch.stack([ts.observation for ts in time_steps])
@@ -514,10 +522,17 @@ class DrQv2Workspace:
             num_done = self.process_time_steps(time_steps)
             self._global_episode += num_done
 
-            if num_done > 0 and getattr(self.cfg, "save_snapshot", False):
-                self.save_snapshot()
-
             self._global_step += self.num_envs
+
+            if (
+                getattr(self.cfg, "save_snapshot", False)
+                and not seed_until_step(self.global_step)
+                and self.global_step >= next_save_step
+            ):
+                self.save_snapshot()
+                next_save_step = (
+                    self.global_step // save_snapshot_every_frames + 1
+                ) * save_snapshot_every_frames
 
             # Log on first episode end (optional: could log every N steps)
             if num_done > 0 and metrics is not None:
@@ -554,11 +569,15 @@ class DrQv2Workspace:
                         episode_rewards[j] = 0.0
                         episode_steps[j] = 0
 
+        if getattr(self.cfg, "save_snapshot", False):
+            self.save_snapshot()  # final state in snapshot.pt for resume / eval
+
         if self.use_wandb:
             wandb.finish()
 
-    def save_snapshot(self):
-        path = self.nn_dir / "snapshot.pt"
+    def save_snapshot(self, filename=None):
+        """Save agent and state. filename=None -> snapshot.pt; else nn_dir/filename (e.g. initial_snapshot.pt, last_snapshot.pt)."""
+        path = self.nn_dir / (filename or "snapshot.pt")
         keys_to_save = ["agent", "timer", "_global_step", "_global_episode"]
         payload = {k: self.__dict__[k] for k in keys_to_save}
         torch.save(payload, path)
@@ -631,6 +650,9 @@ def make_runner(config: DictConfig):
         "save_video": getattr(config.agent.config, "save_video", False),
         "save_train_video": False,
         "save_snapshot": getattr(config.agent.config, "save_snapshot", True),
+        "save_snapshot_every_frames": getattr(
+            config.agent.config, "save_snapshot_every_frames", 50_000
+        ),
         "replay_buffer_size": getattr(config.agent.config, "replay_buffer_size", 100_000),
         "replay_buffer_num_workers": getattr(config.agent.config, "replay_buffer_num_workers", 4),
         "batch_size": getattr(config.agent.config, "batch_size", 256),
