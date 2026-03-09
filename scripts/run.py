@@ -1,4 +1,5 @@
 from pathlib import Path
+import shutil
 
 import hydra
 from hydra.core.hydra_config import HydraConfig
@@ -59,10 +60,29 @@ def main(cfg: DictConfig) -> None:
     output_dir = Path(hydra_cfg.runtime.output_dir)
     log_file_path = output_dir / "run.log"
 
-    # Redirect stdout/stderr to both console and log file
-    with TeeStdoutStderr(log_file_path):
-        # Resolve all interpolations in the config (resolves ${...} references)
-        OmegaConf.resolve(cfg)
+    # Save a copy of the environment Python script for reproducibility (once per run)
+    task_backend = cfg.task.get("backend", None)
+    task_name = cfg.task.get("name", None)
+    if task_backend is not None and task_name is not None:
+        # Currently supports Genesis-style environments: envs/<backend>_env/<task_name>.py
+        env_script_path = (
+            Path(__file__).resolve().parent.parent
+            / "envs"
+            / f"{task_backend}_env"
+            / f"{task_name}.py"
+        )
+        if env_script_path.is_file():
+            env_code_dir = output_dir / "env_code"
+            env_code_dir.mkdir(parents=True, exist_ok=True)
+            dst_path = env_code_dir / env_script_path.name
+            # Copy only once per run; if file already exists, skip
+            if not dst_path.exists():
+                shutil.copy2(env_script_path, dst_path)
+
+        # Redirect stdout/stderr to both console and log file
+        with TeeStdoutStderr(log_file_path):
+            # Resolve all interpolations in the config (resolves ${...} references)
+            OmegaConf.resolve(cfg)
 
         # If not training, merge play config into task config
         if not cfg.train:
