@@ -190,9 +190,9 @@ class AFRLRunner:
         # Timer
         self.time_report = TimeReport()
 
-        self.train_dir = os.path.join(self.log_dir, "train")
+        self.train_dir = os.path.join(self.log_dir, "training_logs")
         self.nn_dir = os.path.join(self.train_dir, "nn")
-        self.summary_dir = os.path.join(self.train_dir, "summary")
+        self.summary_dir = os.path.join(self.train_dir, "summaries")
         if not os.path.exists(self.nn_dir):
             os.makedirs(self.nn_dir)
         if not os.path.exists(self.summary_dir):

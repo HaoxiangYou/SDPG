@@ -3,6 +3,7 @@ DrQ-v2 agent: uses the drqv2 package (externals/drqv2, installed as dependency).
 Wraps a pixel-observation backend env as dm_env inside this module (wrapper lives here, not in envs).
 """
 
+import datetime
 import os
 from collections import defaultdict
 from pathlib import Path
@@ -14,6 +15,7 @@ import torch
 import torch.nn.functional as F
 import wandb
 from dm_env import StepType, specs
+from torch.utils.tensorboard import SummaryWriter
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
@@ -25,7 +27,6 @@ os.environ.setdefault("MKL_SERVICE_FORCE_INTEL", "1")
 
 # Use installed drqv2 package (path dependency from main pyproject.toml)
 from drqv2 import (
-    Logger,
     ReplayBufferStorage,
     TrainVideoRecorder,
     VideoRecorder,
@@ -288,6 +289,13 @@ class DrQv2Workspace:
         full_config=None,
     ):
         self.work_dir = Path(work_dir)
+        self.training_logs_dir = self.work_dir / "training_logs"
+        self.summaries_dir = self.training_logs_dir / "summaries"
+        self.nn_dir = self.training_logs_dir / "nn"
+        self.buffer_dir = self.training_logs_dir / "buffer"
+        for d in (self.summaries_dir, self.nn_dir, self.buffer_dir):
+            d.mkdir(parents=True, exist_ok=True)
+
         self.cfg = cfg
         drqv2_utils.set_seed_everywhere(cfg.seed)
         self.device = torch.device(cfg.device)
@@ -299,7 +307,8 @@ class DrQv2Workspace:
 
         self.use_wandb = self._init_wandb(full_config) if full_config else False
 
-        self.logger = Logger(self.work_dir, use_tb=getattr(cfg, "use_tb", True))
+        use_tb = getattr(cfg, "use_tb", True)
+        self.summary_writer = SummaryWriter(str(self.summaries_dir)) if use_tb else None
         self.data_specs = (
             self.env.observation_spec(),
             self.env.action_spec(),
@@ -308,13 +317,13 @@ class DrQv2Workspace:
         )
         self.replay_storage = ReplayBufferStorage(
             self.data_specs,
-            self.work_dir / "buffer",
+            self.buffer_dir,
         )
         self._current_episodes = [defaultdict(list) for _ in range(self.num_envs)]
         # num_workers: use config value; with CUDA we rely on spawn (set in make_runner) so workers don't fork
         _num_workers = getattr(cfg, "replay_buffer_num_workers", 4)
         self.replay_loader = make_replay_loader(
-            self.work_dir / "buffer",
+            self.buffer_dir,
             getattr(cfg, "replay_buffer_size", 100_000),
             getattr(cfg, "batch_size", 256),
             _num_workers,
@@ -339,6 +348,7 @@ class DrQv2Workspace:
         self.timer = drqv2_utils.Timer()
         self._global_step = 0
         self._global_episode = 0
+        self._iter_count = 0  # number of while-loop iterations in train()
 
     def _init_wandb(self, config: DictConfig) -> bool:
         """Init Weights & Biases if config.wandb.enable is True (same pattern as agents/afrl.py)."""
@@ -377,6 +387,82 @@ class DrQv2Workspace:
     @property
     def global_frame(self):
         return self.global_step * getattr(self.cfg, "action_repeat", 1)
+
+    @property
+    def iter_count(self):
+        """Number of completed training loop iterations (while train_until_step)."""
+        return self._iter_count
+
+    def write_stats(
+        self,
+        iter: int,
+        step: int,
+        time_elapse: float | None = None,
+        policy_reward: float | None = None,
+        episode_lengths: float | None = None,
+        infos: dict | None = None,
+        **extra_metrics,
+    ):
+        """Write training statistics to TensorBoard and wandb (same pattern as afrl.write_stats).
+        Main metrics use iter/step/time axes; infos use 'info/' prefix and iter as x-axis."""
+        metrics = dict(extra_metrics)
+        if policy_reward is not None:
+            metrics["rewards"] = policy_reward
+        if episode_lengths is not None:
+            metrics["episode_lengths"] = episode_lengths
+
+        # Normalize infos to scalars (do not merge into metrics; log with info/ prefix and step as x-axis)
+        info_scalars = {}
+        if infos is not None:
+            for key, value in infos.items():
+                if isinstance(value, (int, float)):
+                    info_scalars[key] = value
+                elif isinstance(value, torch.Tensor) and value.numel() == 1:
+                    info_scalars[key] = value.item()
+
+        if not metrics and not info_scalars:
+            return
+
+        if self.summary_writer is not None:
+            for name, value in metrics.items():
+                self.summary_writer.add_scalar(f"{name}/iter", value, iter)
+                self.summary_writer.add_scalar(f"{name}/step", value, step)
+                if time_elapse is not None:
+                    self.summary_writer.add_scalar(f"{name}/time", value, time_elapse)
+            for key, value in info_scalars.items():
+                self.summary_writer.add_scalar(f"info/{key}", value, iter)
+
+        if self.use_wandb:
+            wandb_metrics = dict(metrics)
+            wandb_metrics["env_step"] = step
+            if time_elapse is not None:
+                wandb_metrics["time"] = time_elapse
+            for key, value in info_scalars.items():
+                wandb_metrics[f"info/{key}"] = value
+            wandb.log(wandb_metrics, step=iter)
+
+        # Print key stats to terminal (similar to afrl)
+        parts = [f"iter {iter}", f"step {step}"]
+        if policy_reward is not None:
+            parts.append(f"ep reward {policy_reward:.2f}")
+        if episode_lengths is not None:
+            parts.append(f"ep len {episode_lengths:.1f}")
+        if infos:
+            if "fps" in infos:
+                parts.append(f"fps {infos['fps']:.1f}")
+            if "buffer_size" in infos:
+                parts.append(f"buffer {infos['buffer_size']}")
+            if "episode" in infos:
+                parts.append(f"episode {infos['episode']}")
+        if time_elapse is not None:
+            parts.append(f"time {datetime.timedelta(seconds=int(time_elapse))}")
+        if extra_metrics:
+            for k, v in extra_metrics.items():
+                if isinstance(v, float):
+                    parts.append(f"{k} {v:.3g}")
+                else:
+                    parts.append(f"{k} {v}")
+        print(" | ".join(parts))
 
     def process_time_steps(
         self, time_steps: List[ExtendedTimeStep]
@@ -444,18 +530,14 @@ class DrQv2Workspace:
             if episode_count > 0 and episode_count % max(1, self.num_envs) == 0:
                 self.video_recorder.save(f"{self.global_frame}.mp4")
 
-        eval_log = {
-            "episode_reward": total_reward / max(1, episode_count),
-            "episode_length": total_episode_length / max(1, episode_count),
-            "episode": self.global_episode,
-            "step": self.global_step,
-        }
-        with self.logger.log_and_dump_ctx(self.global_frame, ty="eval") as log:
-            for k, v in eval_log.items():
-                log(k, v)
+        eval_reward = total_reward / max(1, episode_count)
+        eval_ep_len = total_episode_length / max(1, episode_count)
+        if self.summary_writer is not None:
+            self.summary_writer.add_scalar("eval/rewards/step", eval_reward, self.global_frame)
+            self.summary_writer.add_scalar("eval/episode_lengths/step", eval_ep_len, self.global_frame)
         if self.use_wandb:
             wandb.log(
-                {f"eval/{k}": v for k, v in eval_log.items()},
+                {"eval/rewards": eval_reward, "eval/episode_lengths": eval_ep_len, "env_step": self.global_step},
                 step=self.global_frame,
             )
 
@@ -469,6 +551,10 @@ class DrQv2Workspace:
             getattr(self.cfg, "num_seed_frames", 4000),
             action_repeat,
         )
+        save_snapshot_every_frames = getattr(
+            self.cfg, "save_snapshot_every_frames", 50_000
+        )
+
         time_steps = self.env.reset()
         num_done = self.process_time_steps(time_steps)
         self._global_episode += num_done
@@ -476,7 +562,12 @@ class DrQv2Workspace:
         episode_steps = np.zeros(self.num_envs, dtype=np.int64)
         metrics = None
 
+        if getattr(self.cfg, "save_snapshot", False):
+            self.save_snapshot("initial_snapshot.pt")
+
+        next_save_step = save_snapshot_every_frames
         while train_until_step(self.global_step):
+            self._iter_count += 1
             # Batch act (obs/actions stay on GPU; CPU copy only when storing to replay)
             obs_batch = torch.stack([ts.observation for ts in time_steps])
             with torch.no_grad(), drqv2_utils.eval_mode(self.agent):
@@ -491,14 +582,16 @@ class DrQv2Workspace:
                 for i in range(self.updates_per_step):
                     metrics = self.agent.update(self.replay_iter, i)
                 if metrics:
-                    self.logger.log_metrics(
-                        metrics, self.global_frame, ty="train"
-                    )
+                    scalar_metrics = {
+                        k: (v.item() if isinstance(v, torch.Tensor) else v)
+                        for k, v in metrics.items()
+                    }
+                    if self.summary_writer is not None:
+                        for k, v in scalar_metrics.items():
+                            self.summary_writer.add_scalar(f"{k}/step", v, self.global_frame)
+                            self.summary_writer.add_scalar(f"{k}/iter", v, self.iter_count)
                     if self.use_wandb:
-                        wandb.log(
-                            {f"train/{k}": v for k, v in metrics.items()},
-                            step=self.global_frame,
-                        )
+                        wandb.log(scalar_metrics, step=self.iter_count)
 
             time_steps = self.env.step(actions)
             for j, ts in enumerate(time_steps):
@@ -507,12 +600,19 @@ class DrQv2Workspace:
             num_done = self.process_time_steps(time_steps)
             self._global_episode += num_done
 
-            if num_done > 0 and getattr(self.cfg, "save_snapshot", False):
-                self.save_snapshot()
-
             self._global_step += self.num_envs
 
-            # Log on first episode end (optional: could log every N steps)
+            if (
+                getattr(self.cfg, "save_snapshot", False)
+                and not seed_until_step(self.global_step)
+                and self.global_step >= next_save_step
+            ):
+                self.save_snapshot()
+                next_save_step = (
+                    self.global_step // save_snapshot_every_frames + 1
+                ) * save_snapshot_every_frames
+
+            # Log on first episode end (same pattern as afrl.write_stats)
             if num_done > 0 and metrics is not None:
                 elapsed_time, total_time = self.timer.reset()
                 done_mask = np.array([ts.last() for ts in time_steps])
@@ -523,41 +623,39 @@ class DrQv2Workspace:
                     mean_len = np.mean(
                         [episode_steps[j] for j in range(self.num_envs) if done_mask[j]]
                     )
-                    train_log = {
-                        "fps": self.num_envs * action_repeat / max(elapsed_time, 1e-6),
-                        "total_time": total_time,
-                        "episode_reward": mean_reward,
-                        "episode_length": mean_len * action_repeat,
-                        "episode": self.global_episode,
-                        "buffer_size": len(self.replay_storage),
-                        "step": self.global_step,
-                    }
-                    with self.logger.log_and_dump_ctx(
-                        self.global_frame, ty="train"
-                    ) as log:
-                        for k, v in train_log.items():
-                            log(k, v)
-                    if self.use_wandb:
-                        wandb.log(
-                            {f"train/{k}": v for k, v in train_log.items()},
-                            step=self.global_frame,
-                        )
+                    fps = self.num_envs * action_repeat / max(elapsed_time, 1e-6)
+                    self.write_stats(
+                        iter=self.iter_count,
+                        step=self.global_step,
+                        time_elapse=total_time,
+                        policy_reward=float(mean_reward),
+                        episode_lengths=float(mean_len * action_repeat),
+                        infos={
+                            "fps": fps,
+                            "buffer_size": len(self.replay_storage),
+                            "episode": self.global_episode,
+                        },
+                    )
                 for j in range(self.num_envs):
                     if done_mask[j]:
                         episode_rewards[j] = 0.0
                         episode_steps[j] = 0
 
+        if getattr(self.cfg, "save_snapshot", False):
+            self.save_snapshot()  # final state in snapshot.pt for resume / eval
+
         if self.use_wandb:
             wandb.finish()
 
-    def save_snapshot(self):
-        path = self.work_dir / "snapshot.pt"
-        keys_to_save = ["agent", "timer", "_global_step", "_global_episode"]
+    def save_snapshot(self, filename=None):
+        """Save agent and state. filename=None -> snapshot.pt; else nn_dir/filename (e.g. initial_snapshot.pt, last_snapshot.pt)."""
+        path = self.nn_dir / (filename or "snapshot.pt")
+        keys_to_save = ["agent", "timer", "_global_step", "_global_episode", "_iter_count"]
         payload = {k: self.__dict__[k] for k in keys_to_save}
         torch.save(payload, path)
 
     def load_snapshot(self, path=None):
-        path = path or self.work_dir / "snapshot.pt"
+        path = path or self.nn_dir / "snapshot.pt"
         if not Path(path).exists():
             return
         payload = torch.load(path, map_location=self.device, weights_only=False)
@@ -567,7 +665,6 @@ class DrQv2Workspace:
 
 def make_runner(config: DictConfig):
     """Build DrQ-v2 runner using pixel-observation env (make_envs) and drqv2 package."""
-    # Use Hydra output dir for logs (tb, snapshot, train.csv, buffer) — same as agents/afrl.py
     hydra_cfg = HydraConfig.get()
     if hydra_cfg is not None:
         output_dir = hydra_cfg.runtime.output_dir
@@ -625,6 +722,9 @@ def make_runner(config: DictConfig):
         "save_video": getattr(config.agent.config, "save_video", False),
         "save_train_video": False,
         "save_snapshot": getattr(config.agent.config, "save_snapshot", True),
+        "save_snapshot_every_frames": getattr(
+            config.agent.config, "save_snapshot_every_frames", 50_000
+        ),
         "replay_buffer_size": getattr(config.agent.config, "replay_buffer_size", 100_000),
         "replay_buffer_num_workers": getattr(config.agent.config, "replay_buffer_num_workers", 4),
         "batch_size": getattr(config.agent.config, "batch_size", 256),

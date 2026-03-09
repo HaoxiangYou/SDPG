@@ -6,7 +6,7 @@ config:
   # Agent updates per data collection step(default: num_envs, like reference D.VA)
   updates_per_step: 16
 
-  num_train_frames: 30100000
+  num_train_frames: 9000000
   num_seed_frames: 4000
   action_repeat: 2
   discount: 0.99
@@ -15,6 +15,7 @@ config:
   batch_size: 256
   nstep: 3
   save_snapshot: true
+  save_snapshot_every_frames: 100000  # save snapshot.pt every N global frames (after seed phase); also initial_snapshot.pt and last_snapshot.pt
   save_video: false
   use_tb: true
 
