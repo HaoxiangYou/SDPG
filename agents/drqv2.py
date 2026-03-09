@@ -288,6 +288,13 @@ class DrQv2Workspace:
         full_config=None,
     ):
         self.work_dir = Path(work_dir)
+        self.training_logs_dir = self.work_dir / "training_logs"
+        self.summaries_dir = self.training_logs_dir / "summaries"
+        self.nn_dir = self.training_logs_dir / "nn"
+        self.buffer_dir = self.training_logs_dir / "buffer"
+        for d in (self.summaries_dir, self.nn_dir, self.buffer_dir):
+            d.mkdir(parents=True, exist_ok=True)
+
         self.cfg = cfg
         drqv2_utils.set_seed_everywhere(cfg.seed)
         self.device = torch.device(cfg.device)
@@ -299,7 +306,7 @@ class DrQv2Workspace:
 
         self.use_wandb = self._init_wandb(full_config) if full_config else False
 
-        self.logger = Logger(self.work_dir, use_tb=getattr(cfg, "use_tb", True))
+        self.logger = Logger(self.summaries_dir, use_tb=getattr(cfg, "use_tb", True))
         self.data_specs = (
             self.env.observation_spec(),
             self.env.action_spec(),
@@ -308,13 +315,13 @@ class DrQv2Workspace:
         )
         self.replay_storage = ReplayBufferStorage(
             self.data_specs,
-            self.work_dir / "buffer",
+            self.buffer_dir,
         )
         self._current_episodes = [defaultdict(list) for _ in range(self.num_envs)]
         # num_workers: use config value; with CUDA we rely on spawn (set in make_runner) so workers don't fork
         _num_workers = getattr(cfg, "replay_buffer_num_workers", 4)
         self.replay_loader = make_replay_loader(
-            self.work_dir / "buffer",
+            self.buffer_dir,
             getattr(cfg, "replay_buffer_size", 100_000),
             getattr(cfg, "batch_size", 256),
             _num_workers,
@@ -551,13 +558,13 @@ class DrQv2Workspace:
             wandb.finish()
 
     def save_snapshot(self):
-        path = self.work_dir / "snapshot.pt"
+        path = self.nn_dir / "snapshot.pt"
         keys_to_save = ["agent", "timer", "_global_step", "_global_episode"]
         payload = {k: self.__dict__[k] for k in keys_to_save}
         torch.save(payload, path)
 
     def load_snapshot(self, path=None):
-        path = path or self.work_dir / "snapshot.pt"
+        path = path or self.nn_dir / "snapshot.pt"
         if not Path(path).exists():
             return
         payload = torch.load(path, map_location=self.device, weights_only=False)
@@ -567,7 +574,6 @@ class DrQv2Workspace:
 
 def make_runner(config: DictConfig):
     """Build DrQ-v2 runner using pixel-observation env (make_envs) and drqv2 package."""
-    # Use Hydra output dir for logs (tb, snapshot, train.csv, buffer) — same as agents/afrl.py
     hydra_cfg = HydraConfig.get()
     if hydra_cfg is not None:
         output_dir = hydra_cfg.runtime.output_dir
