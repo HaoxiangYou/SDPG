@@ -120,7 +120,8 @@ class Ant(GenesisEnv):
         )
         self._prev_actions = torch.zeros(self._num_envs, self._num_actions, device=self._device)
 
-        self._termination_height = 0.27
+        self._termination_height_lower_bound = 0.27
+        self._termination_height_upper_bound = 1.3
         self._joint_vel_obs_scale = 0.1
         self._action_penalty = 0.0
 
@@ -226,7 +227,7 @@ class Ant(GenesisEnv):
 
         # height reward
         height = states["robot_states"]["base_pose"][:, 2]
-        height_reward = height - self._termination_height
+        height_reward = height - self._termination_height_lower_bound
 
         # progress reward
         progress_reward = states["robot_states"]["base_vel"][:, 0]
@@ -251,7 +252,9 @@ class Ant(GenesisEnv):
         robot_states = states["robot_states"]
         termination = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         if self._early_termination:
-            termination = robot_states["base_pose"][:, 2] < self._termination_height
+            termination = robot_states["base_pose"][:, 2] < self._termination_height_lower_bound
+            # ant z position too high is likely due to simulation physics failure.
+            termination = torch.where(robot_states["base_pose"][:, 2] > self._termination_height_upper_bound, True, termination)
         return termination
 
     def _reset_idx(self, env_ids: torch.Tensor) -> None:
