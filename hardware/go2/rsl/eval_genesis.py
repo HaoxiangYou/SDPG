@@ -6,7 +6,7 @@ import genesis as gs
 import torch
 from rsl_rl.runners import OnPolicyRunner
 
-from envs.genesis_env.go2_terrain import Go2Terrain
+from envs.genesis_env.go2 import Go2
 
 env_name = "go2"
 num_envs = 20
@@ -71,36 +71,10 @@ domain_rand_options = {
     "kp_scale_range": [0.8, 1.2],
     "randomize_kd_scale": False,
     "kd_scale_range": [0.8, 1.2],
-    "use_terrain": True,
-    "terrain_cfg": {
-        "mesh_type": "heightfield",
-        "curriculum": True,
-        "selected": False,
-        "obtain_terrain_info_around_feet": True,
-        "measure_heights": True,
-        "measured_points_x": [-0.4, -0.3, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4],  # 9x9=81
-        "measured_points_y": [-0.4, -0.3, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4],
-        "border_size": 5.0,
-        "border_height": 0.5,
-        "terrain_length": 8.0,
-        "terrain_width": 2.0,
-        "platform_size": 1.0,
-        "num_rows": 5,  # number of terrain rows (levels)
-        "num_cols": 1,  # number of terrain cols (types)
-        "num_subterrains": 5,
-        "horizontal_scale": 0.05,  # [m] distance between height samples in x and y direction
-        "vertical_scale": 0.005,  # [m] distance between height samples in z direction
-        "static_friction": 1.0,  # coefficient of static friction of the terrain
-        "dynamic_friction": 1.0,  # coefficient of dynamic friction of the terrain
-        "restitution": 0.0,  # coefficient of restitution of the terrain
-        "max_init_terrain_level": 1,  # starting curriculum level
-        # terrain types: [smooth slope, rough slope, stairs up, stairs down, hurtle, stepping stones, gap, pit]
-        "terrain_proportions": [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
-    },
 }
 
 
-class RSL_Wrapper(Go2Terrain):
+class RSL_Wrapper(Go2):
     """Go2 with step() adapted for rsl_rl: returns (obs, privileged_obs, rewards, dones, infos)."""
 
     def step(self, actions: torch.Tensor, auto_reset: bool = True):
@@ -123,7 +97,6 @@ def export_policy_as_jit(actor_critic, path, name):
     traced_script_module = torch.jit.script(model)
     traced_script_module.save(path)
 
-
 def main():
     env = RSL_Wrapper(
         num_envs=num_envs,
@@ -134,8 +107,8 @@ def main():
         **env_kwargs,
     )
 
-    log_dir = "hardware/go2/rsl/checkpoints/genesis_walking_rsl_contact_stand_still"
-    checkpooint = 2600
+    log_dir = "logs/genesis_go2_rsl"
+    checkpooint = 5000
     jit_ckpt_path = os.path.join(log_dir, "exported", "jit_model.pt")
     if os.path.exists(jit_ckpt_path):
         policy = torch.jit.load(jit_ckpt_path)
@@ -152,9 +125,7 @@ def main():
 
     env.reset()
     obs = env.get_observations()
-    import pdb
 
-    pdb.set_trace()
     with torch.no_grad():
         stop = False
         n_frames = 0
