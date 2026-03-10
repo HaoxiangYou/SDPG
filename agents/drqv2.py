@@ -575,6 +575,8 @@ class DrQv2Workspace:
         episode_steps = np.zeros(self.num_envs, dtype=np.int64)
         metrics = None
 
+        best_policy_reward = -float("inf")
+        last_policy_reward = 0.0  # for snapshot filenames when we save outside write_stats
         if getattr(self.cfg, "save_snapshot", False):
             self.save_snapshot("initial_snapshot.pt")
 
@@ -620,7 +622,9 @@ class DrQv2Workspace:
                 and not seed_until_step(self.global_step)
                 and self.global_step >= next_save_step
             ):
-                self.save_snapshot()
+                self.save_snapshot(
+                    "iter_{}_reward_{:.2f}.pt".format(self.iter_count, last_policy_reward)
+                )
                 next_save_step = (
                     self.global_step // save_snapshot_every_frames + 1
                 ) * save_snapshot_every_frames
@@ -655,6 +659,8 @@ class DrQv2Workspace:
                     else None
                 )
                 fps = self.num_envs * action_repeat / max(elapsed_time, 1e-6)
+                if policy_reward is not None:
+                    last_policy_reward = policy_reward
                 self.write_stats(
                     iter=self.iter_count,
                     step=self.global_step,
@@ -667,6 +673,12 @@ class DrQv2Workspace:
                         "episode": self.global_episode,
                     },
                 )
+                # Save best policy (same pattern as afrl)
+                if policy_reward is not None and policy_reward > best_policy_reward:
+                    best_policy_reward = policy_reward
+                    if getattr(self.cfg, "save_snapshot", False):
+                        self.save_snapshot("best_policy.pt")
+                        print(f"Save best policy with reward: {best_policy_reward:.2f}")
             if np.any(done_mask):
                 for j in range(self.num_envs):
                     if done_mask[j]:
@@ -674,7 +686,9 @@ class DrQv2Workspace:
                         episode_steps[j] = 0
 
         if getattr(self.cfg, "save_snapshot", False):
-            self.save_snapshot()  # final state in snapshot.pt for resume / eval
+            self.save_snapshot(
+                "iter_{}_reward_{:.2f}.pt".format(self.iter_count, last_policy_reward)
+            )
 
         if self.use_wandb:
             wandb.finish()
