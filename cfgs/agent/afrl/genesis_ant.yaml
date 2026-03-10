@@ -14,10 +14,10 @@ config:
       policy_head:
         type: mlp
         network:
-          units: [256, 128]
+          units: [256, 64, 32]
           activation: elu
         # fixed_std true = constant log_std (use log_std_init); false = learn log_std
-        fixed_std: true
+        fixed_std: false
         log_std_init: 0.0
     
     critic:
@@ -30,7 +30,7 @@ config:
       value_head:
         type: mlp
         network:
-          units: [128, 128]
+          units: [64, 64]
           activation: elu
 
   # Number of base environments for rollout
@@ -42,7 +42,7 @@ config:
   # Total number of environments = num_base_envs  * ( num_action_perturbations + 1 )
   num_envs: ${compute_num_envs:${.num_base_envs},${.num_action_perturbations}}
 
-  max_epochs: 40000
+  max_epochs: 5000
   horizon_length: 16
   # Discount factor
   gamma: 0.99
@@ -57,16 +57,19 @@ config:
   target_critic_alpha: 0.2
 
   actor_lr:  2e-3
-  critic_lr: 5e-4
+  critic_lr: 2e-3
   # Adam beta
   betas: [0.7, 0.95]
 
+  bounds:
+    mean_bounds: [-2, 2]
+    log_std_bounds: [-5, 2]
 
   # Learning rate schedules
   actor_lr_schedule:
     name: cosine  # Options: null, linear, cosine (cosine includes warmup)
     # CosineAnnealingLR with warmup parameters
-    T_max: 40000
+    T_max: 5000
     eta_min: 1e-5
     warmup_epochs: 100  # Number of epochs for warmup (linear increase from warmup_start_lr to actor_lr)
     warmup_start_lr: 0  # Starting learning rate for warmup (default: 0.0)
