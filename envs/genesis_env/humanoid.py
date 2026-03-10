@@ -166,7 +166,8 @@ class Humanoid(GenesisEnv):
         self._target = torch.tensor([200, 0, 0], device=self._device).repeat(self._num_envs, 1)
         self._joint_vel_obs_scale = 0.1
         self._height_reward_scale = 10.0
-        self._termination_height = 0.74
+        self._termination_height_lower_bound = 0.74
+        self._termination_height_upper_bound = 2.
         self._termination_height_tolerance = 0.1
         self._action_penalty = -0.002
 
@@ -264,7 +265,7 @@ class Humanoid(GenesisEnv):
         n_batch = states["progress_buf"].shape[0]
 
         height = states["robot_states"]["base_pose"][:, 2]
-        height_diff = height - (self._termination_height + self._termination_height_tolerance)
+        height_diff = height - (self._termination_height_lower_bound + self._termination_height_tolerance)
         height_reward = torch.clip(height_diff, -1.0, self._termination_height_tolerance)
         height_reward = torch.where(height_reward < 0.0, -200.0 * height_reward * height_reward, height_reward)
         height_reward = torch.where(height_reward > 0.0, self._height_reward_scale * height_reward, height_reward)
@@ -293,7 +294,9 @@ class Humanoid(GenesisEnv):
         robot_states = states["robot_states"]
         termination = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         if self._early_termination:
-            termination = robot_states["base_pose"][:, 2] < self._termination_height
+            termination = robot_states["base_pose"][:, 2] < self._termination_height_lower_bound
+            # humanoid z position too high is likely due to simulation physics failure.
+            termination = torch.where(robot_states["base_pose"][:, 2] > self._termination_height_upper_bound, True, termination)
         return termination
 
     def _reset_idx(self, env_ids: torch.Tensor) -> None:
