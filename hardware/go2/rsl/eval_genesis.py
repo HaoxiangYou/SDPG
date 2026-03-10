@@ -6,7 +6,7 @@ import genesis as gs
 import torch
 from rsl_rl.runners import OnPolicyRunner
 
-from envs.genesis_env.go2_terrain import Go2Terrain
+from envs.genesis_env.go2 import Go2
 
 env_name = "go2"
 num_envs = 20
@@ -100,7 +100,7 @@ domain_rand_options = {
 }
 
 
-class RSL_Wrapper(Go2Terrain):
+class RSL_Wrapper(Go2):
     """Go2 with step() adapted for rsl_rl: returns (obs, privileged_obs, rewards, dones, infos)."""
 
     def step(self, actions: torch.Tensor, auto_reset: bool = True):
@@ -123,7 +123,6 @@ def export_policy_as_jit(actor_critic, path, name):
     traced_script_module = torch.jit.script(model)
     traced_script_module.save(path)
 
-
 def main():
     env = RSL_Wrapper(
         num_envs=num_envs,
@@ -134,8 +133,8 @@ def main():
         **env_kwargs,
     )
 
-    log_dir = "hardware/go2/rsl/checkpoints/genesis_walking_rsl_contact_stand_still"
-    checkpooint = 2600
+    log_dir = "logs/genesis_go2_rsl"
+    checkpooint = 1000
     jit_ckpt_path = os.path.join(log_dir, "exported", "jit_model.pt")
     if os.path.exists(jit_ckpt_path):
         policy = torch.jit.load(jit_ckpt_path)
@@ -152,9 +151,7 @@ def main():
 
     env.reset()
     obs = env.get_observations()
-    import pdb
 
-    pdb.set_trace()
     with torch.no_grad():
         stop = False
         n_frames = 0
