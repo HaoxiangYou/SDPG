@@ -107,7 +107,6 @@ class RSLController:
 
         data.ctrl[:] = tau
 
-
 def main():
     scene_path = os.path.join("assets/unitree_go2/scene_genesis.xml")
     model = mujoco.MjModel.from_xml_path(scene_path)
@@ -116,7 +115,7 @@ def main():
     sim_dt = 0.005
     model.opt.timestep = sim_dt
 
-    log_dir = "hardware/go2/rsl/checkpoints/genesis_walking_rsl_contact_stand_still"
+    log_dir = "logs/genesis_go2_rsl"
     jit_ckpt_path = os.path.join(log_dir, "exported", "jit_model.pt")
     policy = torch.jit.load(jit_ckpt_path)
     policy.to(device="cuda:0")

@@ -2,15 +2,16 @@
 
 import genesis as gs
 import torch
-from rsl_rl.runners import TSRunner
+import wandb
+from rsl_rl.runners import OnPolicyRunner
 
-from envs.genesis_env.go2_terrain import Go2Terrain
+from envs.genesis_env.go2 import Go2
 
 env_name = "go2"
-num_envs = 16
+num_envs = 4096
 device = "cuda"
 sim_options = gs.options.SimOptions(dt=0.02, substeps=4)
-env_kwargs = {"show_viewer": True, "randomize_init": True}
+env_kwargs = {"show_viewer": False, "randomize_init": True}
 
 train_cfg = {
     "algorithm": {
@@ -26,39 +27,30 @@ train_cfg = {
         "schedule": "adaptive",
         "use_clipped_value_loss": True,
         "value_loss_coef": 1.0,
-        "encoder_lr": 2.0e-4,
-        "num_encoder_epochs": 2,
     },
     "init_member_classes": {},
     "policy": {
         "activation": "elu",
         "actor_hidden_dims": [512, 256, 128],
-        "critic_hidden_dims": [1024, 256, 128],
+        "critic_hidden_dims": [512, 256, 128],
         "init_noise_std": 1.0,
-        "privilege_encoder_hidden_dims": [256, 128],
-        "history_encoder_type": "MLP",  # "MLP" or "TCN"
-        "history_encoder_hidden_dims": [256, 128],  # for MLP
-        "history_encoder_channel_dims": [1, 1, 1, 1],  # for TCN
-        "history_encoder_dilation": [1, 1, 2, 1],  # for TCN
-        "history_encoder_stride": [1, 2, 1, 2],  # for TCN
-        "history_encoder_final_layer_dim": 128,  # for TCN
-        "kernel_size": 5,
     },
     "runner": {
-        "algorithm_class_name": "PPO_TS",
+        "algorithm_class_name": "PPO",
         "checkpoint": -1,
         "experiment_name": "go2_rough",
         "load_run": -1,
         "log_interval": 1,
-        "max_iterations": 3000,
+        "max_iterations": 5000,
         "num_steps_per_env": 24,
-        "policy_class_name": "ActorCriticTS",
+        "policy_class_name": "ActorCritic",
         "record_interval": 50,
-        "resume": True,
+        "resume": False,
         "resume_path": None,
-        "run_name": "ts_genesis",
+        "run_name": "go2_rsl",
         "runner_class_name": "runner_class_name",
         "save_interval": 100,
+        'record_interval': 50,
     },
     "runner_class_name": "OnPolicyRunner",
     "seed": 1,
@@ -95,14 +87,14 @@ domain_rand_options = {
         "measure_heights": True,
         "measured_points_x": [-0.4, -0.3, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4],  # 9x9=81
         "measured_points_y": [-0.4, -0.3, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4],
-        "border_size": 5.0,
+        "border_size": 20.0,
         "border_height": 1.0,
         "terrain_length": 8.0,
         "terrain_width": 8.0,
         "platform_size": 4.0,
-        "num_rows": 2,  # number of terrain rows (levels)
-        "num_cols": 2,  # number of terrain cols (types)
-        "num_subterrains": 4,
+        "num_rows": 10,  # number of terrain rows (levels)
+        "num_cols": 10,  # number of terrain cols (types)
+        "num_subterrains": 100,
         "horizontal_scale": 0.1,  # [m] distance between height samples in x and y direction
         "vertical_scale": 0.005,  # [m] distance between height samples in z direction
         "static_friction": 1.0,  # coefficient of static friction of the terrain
@@ -110,14 +102,14 @@ domain_rand_options = {
         "restitution": 0.0,  # coefficient of restitution of the terrain
         "max_init_terrain_level": 1,  # starting curriculum level
         # terrain types: [smooth slope, rough slope, stairs up, stairs down, hurtle, stepping stones, gap, pit]
-        "terrain_proportions": [0.2, 0.1, 0.35, 0.35, 0.0],
+        "terrain_proportions": [0.2, 0.1, 0.25, 0.25, 0.2],
     },
 }
 
-log_dir = "logs/genesis_hurtle_rsl"
+log_dir = "logs/genesis_go2_rsl"
 
 
-class RSL_Wrapper(Go2Terrain):
+class RSL_Wrapper(Go2):
     """Go2 with step() adapted for rsl_rl: returns (obs, privileged_obs, rewards, dones, infos)."""
 
     def step(self, actions: torch.Tensor, auto_reset: bool = True):
@@ -127,16 +119,10 @@ class RSL_Wrapper(Go2Terrain):
         return (
             obs_dict["observations"],
             obs_dict["privileged_observations"],
-            obs_dict["observations_history"],
-            obs_dict["critic_observations"],
             rewards,
             dones.float(),
             infos,
         )
-
-    def get_observations(self):
-        return self._obs, self._privileged_obs_buf, self._obs_history_buf, self._critic_obs_history_buf
-
 
 def main():
     env = RSL_Wrapper(
@@ -147,17 +133,12 @@ def main():
         domain_rand_options=domain_rand_options,
         **env_kwargs,
     )
-    runner = TSRunner(env, train_cfg, log_dir, device=gs.device)
-    runner.load("/home/yilang/research/ApproximateFoRL/logs/genesis_hurtle_rsl/model_5000.pt")
-    policy = runner.get_inference_policy(device=env.device)
 
-    import time
+    runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
 
-    for i in range(5000):
-        obs_buf, privileged_obs_buf, obs_history, critic_obs = env.get_observations()
-        actions = policy(obs_buf, obs_history)
-        obs_buf, privileged_obs_buf, obs_history, critic_obs, rews, dones, infos = env.step(actions.detach())
-        time.sleep(0.02)
+    wandb.init(project="genesis", name="genesis_go2_rsl", dir=log_dir, mode="online")
+
+    runner.learn(num_learning_iterations=5000, init_at_random_ep_len=True)
 
 
 if __name__ == "__main__":
