@@ -63,7 +63,9 @@ class ExtendedTimeStep(NamedTuple):
 
 
 class ActionRepeatWrapper:
-    """Same batch of actions repeated for num_repeats steps; returns list of TimeSteps with accumulated reward/discount per env."""
+    """Same batch of actions repeated for num_repeats steps; returns list of TimeSteps with accumulated reward/discount per env.
+    If an episode ends on any inner step, we expose last() so the caller can reset episode counters (otherwise they would
+    accumulate across episodes and ep_len would exceed max_episode_length)."""
 
     def __init__(self, env, num_repeats: int):
         self._env = env
@@ -78,13 +80,21 @@ class ActionRepeatWrapper:
         rewards = np.zeros(self._env.num_envs, dtype=np.float64)
         discounts = np.ones(self._env.num_envs, dtype=np.float64)
         time_steps = None
+        any_last = np.zeros(self._env.num_envs, dtype=bool)  # True if any inner step had last() for that env
         for _ in range(self._num_repeats):
             time_steps = self._env.step(actions)
             for j, ts in enumerate(time_steps):
                 rewards[j] += (ts.reward or 0.0) * discounts[j]
                 discounts[j] *= ts.discount
+                if ts.last():
+                    any_last[j] = True
+        # Expose last() for any env that ended during the repeat so callers reset episode_steps/rewards
         return [
-            ts._replace(reward=float(rewards[j]), discount=float(discounts[j]))
+            ts._replace(
+                reward=float(rewards[j]),
+                discount=float(discounts[j]),
+                step_type=StepType.LAST if any_last[j] else ts.step_type,
+            )
             for j, ts in enumerate(time_steps)
         ]
 
@@ -612,30 +622,31 @@ class DrQv2Workspace:
                     self.global_step // save_snapshot_every_frames + 1
                 ) * save_snapshot_every_frames
 
-            # Log on first episode end (same pattern as afrl.write_stats)
-            if num_done > 0 and metrics is not None:
+            # Compute done mask every time so we always reset episode counters when an episode ends.
+            # (Otherwise envs that finish during seed phase never get reset and ep_len accumulates.)
+            done_mask = np.array([ts.last() for ts in time_steps])
+            if num_done > 0 and metrics is not None and np.any(done_mask):
                 elapsed_time, total_time = self.timer.reset()
-                done_mask = np.array([ts.last() for ts in time_steps])
-                if np.any(done_mask):
-                    mean_reward = np.mean(
-                        [episode_rewards[j] for j in range(self.num_envs) if done_mask[j]]
-                    )
-                    mean_len = np.mean(
-                        [episode_steps[j] for j in range(self.num_envs) if done_mask[j]]
-                    )
-                    fps = self.num_envs * action_repeat / max(elapsed_time, 1e-6)
-                    self.write_stats(
-                        iter=self.iter_count,
-                        step=self.global_step,
-                        time_elapse=total_time,
-                        policy_reward=float(mean_reward),
-                        episode_lengths=float(mean_len * action_repeat),
-                        infos={
-                            "fps": fps,
-                            "buffer_size": len(self.replay_storage),
-                            "episode": self.global_episode,
-                        },
-                    )
+                mean_reward = np.mean(
+                    [episode_rewards[j] for j in range(self.num_envs) if done_mask[j]]
+                )
+                mean_len = np.mean(
+                    [episode_steps[j] for j in range(self.num_envs) if done_mask[j]]
+                )
+                fps = self.num_envs * action_repeat / max(elapsed_time, 1e-6)
+                self.write_stats(
+                    iter=self.iter_count,
+                    step=self.global_step,
+                    time_elapse=total_time,
+                    policy_reward=float(mean_reward),
+                    episode_lengths=float(mean_len * action_repeat),
+                    infos={
+                        "fps": fps,
+                        "buffer_size": len(self.replay_storage),
+                        "episode": self.global_episode,
+                    },
+                )
+            if np.any(done_mask):
                 for j in range(self.num_envs):
                     if done_mask[j]:
                         episode_rewards[j] = 0.0
