@@ -21,6 +21,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from envs.base_env import BaseEnv
 from utils.common_utils import make_envs
+from utils.statistic_utils import AverageMeter
 
 # DrQ-v2 uses MKL and MUJOCO_GL; we don't use MuJoCo so set for headless
 os.environ.setdefault("MKL_SERVICE_FORCE_INTEL", "1")
@@ -359,6 +360,8 @@ class DrQv2Workspace:
         self._global_step = 0
         self._global_episode = 0
         self._iter_count = 0  # number of while-loop iterations in train()
+        self.episode_reward_meter = AverageMeter(1, 100).to(self.device)
+        self.episode_length_meter = AverageMeter(1, 100).to(self.device)
 
     def _init_wandb(self, config: DictConfig) -> bool:
         """Init Weights & Biases if config.wandb.enable is True (same pattern as agents/afrl.py)."""
@@ -625,21 +628,39 @@ class DrQv2Workspace:
             # Compute done mask every time so we always reset episode counters when an episode ends.
             # (Otherwise envs that finish during seed phase never get reset and ep_len accumulates.)
             done_mask = np.array([ts.last() for ts in time_steps])
+            if np.any(done_mask):
+                done_ids = np.where(done_mask)[0]
+                rewards_done = torch.tensor(
+                    [episode_rewards[j] for j in done_ids],
+                    dtype=torch.float32,
+                    device=self.device,
+                ).unsqueeze(1)
+                lengths_done = torch.tensor(
+                    [episode_steps[j] * action_repeat for j in done_ids],
+                    dtype=torch.float32,
+                    device=self.device,
+                ).unsqueeze(1)
+                self.episode_reward_meter.update(rewards_done)
+                self.episode_length_meter.update(lengths_done)
             if num_done > 0 and metrics is not None and np.any(done_mask):
                 elapsed_time, total_time = self.timer.reset()
-                mean_reward = np.mean(
-                    [episode_rewards[j] for j in range(self.num_envs) if done_mask[j]]
+                policy_reward = (
+                    self.episode_reward_meter.get_mean().item()
+                    if self.episode_reward_meter.current_size > 0
+                    else None
                 )
-                mean_len = np.mean(
-                    [episode_steps[j] for j in range(self.num_envs) if done_mask[j]]
+                episode_lengths = (
+                    self.episode_length_meter.get_mean().item()
+                    if self.episode_length_meter.current_size > 0
+                    else None
                 )
                 fps = self.num_envs * action_repeat / max(elapsed_time, 1e-6)
                 self.write_stats(
                     iter=self.iter_count,
                     step=self.global_step,
                     time_elapse=total_time,
-                    policy_reward=float(mean_reward),
-                    episode_lengths=float(mean_len * action_repeat),
+                    policy_reward=policy_reward,
+                    episode_lengths=episode_lengths,
                     infos={
                         "fps": fps,
                         "buffer_size": len(self.replay_storage),
