@@ -5,9 +5,7 @@
 name: dreamerv3
 
 config:
-  # Single Genesis env with pixel observations.
-  num_envs: 1
-  envs: 1
+  num_envs: 4
   size: [64, 64]
   action_repeat: 2
   time_limit: 1000
