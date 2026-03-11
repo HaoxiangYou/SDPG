@@ -1,98 +1,121 @@
 """
-DreamerV3 agent: uses externals/dreamerv3-torch (PyTorch Dreamer v3).
-Wraps a BaseEnv (pixel obs) as a gym-style env with dict obs (image, is_first, is_terminal)
-for the dreamerv3-torch simulate/training loop. Aligned with agents/drqv2.py env usage.
+DreamerV3 runner for Genesis pixel environments.
+
+This mirrors the reference `train_dreamerv3.py` flow, but loads Genesis envs
+through this repo's `make_envs()` utility, similar to `agents/drqv2.py`.
 """
+
 import functools
 import importlib.util
+import os
+import sys
+from collections import OrderedDict
 from pathlib import Path
 from types import SimpleNamespace
 
+import cv2
 import gym
 import numpy as np
 import torch
 import wandb
-from omegaconf import DictConfig, OmegaConf
 from hydra.core.hydra_config import HydraConfig
-
-import dreamer as _dreamer_pkg
-Dreamer = _dreamer_pkg.Dreamer
-import tools as dreamer_tools
-from parallel import Damy
-
-# Load dreamerv3 envs.wrappers by path so project's "envs" package is not used
-_wrappers_spec = importlib.util.spec_from_file_location(
-    "dreamerv3_wrappers",
-    Path(_dreamer_pkg.__file__).resolve().parent / "envs" / "wrappers.py",
-)
-dreamer_wrappers = importlib.util.module_from_spec(_wrappers_spec)
-_wrappers_spec.loader.exec_module(dreamer_wrappers)
+from omegaconf import DictConfig, OmegaConf
+from ruamel.yaml import YAML
 
 from envs.base_env import BaseEnv
 from utils.common_utils import make_envs
 
-# --- Gym env wrapper for DreamerV3 (dict obs: image, is_first, is_terminal) ---
+os.environ.setdefault("MUJOCO_GL", "egl")
 
-class DreamerEnv(gym.Env):
-    """
-    Wraps a BaseEnv (single env, num_envs=1) as a gym.Env for DreamerV3.
-    observation_space: Dict(image=Box(0,255,(img_size,img_size,3)), is_first=Box(0,1,(1,)), is_terminal=Box(0,1,(1,)))
-    action_space: Box(-1, 1, (num_actions,))
-    reset() -> obs dict. step(action) -> (obs_dict, reward, done, info).
-    """
+_DREAMER_DIR = Path(__file__).resolve().parent.parent / "externals" / "dreamerv3-torch"
+if str(_DREAMER_DIR) not in sys.path:
+    sys.path.insert(0, str(_DREAMER_DIR))
+
+import dreamer as _dreamer_mod
+import tools as dreamer_tools
+from parallel import Damy
+
+Dreamer = _dreamer_mod.Dreamer
+
+_wrappers_spec = importlib.util.spec_from_file_location(
+    "dreamerv3_wrappers",
+    _DREAMER_DIR / "envs" / "wrappers.py",
+)
+dreamer_wrappers = importlib.util.module_from_spec(_wrappers_spec)
+assert _wrappers_spec.loader is not None
+_wrappers_spec.loader.exec_module(dreamer_wrappers)
+
+
+class DreamerGenesisEnv(gym.Env):
+    """Gym-style wrapper that exposes Genesis RGB observations as Dreamer images."""
+
+    metadata = {}
 
     def __init__(
         self,
         base_env: BaseEnv,
-        img_size: int = 84,
-        discount: float = 0.99,
+        img_size: int = 64,
+        action_repeat: int = 2,
     ):
-        assert getattr(base_env, "num_envs", base_env.num_envs) == 1, (
-            "DreamerV3 wrapper expects num_envs=1 (single env)."
-        )
+        assert getattr(base_env, "num_envs", 1) == 1, "DreamerV3 currently expects a single Genesis env."
+        obs_spaces = getattr(base_env.observation_space, "spaces", {})
+        assert "RGB" in obs_spaces, "DreamerV3 requires pixel observations (`task.config.vis_obs=True`)."
+
         self._env = base_env
-        self._img_size = img_size
-        self._discount = discount
-        self._num_actions = base_env.num_actions
+        self._img_size = int(img_size)
+        self._action_repeat = int(action_repeat)
+        self._num_actions = int(base_env.num_actions)
+        self.reward_range = [-np.inf, np.inf]
 
-        self.observation_space = gym.spaces.Dict({
-            "image": gym.spaces.Box(0, 255, (img_size, img_size, 3), dtype=np.uint8),
-            "is_first": gym.spaces.Box(0, 1, (1,), dtype=np.float32),
-            "is_terminal": gym.spaces.Box(0, 1, (1,), dtype=np.float32),
-        })
+        self.observation_space = gym.spaces.Dict(
+            {
+                "image": gym.spaces.Box(
+                    low=0,
+                    high=255,
+                    shape=(self._img_size, self._img_size, 3),
+                    dtype=np.uint8,
+                )
+            }
+        )
         self.action_space = gym.spaces.Box(
-            low=-1.0, high=1.0, shape=(self._num_actions,), dtype=np.float32
+            low=-1.0,
+            high=1.0,
+            shape=(self._num_actions,),
+            dtype=np.float32,
         )
 
-    def _get_image(self, obs_dict: dict) -> np.ndarray:
-        """Return (H, W, 3) uint8 from env RGB (C, H, W) or (9, H, W)."""
+    def _extract_image(self, obs_dict: dict) -> np.ndarray:
         rgb = obs_dict["RGB"]
         if torch.is_tensor(rgb):
-            rgb = rgb[0].cpu().numpy()  # (9, H, W) or (3, H, W)
-        else:
-            rgb = np.asarray(rgb, dtype=np.uint8)
-            if rgb.ndim == 3 and rgb.shape[0] == 9:
+            rgb = rgb.detach()
+            if rgb.ndim == 4:
                 rgb = rgb[0]
-            elif rgb.ndim == 2:
-                rgb = np.expand_dims(rgb, 0)
+            rgb = rgb.cpu().numpy()
+        else:
+            rgb = np.asarray(rgb)
+            if rgb.ndim == 4:
+                rgb = rgb[0]
+
         if rgb.shape[0] == 9:
-            rgb = rgb[-3:]  # last 3 frames as (3,H,W)
-        if rgb.shape[0] != 3:
+            rgb = rgb[-3:]
+        elif rgb.shape[0] != 3:
             rgb = rgb[:3]
-        # (3, H, W) -> (H, W, 3)
-        img = np.transpose(rgb, (1, 2, 0))
-        if img.shape[0] != self._img_size or img.shape[1] != self._img_size:
-            import cv2
-            img = cv2.resize(img, (self._img_size, self._img_size), interpolation=cv2.INTER_AREA)
-        return img.astype(np.uint8)
+
+        image = np.transpose(rgb, (1, 2, 0)).astype(np.uint8)
+        if image.shape[:2] != (self._img_size, self._img_size):
+            image = cv2.resize(
+                image,
+                (self._img_size, self._img_size),
+                interpolation=cv2.INTER_AREA,
+            )
+        return image
 
     def reset(self):
         obs_dict, _ = self._env.reset(env_ids=None)
-        img = self._get_image(obs_dict)
         return {
-            "image": img,
-            "is_first": np.array([1.0], dtype=np.float32),
-            "is_terminal": np.array([0.0], dtype=np.float32),
+            "image": self._extract_image(obs_dict),
+            "is_first": np.array(True),
+            "is_terminal": np.array(False),
         }
 
     def step(self, action):
@@ -100,131 +123,193 @@ class DreamerEnv(gym.Env):
             action = torch.from_numpy(action).float().to(self._env.device)
         else:
             action = action.float().to(self._env.device)
-        if action.dim() == 1:
+        if action.ndim == 1:
             action = action.unsqueeze(0)
-        action = torch.clamp(action, -1.0, 1.0)
-        obs_dict, reward, terminated, truncated, _ = self._env.step(action, auto_reset=False)
-        done = terminated | truncated
-        if done.any():
-            self._env.reset(env_ids=torch.where(done)[0])
-        img = self._get_image(obs_dict)
-        r = float(reward.cpu().item())
-        d = bool(done.cpu().item())
-        discount = 0.0 if d else self._discount
+
+        total_reward = 0.0
+        obs_dict = None
+        done = False
+        for _ in range(self._action_repeat):
+            obs_dict, reward, terminated, truncated, _ = self._env.step(action, auto_reset=False)
+            total_reward += float(reward.reshape(-1)[0].item())
+            done = bool((terminated | truncated).reshape(-1)[0].item())
+            if done:
+                break
+
+        assert obs_dict is not None
         obs = {
-            "image": img,
-            "is_first": np.array([0.0], dtype=np.float32),
-            "is_terminal": np.array([1.0 if d else 0.0], dtype=np.float32),
+            "image": self._extract_image(obs_dict),
+            "is_first": np.array(False),
+            "is_terminal": np.array(False),
         }
-        info = {"discount": np.array(discount, dtype=np.float32)}
-        return obs, r, d, info
+        info = {"discount": np.array(1.0, np.float32)}
+        return obs, total_reward / self._action_repeat, done, info
 
 
-def count_steps(folder):
-    return sum(int(str(n).split("-")[-1][:-4]) - 1 for n in folder.glob("*.npz"))
+def count_steps(folder: Path) -> int:
+    return sum(int(str(name).split("-")[-1][:-4]) - 1 for name in folder.glob("*.npz"))
 
 
 def make_dataset(episodes, config):
-    return dreamer_tools.from_generator(
-        dreamer_tools.sample_episodes(episodes, config.batch_length),
-        config.batch_size,
-    )
+    generator = dreamer_tools.sample_episodes(episodes, config.batch_length)
+    return dreamer_tools.from_generator(generator, config.batch_size)
 
 
-# --- Workspace and runner (aligned with drqv2 + dreamer.py main) ---
+def _filter_consistent_episodes(episodes):
+    """Ignore stale malformed episodes from earlier buggy runs."""
+    filtered = OrderedDict()
+    for key, episode in episodes.items():
+        episode_keys = [name for name in episode.keys() if not name.startswith("log_")]
+        if not episode_keys:
+            continue
+        length = len(episode[episode_keys[0]])
+        if all(len(episode[name]) == length for name in episode_keys):
+            filtered[key] = episode
+    return filtered
 
 
-class Dreamerv3Workspace:
-    """
-    DreamerV3 workspace: uses DreamerEnv (from make_envs), dreamerv3-torch's
-    Dreamer, tools.simulate, load_episodes, make_dataset. Train and play (eval) are
-    mutually exclusive like DrQv2Workspace.
-    """
+def _recursive_update(base: dict, update: dict) -> None:
+    for key, value in update.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _recursive_update(base[key], value)
+        else:
+            base[key] = value
 
-    def __init__(self, config: SimpleNamespace, work_dir: Path, full_config: DictConfig = None):
+
+def _dreamer_config_from_hydra(config: DictConfig) -> SimpleNamespace:
+    yaml_loader = YAML(typ="safe", pure=True)
+    with (_DREAMER_DIR / "configs.yaml").open() as f:
+        configs_yaml = yaml_loader.load(f)
+
+    flat = dict(configs_yaml.get("defaults", {}))
+    _recursive_update(flat, configs_yaml.get("dmc_vision", {}))
+    _recursive_update(flat, OmegaConf.to_container(config.agent.config, resolve=True))
+
+    flat["seed"] = int(config.seed)
+    flat["device"] = str(config.device)
+    flat["size"] = [int(v) for v in flat.get("size", [64, 64])]
+    flat["envs"] = 1
+    flat["num_envs"] = 1
+    flat["parallel"] = False
+
+    flat["steps"] = int(flat.get("steps", 1_000_000))
+    flat["eval_every"] = int(flat.get("eval_every", 10_000))
+    flat["log_every"] = int(flat.get("log_every", 10_000))
+    flat["time_limit"] = int(flat.get("time_limit", 1000))
+    flat["action_repeat"] = int(flat.get("action_repeat", 1))
+    flat["prefill"] = int(flat.get("prefill", 0))
+    flat["batch_size"] = int(flat.get("batch_size", 16))
+    flat["batch_length"] = int(flat.get("batch_length", 64))
+    flat["dataset_size"] = int(flat.get("dataset_size", 1_000_000))
+    flat["eval_episode_num"] = int(flat.get("eval_episode_num", 10))
+    flat["pretrain"] = int(flat.get("pretrain", 1))
+    flat["steps"] //= flat["action_repeat"]
+    flat["eval_every"] //= flat["action_repeat"]
+    flat["log_every"] //= flat["action_repeat"]
+    flat["time_limit"] //= flat["action_repeat"]
+
+    return SimpleNamespace(**flat)
+
+
+class DreamerWorkspace:
+    def __init__(
+        self,
+        config: SimpleNamespace,
+        train_base_env: BaseEnv,
+        eval_base_env: BaseEnv,
+        work_dir: Path,
+        full_config: DictConfig | None = None,
+    ):
+        self.config = config
         self.work_dir = Path(work_dir)
         self.training_logs_dir = self.work_dir / "training_logs"
         self.logdir = self.training_logs_dir / "dreamerv3"
         self.traindir = self.logdir / "train_eps"
         self.evaldir = self.logdir / "eval_eps"
-        for d in (self.logdir, self.traindir, self.evaldir):
-            d.mkdir(parents=True, exist_ok=True)
+        self.logdir.mkdir(parents=True, exist_ok=True)
+        self.traindir.mkdir(parents=True, exist_ok=True)
+        self.evaldir.mkdir(parents=True, exist_ok=True)
 
-        self.config = config
-        dreamer_tools.set_seed_everywhere(config.seed)
-        self.device = torch.device(config.device)
+        self.config.logdir = self.logdir
+        self.config.traindir = self.traindir
+        self.config.evaldir = self.evaldir
 
-        self.use_wandb = self._init_wandb(full_config) if full_config else False
+        dreamer_tools.set_seed_everywhere(self.config.seed)
+        if getattr(self.config, "deterministic_run", False):
+            dreamer_tools.enable_deterministic_run()
 
-        # Build train/eval envs (list of one env each for now; DreamerV3 uses list of envs)
-        self.train_env = self._wrap_env(config.train_env)
-        self.eval_env = self._wrap_env(config.eval_env)
+        self.use_wandb = self._init_wandb(full_config) if full_config is not None else False
+        print("Logdir", self.logdir)
+        print("Create envs.")
+
+        self.train_env = self._wrap_env(train_base_env)
+        self.eval_env = self._wrap_env(eval_base_env)
         self.train_envs = [Damy(self.train_env)]
         self.eval_envs = [Damy(self.eval_env)]
+        print("Action Space", self.train_env.action_space)
 
-        config.num_actions = self.train_env.action_space.shape[0]
+        self.config.num_actions = self.train_env.action_space.shape[0]
         step = count_steps(self.traindir)
-        config.traindir = self.traindir
-        config.evaldir = self.evaldir
-        self.logger = dreamer_tools.Logger(self.logdir, config.action_repeat * step)
+        self.logger = dreamer_tools.Logger(self.logdir, self.config.action_repeat * step)
 
-        train_eps = dreamer_tools.load_episodes(self.traindir, limit=config.dataset_size)
-        eval_eps = dreamer_tools.load_episodes(self.evaldir, limit=1)
-        self.train_eps = train_eps
-        self.eval_eps = eval_eps
+        directory = self.config.offline_traindir or self.traindir
+        self.train_eps = _filter_consistent_episodes(
+            dreamer_tools.load_episodes(directory, limit=self.config.dataset_size)
+        )
+        directory = self.config.offline_evaldir or self.evaldir
+        self.eval_eps = _filter_consistent_episodes(dreamer_tools.load_episodes(directory, limit=1))
 
-        self.train_dataset = make_dataset(train_eps, config)
-        self.eval_dataset = make_dataset(eval_eps, config)
+        self.train_dataset = make_dataset(self.train_eps, self.config)
+        self.eval_dataset = make_dataset(self.eval_eps, self.config)
         self.agent = Dreamer(
             self.train_env.observation_space,
             self.train_env.action_space,
-            config,
+            self.config,
             self.logger,
             self.train_dataset,
-        ).to(config.device)
+        ).to(self.config.device)
         self.agent.requires_grad_(requires_grad=False)
+        self._state = None
 
         latest = self.logdir / "latest.pt"
         if latest.exists():
-            checkpoint = torch.load(latest, map_location=self.device, weights_only=False)
+            checkpoint = torch.load(latest, map_location=self.config.device, weights_only=False)
             self.agent.load_state_dict(checkpoint["agent_state_dict"])
             dreamer_tools.recursively_load_optim_state_dict(
-                self.agent, checkpoint["optims_state_dict"]
+                self.agent,
+                checkpoint["optims_state_dict"],
             )
             self.agent._should_pretrain._once = False
-
-        self._state = None
-
-    def _wrap_env(self, base_env: BaseEnv):
-        env = DreamerEnv(
-            base_env,
-            img_size=getattr(self.config, "size", [84, 84])[0],
-            discount=getattr(self.config, "discount", 0.997),
-        )
-        env = dreamer_wrappers.TimeLimit(env, self.config.time_limit)
-        env = dreamer_wrappers.NormalizeActions(env)
-        env = dreamer_wrappers.SelectAction(env, key="action")
-        env = dreamer_wrappers.UUID(env)
-        return env
 
     def _init_wandb(self, config: DictConfig) -> bool:
         if not getattr(config, "wandb", None) or not config.wandb.get("enable", False):
             return False
-        w = config.wandb
-        kwargs = {
-            "project": w.get("project", "approximate-forl"),
-            "entity": w.get("entity"),
-            "group": w.get("group"),
-            "job_type": w.get("job_type"),
-            "name": w.get("name"),
-            "tags": w.get("tags", []),
-            "notes": w.get("notes"),
+        wandb_kwargs = {
+            "project": config.wandb.get("project", "approximate-forl"),
+            "entity": config.wandb.get("entity"),
+            "group": config.wandb.get("group"),
+            "job_type": config.wandb.get("job_type"),
+            "name": config.wandb.get("name"),
+            "tags": config.wandb.get("tags", []),
+            "notes": config.wandb.get("notes"),
         }
-        kwargs = {k: v for k, v in kwargs.items() if v is not None}
-        wandb.init(**kwargs)
-        if w.get("log_config", True):
+        wandb_kwargs = {k: v for k, v in wandb_kwargs.items() if v is not None}
+        wandb.init(**wandb_kwargs)
+        if config.wandb.get("log_config", True):
             wandb.config.update(OmegaConf.to_container(config, resolve=True))
         return True
+
+    def _wrap_env(self, base_env: BaseEnv):
+        env = DreamerGenesisEnv(
+            base_env,
+            img_size=self.config.size[0],
+            action_repeat=self.config.action_repeat,
+        )
+        env = dreamer_wrappers.NormalizeActions(env)
+        env = dreamer_wrappers.TimeLimit(env, self.config.time_limit)
+        env = dreamer_wrappers.SelectAction(env, key="action")
+        env = dreamer_wrappers.UUID(env)
+        return env
 
     def eval(self):
         if self.config.eval_episode_num <= 0:
@@ -240,26 +325,27 @@ class Dreamerv3Workspace:
             is_eval=True,
             episodes=self.config.eval_episode_num,
         )
-        if getattr(self.config, "video_pred_log", False):
+        if getattr(self.config, "video_pred_log", False) and self.eval_eps:
             video_pred = self.agent._wm.video_pred(next(self.eval_dataset))
             self.logger.video("eval_openl", video_pred.detach().cpu().numpy())
 
     def train(self):
-        config = self.config
-        if not getattr(config, "offline_traindir", None) or not config.offline_traindir:
-            prefill = max(0, config.prefill - count_steps(self.traindir))
+        if not self.config.offline_traindir:
+            prefill = max(0, self.config.prefill - count_steps(self.traindir))
+            if not self.train_eps and prefill == 0:
+                prefill = self.config.prefill
+            print(f"Prefill dataset ({prefill} steps).")
             if prefill > 0:
-                print(f"Prefill dataset ({prefill} steps).")
-                from torch import distributions as torchd
-                random_actor = torchd.independent.Independent(
-                    torchd.uniform.Uniform(
-                        torch.tensor(self.train_env.action_space.low).unsqueeze(0),
-                        torch.tensor(self.train_env.action_space.high).unsqueeze(0),
+                acts = self.train_env.action_space
+                random_actor = torch.distributions.independent.Independent(
+                    torch.distributions.uniform.Uniform(
+                        torch.tensor(acts.low).unsqueeze(0),
+                        torch.tensor(acts.high).unsqueeze(0),
                     ),
                     1,
                 )
 
-                def random_agent(o, d, s):
+                def random_agent(obs, reset, state):
                     action = random_actor.sample()
                     logprob = random_actor.log_prob(action)
                     return {"action": action, "logprob": logprob}, None
@@ -270,12 +356,16 @@ class Dreamerv3Workspace:
                     self.train_eps,
                     self.traindir,
                     self.logger,
-                    limit=config.dataset_size,
+                    limit=self.config.dataset_size,
                     steps=prefill,
                 )
-                self.logger.step += prefill * config.action_repeat
+                self.logger.step += prefill * self.config.action_repeat
+                print(f"Logger: ({self.logger.step} steps).")
+                self.train_dataset = make_dataset(self.train_eps, self.config)
+                self.agent._dataset = self.train_dataset
 
-        while self.agent._step < config.steps + config.eval_every:
+        print("Simulate agent.")
+        while self.agent._step < self.config.steps + self.config.eval_every:
             self.logger.write()
             self.eval()
             print("Start training.")
@@ -285,16 +375,14 @@ class Dreamerv3Workspace:
                 self.train_eps,
                 self.traindir,
                 self.logger,
-                limit=config.dataset_size,
-                steps=config.eval_every,
+                limit=self.config.dataset_size,
+                steps=self.config.eval_every,
                 state=self._state,
             )
             torch.save(
                 {
                     "agent_state_dict": self.agent.state_dict(),
-                    "optims_state_dict": dreamer_tools.recursively_collect_optim_state_dict(
-                        self.agent
-                    ),
+                    "optims_state_dict": dreamer_tools.recursively_collect_optim_state_dict(self.agent),
                 },
                 self.logdir / "latest.pt",
             )
@@ -308,134 +396,50 @@ class Dreamerv3Workspace:
                 pass
 
     def load_snapshot(self, path=None):
-        path = path or self.logdir / "latest.pt"
-        if not Path(path).exists():
+        path = Path(path or (self.logdir / "latest.pt"))
+        if not path.exists():
             return
-        ckpt = torch.load(path, map_location=self.device, weights_only=False)
-        self.agent.load_state_dict(ckpt["agent_state_dict"])
-        if "optims_state_dict" in ckpt:
-            dreamer_tools.recursively_load_optim_state_dict(
-                self.agent, ckpt["optims_state_dict"]
-            )
-
-
-def _recursive_update(base: dict, update: dict):
-    for k, v in update.items():
-        if isinstance(v, dict) and k in base and isinstance(base[k], dict):
-            _recursive_update(base[k], v)
-        else:
-            base[k] = v
-
-
-def _dreamer_config_from_hydra(config: DictConfig) -> SimpleNamespace:
-    """Build dreamerv3-torch config (SimpleNamespace) from Hydra agent.config + defaults."""
-    from ruamel.yaml import YAML
-    defaults_path = Path(_dreamer_pkg.__file__).resolve().parent / "configs.yaml"
-    yaml_loader = YAML(typ="safe", pure=True)
-    with defaults_path.open() as f:
-        configs_yaml = yaml_loader.load(f)
-    flat = dict(configs_yaml.get("defaults", {}))
-    _recursive_update(flat, configs_yaml.get("dmc_vision", {}))
-    # Override with our agent.config
-    ac = config.agent.get("config", {})
-    ac_dict = OmegaConf.to_container(ac, resolve=True) if ac else {}
-    if ac_dict:
-        _recursive_update(flat, ac_dict)
-
-    flat.setdefault("logdir", None)
-    flat.setdefault("traindir", None)
-    flat.setdefault("evaldir", None)
-    flat.setdefault("size", [84, 84])
-    flat.setdefault("envs", 1)
-    flat.setdefault("action_repeat", 2)
-    flat.setdefault("time_limit", 1000)
-    flat.setdefault("steps", 1_000_000)
-    flat.setdefault("eval_every", 10_000)
-    flat.setdefault("eval_episode_num", 10)
-    flat.setdefault("log_every", 10_000)
-    flat.setdefault("prefill", 2500)
-    flat.setdefault("dataset_size", 1_000_000)
-    flat.setdefault("device", str(config.device))
-    flat.setdefault("seed", config.seed)
-    flat.setdefault("num_actions", None)
-
-    # Keep nested encoder/actor-style dicts as dicts so **config.encoder etc. work in dreamerv3-torch.
-    # Top-level has "act"/"norm" too, so we only treat as config dict if it has cnn/mlp keys or (layers+dist).
-    def _is_config_dict(d):
-        if not isinstance(d, dict):
-            return False
-        has_cnn_mlp = "cnn_keys" in d or "mlp_keys" in d
-        has_layers_dist = "layers" in d and "dist" in d
-        return has_cnn_mlp or has_layers_dist
-
-    def recursive_ns(d):
-        if isinstance(d, dict):
-            if _is_config_dict(d):
-                return d
-            return SimpleNamespace(**{k: recursive_ns(v) for k, v in d.items()})
-        if isinstance(d, list):
-            return [recursive_ns(x) for x in d]
-        return d
-
-    return recursive_ns(flat)
+        checkpoint = torch.load(path, map_location=self.config.device, weights_only=False)
+        self.agent.load_state_dict(checkpoint["agent_state_dict"])
+        if "optims_state_dict" in checkpoint:
+            dreamer_tools.recursively_load_optim_state_dict(self.agent, checkpoint["optims_state_dict"])
 
 
 def make_runner(config: DictConfig):
-    """Build DreamerV3 runner using DreamerEnv from make_envs (same pattern as drqv2)."""
     hydra_cfg = HydraConfig.get()
-    if hydra_cfg is not None:
-        output_dir = hydra_cfg.runtime.output_dir
-        OmegaConf.set_struct(config, False)
-        config.log_dir = output_dir
-        OmegaConf.set_struct(config, True)
+    output_dir = Path(hydra_cfg.runtime.output_dir) if hydra_cfg is not None else Path.cwd()
 
     OmegaConf.set_struct(config, False)
-    # DreamerV3 uses single env (num_envs=1) for the simulate loop
+    config.log_dir = str(output_dir)
     config.task.config.vis_obs = True
+
+    size = OmegaConf.to_container(config.agent.config.get("size", [64, 64]), resolve=True)
+    size = [int(v) for v in size]
+    if config.task.config.get("sensors_args") is None:
+        config.task.config.sensors_args = {}
+    if config.task.config.sensors_args.get("camera") is None:
+        config.task.config.sensors_args["camera"] = {}
+    config.task.config.sensors_args.camera.res = size
+
     config.task.config.num_envs = 1
-    if "sensors_args" in config.task.config:
-        config.task.config.sensors_args.camera.res = [84, 84]
-    else:
-        config.task.config.setdefault("sensors_args", {})
-        if "camera" not in config.task.config.sensors_args:
-            config.task.config.sensors_args["camera"] = {}
-        config.task.config.sensors_args["camera"]["res"] = [84, 84]
+    config.agent.config.num_envs = 1
+    config.agent.config.envs = 1
     OmegaConf.set_struct(config, True)
 
-    base_env_train = make_envs(config)
-    base_env_eval = make_envs(config)
-
+    train_base_env = make_envs(config)
+    eval_base_env = make_envs(config)
     dreamer_cfg = _dreamer_config_from_hydra(config)
-    dreamer_cfg.logdir = None
-    dreamer_cfg.traindir = None
-    dreamer_cfg.evaldir = None
-
-    work_dir = Path(getattr(config, "log_dir", Path.cwd()))
-    work_dir.mkdir(parents=True, exist_ok=True)
-
-    dreamer_cfg.train_env = base_env_train
-    dreamer_cfg.eval_env = base_env_eval
-    dreamer_cfg.size = list(getattr(dreamer_cfg, "size", [84, 84]))
-    dreamer_cfg.envs = 1
-    dreamer_cfg.action_repeat = getattr(dreamer_cfg, "action_repeat", 2)
-    dreamer_cfg.time_limit = getattr(dreamer_cfg, "time_limit", 1000)
-    dreamer_cfg.steps = int(getattr(dreamer_cfg, "steps", 1_000_000) or 1_000_000)
-    dreamer_cfg.steps //= dreamer_cfg.action_repeat
-    dreamer_cfg.eval_every = int(getattr(dreamer_cfg, "eval_every", 10_000) or 10_000)
-    dreamer_cfg.eval_every //= dreamer_cfg.action_repeat
-    dreamer_cfg.log_every = int(getattr(dreamer_cfg, "log_every", 10_000) or 10_000)
-    dreamer_cfg.log_every //= dreamer_cfg.action_repeat
-    dreamer_cfg.prefill = getattr(dreamer_cfg, "prefill", 2500)
-    dreamer_cfg.dataset_size = getattr(dreamer_cfg, "dataset_size", 1_000_000)
-    dreamer_cfg.eval_episode_num = getattr(dreamer_cfg, "eval_episode_num", 10)
-    dreamer_cfg.device = config.device
-    dreamer_cfg.seed = config.seed
-
-    workspace = Dreamerv3Workspace(dreamer_cfg, work_dir, full_config=config)
+    workspace = DreamerWorkspace(
+        dreamer_cfg,
+        train_base_env,
+        eval_base_env,
+        output_dir,
+        full_config=config,
+    )
 
     class Runner:
         def run(self, args):
-            if args.get("checkpoint") and args["checkpoint"]:
+            if args.get("checkpoint"):
                 workspace.load_snapshot(args["checkpoint"])
             if args.get("train", False):
                 workspace.train()
