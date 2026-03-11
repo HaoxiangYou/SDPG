@@ -1,0 +1,135 @@
+# DreamerV3 agent for Genesis Hopper (pixel-based).
+# Structure aligned with reference D.VA/examples/cfg/dreamerv3/configs.yaml (defaults + dmc_vision / dflex_vision).
+name: dreamerv3
+
+config:
+  # --- Environment (Genesis Hopper, single env) ---
+  num_envs: 1
+  size: [84, 84]
+  envs: 1
+  action_repeat: 2
+  time_limit: 1000
+  prefill: 2500
+  reward_EMA: true
+
+  # --- Training steps & logging ---
+  steps: 1000000
+  eval_every: 10000
+  eval_episode_num: 10
+  log_every: 10000
+  reset_every: 0
+  dataset_size: 1000000
+
+  # --- Model (vision: image-only encoder/decoder, same as dmc_vision) ---
+  dyn_hidden: 512
+  dyn_deter: 512
+  dyn_stoch: 32
+  dyn_discrete: 32
+  dyn_rec_depth: 1
+  dyn_mean_act: 'none'
+  dyn_std_act: 'sigmoid2'
+  dyn_min_std: 0.1
+  grad_heads: ['decoder', 'reward', 'cont']
+  units: 512
+  act: 'SiLU'
+  norm: true
+  encoder:
+    mlp_keys: '$^'
+    cnn_keys: 'image'
+    act: 'SiLU'
+    norm: true
+    cnn_depth: 32
+    kernel_size: 4
+    minres: 4
+    mlp_layers: 5
+    mlp_units: 1024
+    symlog_inputs: true
+  decoder:
+    mlp_keys: '$^'
+    cnn_keys: 'image'
+    act: 'SiLU'
+    norm: true
+    cnn_depth: 32
+    kernel_size: 4
+    minres: 4
+    mlp_layers: 5
+    mlp_units: 1024
+    cnn_sigmoid: false
+    image_dist: mse
+    vector_dist: symlog_mse
+    outscale: 1.0
+  actor:
+    layers: 2
+    dist: 'normal'
+    entropy: 3.0e-4
+    unimix_ratio: 0.01
+    std: 'learned'
+    min_std: 0.1
+    max_std: 1.0
+    temp: 0.1
+    lr: 3.0e-5
+    eps: 1.0e-5
+    grad_clip: 100.0
+    outscale: 1.0
+  critic:
+    layers: 2
+    dist: 'symlog_disc'
+    slow_target: true
+    slow_target_update: 1
+    slow_target_fraction: 0.02
+    lr: 3.0e-5
+    eps: 1.0e-5
+    grad_clip: 100.0
+    outscale: 0.0
+  reward_head:
+    layers: 2
+    dist: 'symlog_disc'
+    loss_scale: 1.0
+    outscale: 0.0
+  cont_head:
+    layers: 2
+    loss_scale: 1.0
+    outscale: 1.0
+  dyn_scale: 0.5
+  rep_scale: 0.1
+  kl_free: 1.0
+  weight_decay: 0.0
+  unimix_ratio: 0.01
+  initial: 'learned'
+
+  # --- Training ---
+  batch_size: 16
+  batch_length: 64
+  train_ratio: 512
+  pretrain: 100
+  model_lr: 1.0e-4
+  opt_eps: 1.0e-8
+  grad_clip: 1000
+  opt: 'adam'
+
+  # --- Behavior ---
+  discount: 0.997
+  discount_lambda: 0.95
+  imag_horizon: 15
+  imag_gradient: 'dynamics'
+  imag_gradient_mix: 0.0
+  eval_state_mean: false
+
+  # --- Exploration ---
+  expl_behavior: 'greedy'
+  expl_until: 0
+  expl_extr_scale: 0.0
+  expl_intr_scale: 1.0
+  disag_target: 'stoch'
+  disag_log: true
+  disag_models: 10
+  disag_offset: 1
+  disag_layers: 4
+  disag_units: 400
+  disag_action_cond: false
+
+  # --- Logging ---
+  video_pred_log: false
+  compile: true
+  precision: 32
+  debug: false
