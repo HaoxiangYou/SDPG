@@ -118,6 +118,7 @@ class Hopper(GenesisEnv):
         self._termination_height_tolerance = 0.15
         self._termination_angle = torch.pi / 6.0
         self._termination_angle_tolerance = 0.05
+        self._extreme_vel_threshold = 100.0  # terminate if any |velocity| > this (physics blow-up)
         self._height_reward_scale = 1.0
         self._angle_reward_scale = 1.0
         self._action_penalty = -1e-1
@@ -214,6 +215,12 @@ class Hopper(GenesisEnv):
         termination = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         if self._early_termination:
             termination = robot_states["root_joints_pos"][:, 1] < self._termination_height
+            # Terminate if any velocity is extreme (e.g. physics solver blow-up)
+            extreme_vel = (
+                (torch.abs(robot_states["root_joints_vel"]) > self._extreme_vel_threshold).any(dim=-1)
+                | (torch.abs(robot_states["motor_joints_vel"]) > self._extreme_vel_threshold).any(dim=-1)
+            )
+            termination = termination | extreme_vel
         return termination
 
     def _reset_idx(self, env_ids: torch.Tensor) -> None:
