@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dreamerv3-torch"
+version = "0.1.0"
+description = "PyTorch implementation of Dreamer v3"
+requires-python = ">=3.8"
+dependencies = [
+    "torch",
+    "numpy",
+    "gym",
+    "tensorboard",
+    "ruamel.yaml",
+]
+
+[tool.setuptools]
+py-modules = ["dreamer", "tools", "models", "exploration", "networks", "parallel"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["envs*"]

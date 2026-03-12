@@ -56,6 +56,10 @@ def make_runner(config: DictConfig):
             from agents.drqv2 import make_runner
 
             return make_runner(config)
+        case "dreamerv3":
+            from agents.dreamerv3 import make_runner
+
+            return make_runner(config)
         case "teacher_student":
             from agents.teacher_student import make_runner
 

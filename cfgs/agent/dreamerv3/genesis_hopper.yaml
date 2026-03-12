@@ -1,0 +1,31 @@
+# DreamerV3 for Genesis Hopper.
+# The agent code already merges Dreamer defaults from
+# `externals/dreamerv3-torch/configs.yaml` (`defaults` + `dmc_vision`), so this
+# file only keeps project-specific overrides for the Genesis setup.
+name: dreamerv3
+
+config:
+  num_envs: 4
+  size: [64, 64]
+  action_repeat: 2
+
+  # Replay / schedule.
+  prefill: 2500
+  steps: 1000000
+  log_every: 10000
+  dataset_size: 1000000
+  save_snapshot: true
+  save_snapshot_every_frames: 100000
+
+  # World-model training.
+  batch_size: 16
+  batch_length: 64
+  train_ratio: 512
+  pretrain: 100
+
+  # Genesis Hopper works well with the image-only Dreamer defaults.
+  discount: 0.997
+  video_pred_log: false
+  compile: true
+  precision: 32
+  debug: false
