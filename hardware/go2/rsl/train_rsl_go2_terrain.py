@@ -3,9 +3,9 @@
 import genesis as gs
 import torch
 import wandb
-from rsl_rl.runners import OnPolicyRunner
+from rsl_rl.runners import TSRunner
 
-from envs.genesis_env.go2 import Go2
+from envs.genesis_env.go2_terrain_rsl import Go2Terrain
 
 env_name = "go2"
 num_envs = 4096
@@ -36,14 +36,14 @@ train_cfg = {
         "init_noise_std": 1.0,
     },
     "runner": {
-        "algorithm_class_name": "PPO",
+        "algorithm_class_name": "PPO_TS",
         "checkpoint": -1,
         "experiment_name": "go2_rough",
         "load_run": -1,
         "log_interval": 1,
         "max_iterations": 5000,
         "num_steps_per_env": 24,
-        "policy_class_name": "ActorCritic",
+        "policy_class_name": "ActorCriticTS",
         "record_interval": 50,
         "resume": False,
         "resume_path": None,
@@ -52,7 +52,7 @@ train_cfg = {
         "save_interval": 100,
         'record_interval': 50,
     },
-    "runner_class_name": "OnPolicyRunner",
+    "runner_class_name": "TSRunner",
     "seed": 1,
 }
 
@@ -79,12 +79,37 @@ domain_rand_options = {
     "obtain_link_contact_states": True,
     "contact_state_link_names": ["thigh", "calf", "foot", "base", "hip"],
     "penalize_contacts_on": ["thigh", "calf", "base", "head", "hip"],
+    "terrain_cfg": {
+        "mesh_type": "heightfield",
+        "curriculum": True,
+        "selected": False,
+        "obtain_terrain_info_around_feet": True,
+        "measure_heights": True,
+        "measured_points_x": [-0.4, -0.3, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4],  # 9x9=81
+        "measured_points_y": [-0.4, -0.3, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4],
+        "border_size": 20.0,
+        "border_height": 1.0,
+        "terrain_length": 8.0,
+        "terrain_width": 8.0,
+        "platform_size": 4.0,
+        "num_rows": 10,  # number of terrain rows (levels)
+        "num_cols": 10,  # number of terrain cols (types)
+        "num_subterrains": 100,
+        "horizontal_scale": 0.1,  # [m] distance between height samples in x and y direction
+        "vertical_scale": 0.005,  # [m] distance between height samples in z direction
+        "static_friction": 1.0,  # coefficient of static friction of the terrain
+        "dynamic_friction": 1.0,  # coefficient of dynamic friction of the terrain
+        "restitution": 0.0,  # coefficient of restitution of the terrain
+        "max_init_terrain_level": 1,  # starting curriculum level
+        # terrain types: [smooth slope, rough slope, stairs up, stairs down, hurtle, stepping stones, gap, pit]
+        "terrain_proportions": [0.2, 0.1, 0.25, 0.25, 0.2],
+    },
 }
 
 log_dir = "logs/genesis_go2_rsl"
 
 
-class RSL_Wrapper(Go2):
+class RSL_Wrapper(Go2Terrain):
     """Go2 with step() adapted for rsl_rl: returns (obs, privileged_obs, rewards, dones, infos)."""
 
     def step(self, actions: torch.Tensor, auto_reset: bool = True):
@@ -94,10 +119,15 @@ class RSL_Wrapper(Go2):
         return (
             obs_dict["observations"],
             obs_dict["privileged_observations"],
+            obs_dict["observations_history"],
+            obs_dict["critic_observations"],
             rewards,
             dones.float(),
             infos,
         )
+    
+    def get_observations(self):
+        return self._obs, self._privileged_obs_buf, self._obs_history_buf, self._critic_obs_history_buf
 
 def main():
     env = RSL_Wrapper(
@@ -109,7 +139,7 @@ def main():
         **env_kwargs,
     )
 
-    runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
+    runner = TSRunner(env, train_cfg, log_dir, device=gs.device)
 
     wandb.init(project="genesis", name="genesis_go2_rsl", dir=log_dir, mode="online")
 
