@@ -25,6 +25,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from envs.base_env import BaseEnv
 from utils.common_utils import make_envs
+from utils.statistic_utils import AverageMeter
 
 os.environ.setdefault("MUJOCO_GL", "egl")
 
@@ -95,7 +96,11 @@ class DreamerLogger:
             scalars.append(("fps", self._compute_fps(step)))
 
         metrics, info_scalars = self._normalize_scalars(scalars)
-        if not metrics and not info_scalars and not self._images:
+        has_non_fps_info = any(key != "fps" for key in info_scalars)
+        has_meaningful_log = bool(metrics) or has_non_fps_info or bool(self._images)
+        if not has_meaningful_log:
+            self._scalars = {}
+            self._images = {}
             return
 
         self._iter += 1
@@ -309,6 +314,8 @@ def _simulate_vectorized(
     steps=0,
     episodes=0,
     state=None,
+    reward_meter=None,
+    length_meter=None,
 ):
     if state is None:
         step, episode = 0, 0
@@ -383,9 +390,25 @@ def _simulate_vectorized(
 
                 if not is_eval:
                     step_in_dataset = dreamer_tools.erase_over_episodes(cache, limit)
+                    if reward_meter is not None:
+                        reward_meter.update(
+                            torch.tensor([[score]], dtype=torch.float32, device=reward_meter.mean.device)
+                        )
+                    if length_meter is not None:
+                        length_meter.update(
+                            torch.tensor([[ep_length]], dtype=torch.float32, device=length_meter.mean.device)
+                        )
+                    policy_reward = (
+                        float(reward_meter.get_mean().item()) if reward_meter is not None and reward_meter.current_size > 0
+                        else score
+                    )
+                    episode_lengths = (
+                        float(length_meter.get_mean().item()) if length_meter is not None and length_meter.current_size > 0
+                        else ep_length
+                    )
                     logger.scalar("dataset_size", step_in_dataset)
-                    logger.scalar("train_return", score)
-                    logger.scalar("train_length", ep_length)
+                    logger.scalar("train_return", policy_reward)
+                    logger.scalar("train_length", episode_lengths)
                     logger.scalar("train_episodes", len(cache))
                     logger.write(step=logger.step)
                 else:
@@ -475,14 +498,15 @@ class DreamerWorkspace:
         self.config = config
         self.work_dir = Path(work_dir)
         self.training_logs_dir = self.work_dir / "training_logs"
-        self.logdir = self.training_logs_dir / "dreamerv3"
-        self.traindir = self.logdir / "train_eps"
-        self.evaldir = self.logdir / "eval_eps"
-        self.logdir.mkdir(parents=True, exist_ok=True)
-        self.traindir.mkdir(parents=True, exist_ok=True)
-        self.evaldir.mkdir(parents=True, exist_ok=True)
+        self.summaries_dir = self.training_logs_dir / "summaries"
+        self.nn_dir = self.training_logs_dir / "nn"
+        self.buffer_dir = self.training_logs_dir / "buffer"
+        self.traindir = self.buffer_dir / "train_eps"
+        self.evaldir = self.buffer_dir / "eval_eps"
+        for d in (self.summaries_dir, self.nn_dir, self.buffer_dir, self.traindir, self.evaldir):
+            d.mkdir(parents=True, exist_ok=True)
 
-        self.config.logdir = self.logdir
+        self.config.logdir = self.summaries_dir
         self.config.traindir = self.traindir
         self.config.evaldir = self.evaldir
 
@@ -491,7 +515,7 @@ class DreamerWorkspace:
             dreamer_tools.enable_deterministic_run()
 
         self.use_wandb = self._init_wandb(full_config) if full_config is not None else False
-        print("Logdir", self.logdir)
+        print("Logdir", self.summaries_dir)
         print("Create envs.")
 
         self.env = self._wrap_env(base_env)
@@ -501,7 +525,7 @@ class DreamerWorkspace:
         self.config.num_actions = self.env.action_space.shape[0]
         step = count_steps(self.traindir)
         self.logger = DreamerLogger(
-            self.logdir,
+            self.summaries_dir,
             self.config.action_repeat * step,
             use_wandb=self.use_wandb,
         )
@@ -521,8 +545,12 @@ class DreamerWorkspace:
         ).to(self.config.device)
         self.agent.requires_grad_(requires_grad=False)
         self._state = None
+        self.episode_reward_meter = AverageMeter(1, 100).to(self.config.device)
+        self.episode_length_meter = AverageMeter(1, 100).to(self.config.device)
+        self._iter_count = 0
+        self._best_policy_reward = -float("inf")
 
-        latest = self.logdir / "latest.pt"
+        latest = self.nn_dir / "latest.pt"
         if latest.exists():
             checkpoint = torch.load(latest, map_location=self.config.device, weights_only=False)
             self.agent.load_state_dict(checkpoint["agent_state_dict"])
@@ -531,6 +559,22 @@ class DreamerWorkspace:
                 checkpoint["optims_state_dict"],
             )
             self.agent._should_pretrain._once = False
+            self.logger.step = checkpoint.get("logger_step", self.logger.step)
+            self.logger._iter = checkpoint.get("logger_iter", self.logger._iter)
+            self._iter_count = checkpoint.get("iter_count", self._iter_count)
+            self._best_policy_reward = checkpoint.get("best_policy_reward", self._best_policy_reward)
+
+    def save_snapshot(self, filename=None):
+        path = self.nn_dir / (filename or "snapshot.pt")
+        payload = {
+            "agent_state_dict": self.agent.state_dict(),
+            "optims_state_dict": dreamer_tools.recursively_collect_optim_state_dict(self.agent),
+            "logger_step": self.logger.step,
+            "logger_iter": self.logger._iter,
+            "iter_count": self._iter_count,
+            "best_policy_reward": self._best_policy_reward,
+        }
+        torch.save(payload, path)
 
     def _init_wandb(self, config: DictConfig) -> bool:
         if not getattr(config, "wandb", None) or not config.wandb.get("enable", False):
@@ -574,6 +618,18 @@ class DreamerWorkspace:
         )
 
     def train(self):
+        save_snapshot = getattr(self.config, "save_snapshot", True)
+        save_snapshot_every_frames = getattr(self.config, "save_snapshot_every_frames", 50_000)
+        if save_snapshot:
+            initial_path = self.nn_dir / "initial_snapshot.pt"
+            if not initial_path.exists():
+                self.save_snapshot("initial_snapshot.pt")
+        next_save_step = (
+            ((self.logger.step // save_snapshot_every_frames) + 1) * save_snapshot_every_frames
+            if save_snapshot_every_frames > 0
+            else None
+        )
+
         if not self.config.offline_traindir:
             prefill = max(0, self.config.prefill - count_steps(self.traindir))
             if not self.train_eps and prefill == 0:
@@ -594,6 +650,7 @@ class DreamerWorkspace:
                 def random_agent(obs, reset, state):
                     action = random_actor.sample()
                     logprob = random_actor.log_prob(action)
+                    self.logger.step += len(reset) * self.config.action_repeat
                     return {"action": action, "logprob": logprob}, None
 
                 self._state = _simulate_vectorized(
@@ -605,14 +662,17 @@ class DreamerWorkspace:
                     self.num_envs,
                     limit=self.config.dataset_size,
                     steps=prefill,
+                    reward_meter=self.episode_reward_meter,
+                    length_meter=self.episode_length_meter,
                 )
-                self.logger.step += prefill * self.config.action_repeat
                 print(f"Logger: ({self.logger.step} steps).")
                 self.train_dataset = make_dataset(self.train_eps, self.config)
                 self.agent._dataset = self.train_dataset
+                self.agent._step = self.logger.step // self.config.action_repeat
 
         print("Simulate agent.")
         while self.agent._step < self.config.steps:
+            self._iter_count += 1
             print("Start training.")
             steps_left = self.config.steps - self.agent._step
             chunk_steps = min(max(1, self.config.log_every), steps_left)
@@ -626,14 +686,42 @@ class DreamerWorkspace:
                 limit=self.config.dataset_size,
                 steps=chunk_steps,
                 state=self._state,
+                reward_meter=self.episode_reward_meter,
+                length_meter=self.episode_length_meter,
             )
-            torch.save(
-                {
-                    "agent_state_dict": self.agent.state_dict(),
-                    "optims_state_dict": dreamer_tools.recursively_collect_optim_state_dict(self.agent),
-                },
-                self.logdir / "latest.pt",
+            self.save_snapshot("latest.pt")
+
+            policy_reward = (
+                float(self.episode_reward_meter.get_mean().item())
+                if self.episode_reward_meter.current_size > 0
+                else None
             )
+            if policy_reward is not None and policy_reward > self._best_policy_reward:
+                self._best_policy_reward = policy_reward
+                if save_snapshot:
+                    self.save_snapshot("best_policy.pt")
+                    print(f"Save best policy with reward: {self._best_policy_reward:.2f}")
+
+            if (
+                save_snapshot
+                and next_save_step is not None
+                and self.logger.step >= next_save_step
+            ):
+                reward_for_name = policy_reward if policy_reward is not None else 0.0
+                self.save_snapshot(
+                    f"iter_{self._iter_count}_reward_{reward_for_name:.2f}.pt"
+                )
+                next_save_step = (
+                    (self.logger.step // save_snapshot_every_frames) + 1
+                ) * save_snapshot_every_frames
+
+        if save_snapshot:
+            final_reward = (
+                float(self.episode_reward_meter.get_mean().item())
+                if self.episode_reward_meter.current_size > 0
+                else 0.0
+            )
+            self.save_snapshot(f"iter_{self._iter_count}_reward_{final_reward:.2f}.pt")
 
         if self.use_wandb:
             wandb.finish()
@@ -643,13 +731,17 @@ class DreamerWorkspace:
             pass
 
     def load_snapshot(self, path=None):
-        path = Path(path or (self.logdir / "latest.pt"))
+        path = Path(path or (self.nn_dir / "latest.pt"))
         if not path.exists():
             return
         checkpoint = torch.load(path, map_location=self.config.device, weights_only=False)
         self.agent.load_state_dict(checkpoint["agent_state_dict"])
         if "optims_state_dict" in checkpoint:
             dreamer_tools.recursively_load_optim_state_dict(self.agent, checkpoint["optims_state_dict"])
+        self.logger.step = checkpoint.get("logger_step", self.logger.step)
+        self.logger._iter = checkpoint.get("logger_iter", self.logger._iter)
+        self._iter_count = checkpoint.get("iter_count", self._iter_count)
+        self._best_policy_reward = checkpoint.get("best_policy_reward", self._best_policy_reward)
 
 
 def make_runner(config: DictConfig):
