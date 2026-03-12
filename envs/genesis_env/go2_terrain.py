@@ -587,6 +587,7 @@ class Go2Terrain(GenesisEnv):
         for i in range(len(self._reward_functions)):
             name = self._reward_names[i]
             reward += self._reward_functions[i]() * self._reward_scales[name]
+            self._infos[name] = self._reward_functions[i]()
 
         if self._only_positive_rewards:
             reward = torch.clip(reward, min=0.0)
