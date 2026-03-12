@@ -61,6 +61,10 @@ config:
   critic_lr: 2e-4
   # Adam beta
   betas: [0.7, 0.95]
+
+  bounds:
+    mean_bounds: [-2, 2]
+    log_std_bounds: [-5, 2]
   
   # Learning rate schedules
   actor_lr_schedule:
