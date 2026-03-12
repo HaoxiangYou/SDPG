@@ -337,20 +337,15 @@ def _dreamer_config_from_hydra(config: DictConfig) -> SimpleNamespace:
     flat["parallel"] = False
 
     flat["steps"] = int(flat.get("steps", 1_000_000))
-    flat["eval_every"] = int(flat.get("eval_every", 10_000))
     flat["log_every"] = int(flat.get("log_every", 10_000))
-    flat["time_limit"] = int(flat.get("time_limit", 1000))
     flat["action_repeat"] = int(flat.get("action_repeat", 1))
     flat["prefill"] = int(flat.get("prefill", 0))
     flat["batch_size"] = int(flat.get("batch_size", 16))
     flat["batch_length"] = int(flat.get("batch_length", 64))
     flat["dataset_size"] = int(flat.get("dataset_size", 1_000_000))
-    flat["eval_episode_num"] = int(flat.get("eval_episode_num", 10))
     flat["pretrain"] = int(flat.get("pretrain", 1))
     flat["steps"] //= flat["action_repeat"]
-    flat["eval_every"] //= flat["action_repeat"]
     flat["log_every"] //= flat["action_repeat"]
-    flat["time_limit"] //= flat["action_repeat"]
 
     return SimpleNamespace(**flat)
 
@@ -359,8 +354,7 @@ class DreamerWorkspace:
     def __init__(
         self,
         config: SimpleNamespace,
-        train_base_env: BaseEnv,
-        eval_base_env: BaseEnv,
+        base_env: BaseEnv,
         work_dir: Path,
         full_config: DictConfig | None = None,
     ):
@@ -386,12 +380,11 @@ class DreamerWorkspace:
         print("Logdir", self.logdir)
         print("Create envs.")
 
-        self.train_env = self._wrap_env(train_base_env)
-        self.eval_env = self._wrap_env(eval_base_env)
-        self.num_envs = self.train_env.num_envs
-        print("Action Space", self.train_env.action_space)
+        self.env = self._wrap_env(base_env)
+        self.num_envs = self.env.num_envs
+        print("Action Space", self.env.action_space)
 
-        self.config.num_actions = self.train_env.action_space.shape[0]
+        self.config.num_actions = self.env.action_space.shape[0]
         step = count_steps(self.traindir)
         self.logger = dreamer_tools.Logger(self.logdir, self.config.action_repeat * step)
 
@@ -399,14 +392,11 @@ class DreamerWorkspace:
         self.train_eps = _filter_consistent_episodes(
             dreamer_tools.load_episodes(directory, limit=self.config.dataset_size)
         )
-        directory = self.config.offline_evaldir or self.evaldir
-        self.eval_eps = _filter_consistent_episodes(dreamer_tools.load_episodes(directory, limit=1))
 
         self.train_dataset = make_dataset(self.train_eps, self.config)
-        self.eval_dataset = make_dataset(self.eval_eps, self.config)
         self.agent = Dreamer(
-            self.train_env.observation_space,
-            self.train_env.action_space,
+            self.env.observation_space,
+            self.env.action_space,
             self.config,
             self.logger,
             self.train_dataset,
@@ -450,22 +440,23 @@ class DreamerWorkspace:
         )
 
     def eval(self):
-        if self.config.eval_episode_num <= 0:
-            return
         print("Start evaluation.")
+        directory = self.config.offline_evaldir or self.evaldir
+        eval_eps = _filter_consistent_episodes(dreamer_tools.load_episodes(directory, limit=1))
         eval_policy = functools.partial(self.agent, training=False)
         _simulate_vectorized(
             eval_policy,
-            self.eval_env,
-            self.eval_eps,
+            self.env,
+            eval_eps,
             self.evaldir,
             self.logger,
             self.num_envs,
             is_eval=True,
-            episodes=self.config.eval_episode_num,
+            episodes=self.num_envs,
         )
-        if getattr(self.config, "video_pred_log", False) and self.eval_eps:
-            video_pred = self.agent._wm.video_pred(next(self.eval_dataset))
+        if getattr(self.config, "video_pred_log", False) and eval_eps:
+            eval_dataset = make_dataset(eval_eps, self.config)
+            video_pred = self.agent._wm.video_pred(next(eval_dataset))
             self.logger.video("eval_openl", video_pred.detach().cpu().numpy())
 
     def train(self):
@@ -475,7 +466,7 @@ class DreamerWorkspace:
                 prefill = self.config.prefill
             print(f"Prefill dataset ({prefill} steps).")
             if prefill > 0:
-                acts = self.train_env.action_space
+                acts = self.env.action_space
                 low = torch.tensor(acts.low, dtype=torch.float32).unsqueeze(0).repeat(self.num_envs, 1)
                 high = torch.tensor(acts.high, dtype=torch.float32).unsqueeze(0).repeat(self.num_envs, 1)
                 random_actor = torch.distributions.independent.Independent(
@@ -493,7 +484,7 @@ class DreamerWorkspace:
 
                 self._state = _simulate_vectorized(
                     random_agent,
-                    self.train_env,
+                    self.env,
                     self.train_eps,
                     self.traindir,
                     self.logger,
@@ -507,19 +498,19 @@ class DreamerWorkspace:
                 self.agent._dataset = self.train_dataset
 
         print("Simulate agent.")
-        while self.agent._step < self.config.steps + self.config.eval_every:
-            self.logger.write()
-            self.eval()
+        while self.agent._step < self.config.steps:
             print("Start training.")
+            steps_left = self.config.steps - self.agent._step
+            chunk_steps = min(max(1, self.config.log_every), steps_left)
             self._state = _simulate_vectorized(
                 self.agent,
-                self.train_env,
+                self.env,
                 self.train_eps,
                 self.traindir,
                 self.logger,
                 self.num_envs,
                 limit=self.config.dataset_size,
-                steps=self.config.eval_every,
+                steps=chunk_steps,
                 state=self._state,
             )
             torch.save(
@@ -532,11 +523,10 @@ class DreamerWorkspace:
 
         if self.use_wandb:
             wandb.finish()
-        for env in (self.train_env, self.eval_env):
-            try:
-                env._env.close()
-            except Exception:
-                pass
+        try:
+            self.env._env.close()
+        except Exception:
+            pass
 
     def load_snapshot(self, path=None):
         path = Path(path or (self.logdir / "latest.pt"))
@@ -569,13 +559,11 @@ def make_runner(config: DictConfig):
     config.agent.config.num_envs = num_envs
     OmegaConf.set_struct(config, True)
 
-    train_base_env = make_envs(config)
-    eval_base_env = make_envs(config)
+    base_env = make_envs(config)
     dreamer_cfg = _dreamer_config_from_hydra(config)
     workspace = DreamerWorkspace(
         dreamer_cfg,
-        train_base_env,
-        eval_base_env,
+        base_env,
         output_dir,
         full_config=config,
     )

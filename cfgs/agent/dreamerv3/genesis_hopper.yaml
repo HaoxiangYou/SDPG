@@ -8,13 +8,10 @@ config:
   num_envs: 4
   size: [64, 64]
   action_repeat: 2
-  time_limit: 1000
 
   # Replay / schedule.
   prefill: 2500
   steps: 1000000
-  eval_every: 10000
-  eval_episode_num: 10
   log_every: 10000
   dataset_size: 1000000
 
