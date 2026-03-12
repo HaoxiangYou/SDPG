@@ -254,26 +254,47 @@ class DreamerGenesisVecEnv(gym.Env):
         done = np.zeros(self._num_envs, dtype=bool)
         terminated_any = np.zeros(self._num_envs, dtype=bool)
         truncated_any = np.zeros(self._num_envs, dtype=bool)
-        obs_dict = None
+        final_image = None
+        terminal_image = np.zeros(
+            (self._num_envs, self._img_size, self._img_size, 3), dtype=np.uint8
+        )
+        has_terminal_image = np.zeros(self._num_envs, dtype=bool)
         for _ in range(self._action_repeat):
-            obs_dict, reward, terminated, truncated, _ = self._env.step(action, auto_reset=False)
+            step_action = action
+            if done.any():
+                # Genesis steps the full batched scene at once, so keep finished envs
+                # inert while letting unfinished envs complete the remaining repeats.
+                step_action = action.clone()
+                done_mask = torch.from_numpy(done).to(device=self._env.device, dtype=torch.bool)
+                step_action[done_mask] = 0.0
+
+            obs_dict, reward, terminated, truncated, _ = self._env.step(
+                step_action, auto_reset=False
+            )
+            image = self._extract_images(obs_dict)
             reward_np = reward.detach().cpu().numpy().reshape(-1).astype(np.float32)
             terminated_np = terminated.detach().cpu().numpy().reshape(-1).astype(bool)
             truncated_np = truncated.detach().cpu().numpy().reshape(-1).astype(bool)
             step_done = terminated_np | truncated_np
+            newly_done = step_done & ~done
+
+            if newly_done.any():
+                terminal_image[newly_done] = image[newly_done]
+                has_terminal_image[newly_done] = True
+
             total_reward += reward_np * (~done)
             done |= step_done
             terminated_any |= terminated_np
             truncated_any |= truncated_np
-            # Genesis already handles episode timeouts via truncation; stop the repeated step
-            # as soon as any env in the vector finishes to avoid stepping finished envs again.
-            if done.any():
+            final_image = image
+            if done.all():
                 break
 
-        assert obs_dict is not None
+        assert final_image is not None
+        final_image[has_terminal_image] = terminal_image[has_terminal_image]
 
         obs = {
-            "image": self._extract_images(obs_dict),
+            "image": final_image,
             "is_first": np.zeros(self._num_envs, dtype=bool),
             "is_terminal": terminated_any,
         }
@@ -481,6 +502,7 @@ def _dreamer_config_from_hydra(config: DictConfig) -> SimpleNamespace:
     flat["batch_length"] = int(flat.get("batch_length", 64))
     flat["dataset_size"] = int(flat.get("dataset_size", 1_000_000))
     flat["pretrain"] = int(flat.get("pretrain", 1))
+    flat["eval_episode_num"] = int(flat.get("eval_episode_num", num_envs))
     flat["steps"] //= flat["action_repeat"]
     flat["log_every"] //= flat["action_repeat"]
 
@@ -606,6 +628,7 @@ class DreamerWorkspace:
         directory = self.config.offline_evaldir or self.evaldir
         eval_eps = _filter_consistent_episodes(dreamer_tools.load_episodes(directory, limit=1))
         eval_policy = functools.partial(self.agent, training=False)
+        eval_episode_num = max(1, int(getattr(self.config, "eval_episode_num", self.num_envs)))
         _simulate_vectorized(
             eval_policy,
             self.env,
@@ -614,7 +637,7 @@ class DreamerWorkspace:
             self.logger,
             self.num_envs,
             is_eval=True,
-            episodes=self.num_envs,
+            episodes=eval_episode_num,
         )
 
     def train(self):

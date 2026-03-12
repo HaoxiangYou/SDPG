@@ -5,7 +5,7 @@
 name: dreamerv3
 
 config:
-  num_envs: 4
+  num_envs: 16
   size: [64, 64]
   action_repeat: 2
 
