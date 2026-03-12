@@ -3,7 +3,6 @@ name: drqv2
 
 config:
   num_envs: 32
-  # Agent updates per data collection step(default: num_envs, like reference D.VA)
   updates_per_step: 16
 
   num_train_frames: 2000000
