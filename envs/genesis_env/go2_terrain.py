@@ -519,14 +519,8 @@ class Go2Terrain(GenesisEnv):
             axis=-1,
         )
 
-        # add noise
-        if self._train:
-            _obs_buf += torch_rand_float(-1.0, 1.0, (self._num_single_obs,), self._device) * self._obs_noise
-
         clip_obs = 100.0
         _obs_buf = torch.clip(_obs_buf, -clip_obs, clip_obs)
-
-        self._obs_history_buf = torch.cat([self._obs_history_buf[:, self._num_single_obs :], _obs_buf.detach()], dim=1)
 
         domain_randomization_info = torch.cat(
             (
@@ -565,6 +559,12 @@ class Go2Terrain(GenesisEnv):
         self._privileged_obs_buf = torch.cat(
             [self._privileged_obs_buf[:, self._num_single_privileged_obs :], _privileged_obs_buf.detach()], dim=1
         )
+
+         # add noise
+        if self._train:
+            _obs_buf += torch_rand_float(-1.0, 1.0, (self._num_single_obs,), self._device) * self._obs_noise
+        
+        self._obs_history_buf = torch.cat([self._obs_history_buf[:, self._num_single_obs :], _obs_buf.detach()], dim=1)
 
         observations = {
             "privileged_observations": self._privileged_obs_buf,
@@ -607,8 +607,7 @@ class Go2Terrain(GenesisEnv):
             # Terminate if roll or pitch exceeds threshold
             termination |= torch.abs(self._base_euler[:, 0]) > self._termination_roll_threshold
             termination |= torch.abs(self._base_euler[:, 1]) > self._termination_pitch_threshold
-        # terminate if base height is less than 0.0
-        termination |= self._base_pos[:, 2] < 0.0
+
         return termination
 
     def _resample_commands(self, envs_idx: Optional[torch.Tensor] = None) -> None:
@@ -775,13 +774,11 @@ class Go2Terrain(GenesisEnv):
     def _get_env_origins(self):
         max_init_level = self._terrain_cfg["max_init_terrain_level"]
         if not self._terrain_cfg["curriculum"]:
-            max_init_level = self._terrain_cfg["num_rows"] - 1
+            max_init_level = 0 # self._terrain_cfg["num_rows"] - 1
         self._terrain_levels = torch.randint(0, max_init_level + 1, (self._num_envs,), device=self._device)
-        self._terrain_types = torch.div(
-            torch.arange(self._num_envs, device=self._device),
-            (self._num_envs / self._terrain_cfg["num_cols"]),
-            rounding_mode="floor",
-        ).to(torch.long)
+        num_nominal_envs = self._nominal_env_ids.shape[0]
+        self._terrain_types = torch.randint(0, self._terrain_cfg["num_cols"], 
+                                            (num_nominal_envs,), device=self._device).repeat_interleave(self._num_envs // num_nominal_envs)
         self._max_terrain_level = self._terrain_cfg["num_rows"]
         self._terrain_origins = torch.from_numpy(self._terrain.env_origins).to(self._device).to(torch.float)
         self._env_origins[:] = self._terrain_origins[self._terrain_levels, self._terrain_types]
