@@ -88,8 +88,8 @@ class Go2Terrain(GenesisEnv):
         self._dt = sim_options.dt
         self._domain_rand_options = domain_rand_options
         self._terrain_cfg = terrain_args
-        self._train = True
-        self._debug = True
+        self._train = False
+        self._debug = False
 
         super().__init__(
             num_envs=num_envs,
@@ -257,6 +257,7 @@ class Go2Terrain(GenesisEnv):
         # Termination parameters
         self._termination_roll_threshold = 0.4
         self._termination_pitch_threshold = 0.4
+        self._max_projected_gravity = -0.1
 
         # Reward configuration
         self._soft_dof_limit = 0.9
@@ -286,8 +287,8 @@ class Go2Terrain(GenesisEnv):
             "feet_air_time": 1.0,
             "feet_contact_stand_still": 0.5,
             "feet_clearance": 0.2,
-            "feet_distance": -1.0,
-            "hip_pos": -0.05,
+            # "feet_distance": -1.0,
+            # "hip_pos": -0.05,
         }
 
         # PD control parameters
@@ -606,8 +607,9 @@ class Go2Terrain(GenesisEnv):
 
         if self._early_termination:
             # Terminate if roll or pitch exceeds threshold
-            termination |= torch.abs(self._base_euler[:, 0]) > self._termination_roll_threshold
-            termination |= torch.abs(self._base_euler[:, 1]) > self._termination_pitch_threshold
+            # termination |= torch.abs(self._base_euler[:, 0]) > self._termination_roll_threshold
+            # termination |= torch.abs(self._base_euler[:, 1]) > self._termination_pitch_threshold
+            termination |= self._projected_gravity[:, 2] > self._max_projected_gravity
 
         return termination
 
@@ -782,6 +784,9 @@ class Go2Terrain(GenesisEnv):
                                             (num_nominal_envs,), device=self._device).repeat_interleave(self._num_envs // num_nominal_envs)
         self._max_terrain_level = self._terrain_cfg["num_rows"]
         self._terrain_origins = torch.from_numpy(self._terrain.env_origins).to(self._device).to(torch.float)
+        if self._debug:
+            self._terrain_levels = torch.zeros_like(self._terrain_levels)
+            self._terrain_types = torch.zeros_like(self._terrain_types)
         self._env_origins[:] = self._terrain_origins[self._terrain_levels, self._terrain_types]
         self._custom_origins = True
 
@@ -1158,8 +1163,11 @@ class Go2Terrain(GenesisEnv):
         foot_vel_xy_norm = torch.norm(self._foot_velocities[:, :, :2], dim=-1)
         clearance_error = torch.sum(
             foot_vel_xy_norm
-            * torch.square(self._foot_positions[:, :, 2] - self._foot_clearance_target - self._foot_height_offset),
-            dim=-1,
+            * torch.square(self._foot_positions[:, :, 2] -
+                torch.mean(self._height_around_feet, dim=-1) -  
+                self._foot_clearance_target - 
+                self._foot_height_offset),
+                dim=-1,
         )
         return torch.exp(-clearance_error / self._foot_clearance_tracking_sigma)
 
