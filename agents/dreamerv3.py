@@ -44,7 +44,6 @@ class DreamerGenesisVecEnv(gym.Env):
         base_env: BaseEnv,
         img_size: int = 64,
         action_repeat: int = 2,
-        time_limit: int = 1000,
     ):
         obs_spaces = getattr(base_env.observation_space, "spaces", {})
         assert "RGB" in obs_spaces, "DreamerV3 requires pixel observations (`task.config.vis_obs=True`)."
@@ -52,11 +51,9 @@ class DreamerGenesisVecEnv(gym.Env):
         self._env = base_env
         self._img_size = int(img_size)
         self._action_repeat = int(action_repeat)
-        self._time_limit = int(time_limit)
         self._num_envs = int(getattr(base_env, "num_envs", 1))
         self._num_actions = int(base_env.num_actions)
         self.reward_range = [-np.inf, np.inf]
-        self._episode_steps = np.zeros(self._num_envs, dtype=np.int32)
 
         self.observation_space = gym.spaces.Dict(
             {
@@ -117,7 +114,6 @@ class DreamerGenesisVecEnv(gym.Env):
             env_ids_np = np.asarray(env_ids, dtype=np.int32)
             env_ids_torch = torch.as_tensor(env_ids_np, device=self._env.device, dtype=torch.int32)
         obs_dict, _ = self._env.reset(env_ids=env_ids_torch)
-        self._episode_steps[env_ids_np] = 0
         batch = len(env_ids_np)
         return {
             "image": self._extract_images(obs_dict),
@@ -136,28 +132,36 @@ class DreamerGenesisVecEnv(gym.Env):
 
         total_reward = np.zeros(self._num_envs, dtype=np.float32)
         done = np.zeros(self._num_envs, dtype=bool)
+        terminated_any = np.zeros(self._num_envs, dtype=bool)
+        truncated_any = np.zeros(self._num_envs, dtype=bool)
         obs_dict = None
         for _ in range(self._action_repeat):
             obs_dict, reward, terminated, truncated, _ = self._env.step(action, auto_reset=False)
             reward_np = reward.detach().cpu().numpy().reshape(-1).astype(np.float32)
-            step_done = (terminated | truncated).detach().cpu().numpy().reshape(-1).astype(bool)
+            terminated_np = terminated.detach().cpu().numpy().reshape(-1).astype(bool)
+            truncated_np = truncated.detach().cpu().numpy().reshape(-1).astype(bool)
+            step_done = terminated_np | truncated_np
             total_reward += reward_np * (~done)
             done |= step_done
-            if done.all():
+            terminated_any |= terminated_np
+            truncated_any |= truncated_np
+            # Genesis already handles episode timeouts via truncation; stop the repeated step
+            # as soon as any env in the vector finishes to avoid stepping finished envs again.
+            if done.any():
                 break
 
         assert obs_dict is not None
-        self._episode_steps += 1
-        timeout = self._episode_steps >= self._time_limit
-        done |= timeout
 
         obs = {
             "image": self._extract_images(obs_dict),
             "is_first": np.zeros(self._num_envs, dtype=bool),
-            "is_terminal": np.zeros(self._num_envs, dtype=bool),
+            "is_terminal": terminated_any,
         }
-        info = {"discount": np.ones(self._num_envs, dtype=np.float32)}
-        return obs, total_reward / self._action_repeat, done, info
+        discount = np.ones(self._num_envs, dtype=np.float32)
+        discount[terminated_any] = 0.0
+        discount[truncated_any] = 1.0
+        info = {"discount": discount}
+        return obs, total_reward, done, info
 
 
 def count_steps(folder: Path) -> int:
@@ -443,7 +447,6 @@ class DreamerWorkspace:
             base_env,
             img_size=self.config.size[0],
             action_repeat=self.config.action_repeat,
-            time_limit=self.config.time_limit,
         )
 
     def eval(self):
