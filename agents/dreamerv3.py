@@ -3,8 +3,10 @@ DreamerV3 runner for Genesis pixel environments.
 """
 
 import functools
+import json
 import os
 import sys
+import time
 import uuid
 from collections import OrderedDict
 from datetime import datetime
@@ -19,6 +21,7 @@ import wandb
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from ruamel.yaml import YAML
+from torch.utils.tensorboard import SummaryWriter
 
 from envs.base_env import BaseEnv
 from utils.common_utils import make_envs
@@ -33,6 +36,118 @@ import dreamer as _dreamer_mod
 import tools as dreamer_tools
 
 Dreamer = _dreamer_mod.Dreamer
+
+
+class DreamerLogger:
+    """Logger with TensorBoard naming aligned to other agents."""
+
+    def __init__(self, logdir: Path, step: int, use_wandb: bool = False):
+        self._logdir = Path(logdir)
+        self._writer = SummaryWriter(log_dir=str(logdir), max_queue=1000)
+        self._scalars = {}
+        self._images = {}
+        self._last_step = None
+        self._last_time = None
+        self._start_time = time.time()
+        self._iter = 0
+        self._use_wandb = use_wandb
+        self.step = step
+
+    def scalar(self, name, value):
+        self._scalars[name] = float(value)
+
+    def image(self, name, value):
+        self._images[name] = np.array(value)
+
+    def _compute_fps(self, step):
+        if self._last_step is None:
+            self._last_time = time.time()
+            self._last_step = step
+            return 0.0
+        steps = step - self._last_step
+        duration = time.time() - self._last_time
+        self._last_time += duration
+        self._last_step = step
+        return steps / max(duration, 1e-6)
+
+    def _normalize_scalars(self, scalars):
+        metrics = {}
+        info_scalars = {}
+        for name, value in scalars:
+            if name == "train_return":
+                metrics["rewards"] = value
+            elif name == "train_length":
+                metrics["episode_lengths"] = value
+            elif name == "eval_return":
+                metrics["eval/rewards"] = value
+            elif name == "eval_length":
+                metrics["eval/episode_lengths"] = value
+            elif name in {"dataset_size", "train_episodes", "eval_episodes", "fps"}:
+                info_scalars[name] = value
+            else:
+                metrics[name] = value
+        return metrics, info_scalars
+
+    def write(self, fps=False, step=None):
+        step = self.step if step in (None, False) else step
+        scalars = list(self._scalars.items())
+        if fps:
+            scalars.append(("fps", self._compute_fps(step)))
+
+        metrics, info_scalars = self._normalize_scalars(scalars)
+        if not metrics and not info_scalars and not self._images:
+            return
+
+        self._iter += 1
+        iter_idx = self._iter
+        time_elapse = time.time() - self._start_time
+
+        record = {"iter": iter_idx, "step": step, **metrics}
+        record.update({f"info/{key}": value for key, value in info_scalars.items()})
+        with (self._logdir / "metrics.jsonl").open("a") as f:
+            f.write(json.dumps(record) + "\n")
+
+        for name, value in metrics.items():
+            self._writer.add_scalar(f"{name}/iter", value, iter_idx)
+            self._writer.add_scalar(f"{name}/step", value, step)
+            self._writer.add_scalar(f"{name}/time", value, time_elapse)
+        for key, value in info_scalars.items():
+            self._writer.add_scalar(f"info/{key}", value, iter_idx)
+
+        for name, value in self._images.items():
+            self._writer.add_image(name, value, step)
+
+        if self._use_wandb:
+            wandb_metrics = dict(metrics)
+            wandb_metrics["env_step"] = step
+            wandb_metrics["time"] = time_elapse
+            for key, value in info_scalars.items():
+                wandb_metrics[f"info/{key}"] = value
+            wandb.log(wandb_metrics, step=iter_idx)
+
+        parts = [f"iter {iter_idx}", f"step {step}"]
+        if "rewards" in metrics:
+            parts.append(f"ep reward {metrics['rewards']:.2f}")
+        if "episode_lengths" in metrics:
+            parts.append(f"ep len {metrics['episode_lengths']:.1f}")
+        if "fps" in info_scalars:
+            parts.append(f"fps {info_scalars['fps']:.1f}")
+        if "dataset_size" in info_scalars:
+            parts.append(f"buffer {int(info_scalars['dataset_size'])}")
+        if "train_episodes" in info_scalars:
+            parts.append(f"episode {int(info_scalars['train_episodes'])}")
+        print(" | ".join(parts))
+
+        self._writer.flush()
+        self._scalars = {}
+        self._images = {}
+
+    def offline_scalar(self, name, value, step):
+        metrics, info_scalars = self._normalize_scalars([(name, value)])
+        for metric_name, metric_value in metrics.items():
+            self._writer.add_scalar(f"{metric_name}/step", metric_value, step)
+        for key, info_value in info_scalars.items():
+            self._writer.add_scalar(f"info/{key}", info_value, step)
 
 class DreamerGenesisVecEnv(gym.Env):
     """Vectorized Genesis wrapper that exposes Dreamer-style image observations."""
@@ -276,7 +391,6 @@ def _simulate_vectorized(
                 else:
                     eval_scores.append(score)
                     eval_lengths.append(ep_length)
-                    logger.video("eval_policy", np.array(video)[None])
                     if len(eval_scores) >= episodes:
                         logger.scalar("eval_return", sum(eval_scores) / len(eval_scores))
                         logger.scalar("eval_length", sum(eval_lengths) / len(eval_lengths))
@@ -386,7 +500,11 @@ class DreamerWorkspace:
 
         self.config.num_actions = self.env.action_space.shape[0]
         step = count_steps(self.traindir)
-        self.logger = dreamer_tools.Logger(self.logdir, self.config.action_repeat * step)
+        self.logger = DreamerLogger(
+            self.logdir,
+            self.config.action_repeat * step,
+            use_wandb=self.use_wandb,
+        )
 
         directory = self.config.offline_traindir or self.traindir
         self.train_eps = _filter_consistent_episodes(
@@ -454,10 +572,6 @@ class DreamerWorkspace:
             is_eval=True,
             episodes=self.num_envs,
         )
-        if getattr(self.config, "video_pred_log", False) and eval_eps:
-            eval_dataset = make_dataset(eval_eps, self.config)
-            video_pred = self.agent._wm.video_pred(next(eval_dataset))
-            self.logger.video("eval_openl", video_pred.detach().cpu().numpy())
 
     def train(self):
         if not self.config.offline_traindir:
