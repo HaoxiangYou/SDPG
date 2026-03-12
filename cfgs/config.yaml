@@ -7,9 +7,9 @@ defaults:
 # Logging
 hydra:
   run:
-    dir: logs/${task.backend}/${task.name}/${agent.name}/${train_or_eval:${train}}/${now:%Y-%m-%d_%H-%M-%S}
+    dir: logs/${task.backend}/${task.name}/${agent.name}/${train_or_eval:${train}}/${run_name_or_timestamp:${run_name},${now:%Y-%m-%d_%H-%M-%S}}
   sweep:
-    dir: logs/${task.backend}/${task.name}/${agent.name}/${train_or_eval:${train}}/${now:%Y-%m-%d_%H-%M-%S}
+    dir: logs/${task.backend}/${task.name}/${agent.name}/${train_or_eval:${train}}/${run_name_or_timestamp:${run_name},${now:%Y-%m-%d_%H-%M-%S}}
 
 # Wandb configuration
 wandb:
@@ -26,6 +26,7 @@ wandb:
 # General
 seed: 0
 device: cuda
+run_name: null  # Optional override for the final log directory name and WandB run name
 
 train: True # Whether to train the agent or eval the trained agent
 checkpoint: "" # Path to the checkpoint for play or resume training

@@ -16,11 +16,20 @@ def compute_num_envs(num_base_envs: int, num_action_perturbations: int) -> int:
     return num_base_envs * (num_action_perturbations + 1)
 
 
+def run_name_or_timestamp(run_name: str | None, timestamp: str) -> str:
+    """Use an explicit run name when provided, otherwise fall back to the timestamp."""
+    if run_name is None:
+        return timestamp
+    run_name = str(run_name).strip()
+    return run_name or timestamp
+
+
 # Register the resolver with OmegaConf
 OmegaConf.register_new_resolver("compute_num_envs", compute_num_envs)
 OmegaConf.register_new_resolver(
     "train_or_eval", lambda train: "train" if train else "eval"
 )
+OmegaConf.register_new_resolver("run_name_or_timestamp", run_name_or_timestamp)
 
 
 def copy_env_code(output_dir: Path, task_backend: str, task_name: str) -> None:
@@ -96,6 +105,16 @@ def main(cfg: DictConfig) -> None:
             cfg.task.config = OmegaConf.merge(cfg.task.config, cfg.task.play)
             cfg.num_envs = cfg.task.play.num_envs
             cfg.agent.config.num_envs = cfg.task.play.num_envs
+
+        # Keep the timestamp-based logdir by default, but allow a single override
+        # to rename both the Hydra output directory and WandB run.
+        if (
+            getattr(cfg, "run_name", None)
+            and getattr(cfg, "wandb", None)
+            and cfg.wandb.get("enable", False)
+            and not cfg.wandb.get("name")
+        ):
+            cfg.wandb.name = cfg.run_name
 
         runner = make_runner(cfg)
 
