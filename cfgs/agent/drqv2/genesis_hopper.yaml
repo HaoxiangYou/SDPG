@@ -5,7 +5,7 @@ config:
   num_envs: 32
   updates_per_step: 16
 
-  num_train_frames: 9000000
+  num_train_frames: 3000000
   num_seed_frames: 4000
   action_repeat: 2
   discount: 0.99
