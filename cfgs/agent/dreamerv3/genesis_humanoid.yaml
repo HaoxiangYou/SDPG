@@ -1,4 +1,4 @@
-# DreamerV3 for Genesis Hopper.
+# DreamerV3 for Genesis Humanoid.
 # The agent code already merges Dreamer defaults from
 # `externals/dreamerv3-torch/configs.yaml` (`defaults` + `dmc_vision`), so this
 # file only keeps project-specific overrides for the Genesis setup.
@@ -11,7 +11,7 @@ config:
 
   # Replay / schedule.
   prefill: 2500
-  steps: 500000
+  steps: 2000000
   log_every: 10000
   dataset_size: 1000000
   save_snapshot: true
@@ -23,7 +23,7 @@ config:
   train_ratio: 512
   pretrain: 100
 
-  # Genesis Hopper works well with the image-only Dreamer defaults.
+  # Genesis Humanoid currently uses the same image-only Dreamer defaults.
   discount: 0.997
   video_pred_log: false
   compile: true

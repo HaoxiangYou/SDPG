@@ -1,11 +1,11 @@
-# DrQ-v2 agent for Genesis Hopper (pixel-based, uses externals/drqv2)
+# DrQ-v2 agent for Genesis Humanoid (pixel-based, uses externals/drqv2)
 name: drqv2
 
 config:
   num_envs: 32
   updates_per_step: 16
 
-  num_train_frames: 3000000
+  num_train_frames: 16000000
   num_seed_frames: 4000
   action_repeat: 2
   discount: 0.99
@@ -14,7 +14,7 @@ config:
   batch_size: 256
   nstep: 3
   save_snapshot: true
-  save_snapshot_every_frames: 500000  # save snapshot.pt every N global frames (after seed phase); also initial_snapshot.pt and last_snapshot.pt
+  save_snapshot_every_frames: 1000000  # save snapshot.pt every N global frames (after seed phase); also initial_snapshot.pt and last_snapshot.pt
   save_video: false
   use_tb: true
 
@@ -22,12 +22,12 @@ config:
   eval_every_frames: 10000
   num_eval_episodes: 10
 
-  # Agent (reference hopper stddev_schedule + DrQV2Agent defaults)
-  lr: 1e-4
-  feature_dim: 50
+  # Agent (Humanoid-specific settings from external/DrQ-v2 configs).
+  lr: 8e-5
+  feature_dim: 100
   hidden_dim: 1024
   critic_target_tau: 0.01
   update_every_steps: 2
   num_expl_steps: 2000
-  stddev_schedule: "linear(1.0,0.1,500000)"
+  stddev_schedule: "linear(1.0,0.1,2000000)"
   stddev_clip: 0.3

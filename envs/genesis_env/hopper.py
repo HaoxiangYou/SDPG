@@ -114,7 +114,8 @@ class Hopper(GenesisEnv):
         self._default_root_dof_pos = torch.zeros(self._num_envs, len(self._root_dof_idx), device=self._device)
         self._default_motor_dof_pos = torch.zeros(self._num_envs, len(self._motors_dof_idx), device=self._device)
 
-        self._termination_height = -0.45
+        self._termination_height_lower_bound = -0.45
+        self._termination_height_upper_bound = 0.5
         self._termination_height_tolerance = 0.15
         self._termination_angle = torch.pi / 6.0
         self._termination_angle_tolerance = 0.05
@@ -191,7 +192,7 @@ class Hopper(GenesisEnv):
     def compute_reward(self, states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         # Jie Xu's reward function
         height = states["robot_states"]["root_joints_pos"][:, 1]
-        height_diff = height - (self._termination_height + self._termination_height_tolerance)
+        height_diff = height - (self._termination_height_lower_bound + self._termination_height_tolerance)
         height_reward = torch.clip(height_diff, -1.0, 3.0)
         height_reward = torch.where(height_reward < 0.0, -200.0 * height_reward * height_reward, height_reward)
         height_reward = torch.where(height_reward > 0.0, self._height_reward_scale * height_reward, height_reward)
@@ -214,7 +215,9 @@ class Hopper(GenesisEnv):
         robot_states = states["robot_states"]
         termination = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         if self._early_termination:
-            termination = robot_states["root_joints_pos"][:, 1] < self._termination_height
+            height = robot_states["root_joints_pos"][:, 1]
+            termination = height < self._termination_height_lower_bound
+            termination = torch.where(height > self._termination_height_upper_bound, True, termination)
             # Terminate if any velocity is extreme (e.g. physics solver blow-up)
             extreme_vel = (
                 (torch.abs(robot_states["root_joints_vel"]) > self._extreme_vel_threshold).any(dim=-1)
