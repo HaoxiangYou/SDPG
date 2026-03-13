@@ -1,5 +1,8 @@
 from typing import Dict, List, Optional
 
+import numpy as np
+import torch
+import wandb
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from rl_games.common import env_configurations, vecenv
@@ -65,7 +68,97 @@ class RlGamesGpuEnv(vecenv.IVecEnv):
         return info
 
 
-def make_runner(config: DictConfig, env: Optional[BaseEnv] = None):
+class WandbAlgoObserver(IsaacAlgoObserver):
+    """RL-Games observer that mirrors key PPO metrics into WandB."""
+
+    def __init__(self, enabled: bool = False):
+        super().__init__()
+        self._enabled = enabled
+
+    @staticmethod
+    def _to_float(value):
+        if isinstance(value, torch.Tensor):
+            if value.numel() == 0:
+                return None
+            return float(value.detach().mean().item())
+        if isinstance(value, np.ndarray):
+            if value.size == 0:
+                return None
+            return float(np.mean(value))
+        if isinstance(value, (np.floating, np.integer)):
+            return float(value)
+        if isinstance(value, (int, float)):
+            return float(value)
+        return None
+
+    def _mean_ep_info(self, key: str):
+        if not self.ep_infos:
+            return None
+        values = []
+        for ep_info in self.ep_infos:
+            if key not in ep_info:
+                continue
+            value = ep_info[key]
+            if not isinstance(value, torch.Tensor):
+                value = torch.tensor([value], device=self.algo.device)
+            elif value.ndim == 0:
+                value = value.unsqueeze(0)
+            values.append(value.to(self.algo.device))
+        if not values:
+            return None
+        return float(torch.cat(values).mean().item())
+
+    def after_print_stats(self, frame, epoch_num, total_time):
+        rewards = None
+        episode_lengths = None
+
+        try:
+            algo = self.algo
+            if getattr(algo, "game_rewards", None) is not None and algo.game_rewards.current_size > 0:
+                raw = algo.game_rewards.get_mean()
+                rewards = self._to_float(raw)
+            if getattr(algo, "game_lengths", None) is not None and algo.game_lengths.current_size > 0:
+                raw = algo.game_lengths.get_mean()
+                episode_lengths = self._to_float(raw)
+        except Exception as e:
+            print(f"[WandbAlgoObserver] error reading algo stats: {e}")
+
+        if rewards is None and hasattr(self, "mean_scores") and self.mean_scores.current_size > 0:
+            rewards = self._to_float(self.mean_scores.get_mean())
+        if episode_lengths is None:
+            for key in ("length", "episode_length", "episode_lengths", "len"):
+                episode_lengths = self._mean_ep_info(key)
+                if episode_lengths is not None:
+                    break
+        if rewards is None:
+            for key in ("reward", "rewards", "score"):
+                rewards = self._mean_ep_info(key)
+                if rewards is not None:
+                    break
+
+        super().after_print_stats(frame, epoch_num, total_time)
+
+        if not self._enabled:
+            return
+        if wandb.run is None:
+            print(f"[WandbAlgoObserver] wandb.run is None at epoch {epoch_num}, skipping")
+            return
+        wandb_metrics = {
+            "env_step": int(frame),
+            "time": float(total_time),
+        }
+        if rewards is not None:
+            wandb_metrics["rewards"] = rewards
+        if episode_lengths is not None:
+            wandb_metrics["episode_lengths"] = episode_lengths
+        wandb.log(wandb_metrics, step=epoch_num)
+
+
+def make_runner(
+    config: DictConfig,
+    env: Optional[BaseEnv] = None,
+    algo_observer: Optional[IsaacAlgoObserver] = None,
+):
     """Create PPO runner. If env is provided (e.g. teacher's env from teacher_student), use it; else create from config."""
     if env is None:
         env = make_envs(config)
@@ -103,7 +196,7 @@ def make_runner(config: DictConfig, env: Optional[BaseEnv] = None):
         print(f"Output directory: {output_dir}")
         agent_config["config"]["full_experiment_name"] = "training_logs"
 
-    runner = Runner(algo_observer=IsaacAlgoObserver())
+    runner = Runner(algo_observer=algo_observer or IsaacAlgoObserver())
     runner.load({"params": agent_config})
     runner.reset()
 

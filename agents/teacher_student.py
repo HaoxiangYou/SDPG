@@ -105,6 +105,7 @@ class TeacherStudentRunner:
         self._env_and_models_initialized = False
         self.teacher_step_offset = 0
         self.teacher_time_offset = 0.0
+        self.use_wandb = False
 
     def _ensure_env_and_models(self, require_teacher=True):
         """Create env (vis_obs=True) and models. If require_teacher=False (e.g. play mode), only load student. Idempotent when require_teacher=True.
@@ -122,16 +123,40 @@ class TeacherStudentRunner:
         if require_teacher:
             self._env_and_models_initialized = True
 
-    def _init_wandb(self, config: DictConfig) -> bool:
+    def _resolve_wandb_name(self, config: DictConfig, suffix: str | None = None) -> str | None:
+        if not getattr(config, "wandb", None):
+            return None
+        base_name = config.wandb.get("name")
+        if base_name is None:
+            root_log_dir = getattr(self, "log_dir", None)
+            if root_log_dir:
+                candidate = Path(str(root_log_dir)).name
+                base_name = candidate.strip() or None
+        if base_name is None:
+            return None
+        base_name = str(base_name).strip()
+        if not base_name:
+            return None
+        if suffix:
+            return f"{base_name}-{suffix}"
+        return base_name
+
+    def _init_wandb(
+        self,
+        config: DictConfig,
+        suffix: str | None = None,
+    ) -> bool:
         if not getattr(config, "wandb", None) or not config.wandb.get("enable", False):
             return False
+        if wandb.run is not None:
+            wandb.finish()
         wandb_config = config.wandb
         wandb_kwargs = {
             "project": wandb_config.get("project", "teacher_student"),
             "entity": wandb_config.get("entity"),
             "group": wandb_config.get("group"),
             "job_type": wandb_config.get("job_type"),
-            "name": wandb_config.get("name"),
+            "name": self._resolve_wandb_name(config, suffix=suffix),
             "tags": wandb_config.get("tags", []),
             "notes": wandb_config.get("notes"),
         }
@@ -307,7 +332,7 @@ class TeacherStudentRunner:
         os.makedirs(self.nn_dir, exist_ok=True)
         os.makedirs(self.summary_dir, exist_ok=True)
         self.summary_writer = SummaryWriter(self.summary_dir)
-        self.use_wandb = self._init_wandb(self.config)
+        self.use_wandb = self._init_wandb(self.config, suffix="student")
 
         self.max_epochs = self._student_cfg.max_epochs
         self.steps_per_epoch = self._student_cfg.steps_per_epoch
@@ -393,6 +418,10 @@ class TeacherStudentRunner:
     def train(self, args=None):
         """If teacher_checkpoint is null: train teacher first (writes to run_dir/teacher/). Else: load from folder (copy to run_dir/teacher/ if external). Then DAgger."""
         args = args or {}
+        self._wandb_enabled = (
+            getattr(self.config, "wandb", None) is not None
+            and self.config.wandb.get("enable", False)
+        )
         teacher_dir = Path(self.log_dir) / "teacher"
         tc = self._teacher_cfg.get("teacher_checkpoint")
         tc_empty = tc is None or (isinstance(tc, str) and not tc.strip())
@@ -451,10 +480,7 @@ class TeacherStudentRunner:
                     torch.nn.utils.clip_grad_norm_(self.student.parameters(), self._student_cfg.get("grad_norm", 1.0))
                     self.student_optimizer.step()
                     supervised_loss = loss.item()
-                    global_step = getattr(self, "teacher_step_offset", 0) + self.step_count
                     self.summary_writer.add_scalar("supervised_loss/iter", supervised_loss, self.supervised_iter_count)
-                    if self.use_wandb:
-                        wandb.log({"supervised_loss": supervised_loss, "env_step": global_step}, step=global_step)
                     self.supervised_iter_count += 1
                     if supervised_loss < self.supervised_loss_threshold:
                         break
@@ -471,9 +497,9 @@ class TeacherStudentRunner:
                         epoch, len(self.replay_buffer), self.learning_starts
                     )
                 )
-                self.summary_writer.add_scalar("time_sec", global_time_sec, global_step)
+                self.summary_writer.add_scalar("time/step", global_time_sec, global_step)
                 if self.use_wandb:
-                    wandb.log({"env_step": global_step, "time_sec": global_time_sec}, step=global_step)
+                    wandb.log({"env_step": global_step, "time": global_time_sec}, step=epoch)
             else:
                 policy_reward = self.episode_reward_meter.get_mean().item() if self.episode_reward_meter.current_size > 0 else float("-inf")
                 episode_lengths = self.episode_length_meter.get_mean().item() if self.episode_length_meter.current_size > 0 else 0.0
@@ -484,7 +510,7 @@ class TeacherStudentRunner:
                     print_info("Save best policy with reward: {:.2f}".format(best_policy_reward))
                     self.save(filename="best_policy")
 
-                self.summary_writer.add_scalar("time_sec", global_time_sec, global_step)
+                self.summary_writer.add_scalar("time/step", global_time_sec, global_step)
                 if self.episode_reward_meter.current_size > 0:
                     self.summary_writer.add_scalar("rewards/iter", policy_reward, epoch)
                     self.summary_writer.add_scalar("rewards/step", policy_reward, global_step)
@@ -494,7 +520,7 @@ class TeacherStudentRunner:
                     self.summary_writer.add_scalar("supervised_loss/iter", supervised_loss, epoch)
                     self.summary_writer.add_scalar("supervised_loss/step", supervised_loss, global_step)
                 if self.use_wandb:
-                    wandb_metrics = {"env_step": global_step, "time_sec": global_time_sec}
+                    wandb_metrics = {"env_step": global_step, "time": global_time_sec}
                     if self.episode_reward_meter.current_size > 0:
                         wandb_metrics["rewards"] = policy_reward
                     if self.episode_length_meter.current_size > 0:
@@ -503,7 +529,7 @@ class TeacherStudentRunner:
                         wandb_metrics["supervised_loss"] = supervised_loss
                     if current_best is not None or (self.episode_reward_meter.current_size > 0 and best_policy_reward > -float("inf")):
                         wandb_metrics["best_policy"] = current_best if current_best is not None else best_policy_reward
-                    wandb.log(wandb_metrics, step=global_step)
+                    wandb.log(wandb_metrics, step=epoch)
 
                 print(
                     "iter {}: ep reward {:.2f}, ep len {:.1f}, sup loss {:.4f}, fps {:.1f}".format(
@@ -585,12 +611,21 @@ class TeacherStudentRunner:
             OmegaConf.save(config=cfg_teacher, f=f)
         # Teacher uses its own env (state-only, vis_obs=False)
         teacher_env = make_envs(cfg_teacher)
+        teacher_use_wandb = False
+        if self._wandb_enabled:
+            teacher_use_wandb = self._init_wandb(self.config, suffix="teacher")
         try:
-            runner = rl_games_agent.make_runner(cfg_teacher, env=teacher_env)
+            teacher_observer = rl_games_agent.WandbAlgoObserver(enabled=teacher_use_wandb)
+            runner = rl_games_agent.make_runner(
+                cfg_teacher,
+                env=teacher_env,
+                algo_observer=teacher_observer,
+            )
             checkpoint = args.get("checkpoint") or None
             runner.run({"train": True, "play": False, "checkpoint": checkpoint})
         finally:
-            # Close teacher env so resources are released; student env will be created from original task in _ensure_env_and_models()
+            if teacher_use_wandb and wandb.run is not None:
+                wandb.finish()
             if getattr(teacher_env, "close", None) is not None:
                 teacher_env.close()
         print_info("========== Teacher (PPO) training done ==========")
