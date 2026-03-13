@@ -115,7 +115,7 @@ class Hopper(GenesisEnv):
         self._default_motor_dof_pos = torch.zeros(self._num_envs, len(self._motors_dof_idx), device=self._device)
 
         self._termination_height_lower_bound = -0.45
-        self._termination_height_upper_bound = 0.5
+        self._termination_height_upper_bound = 15.0
         self._termination_height_tolerance = 0.15
         self._termination_angle = torch.pi / 6.0
         self._termination_angle_tolerance = 0.05
@@ -217,6 +217,7 @@ class Hopper(GenesisEnv):
         if self._early_termination:
             height = robot_states["root_joints_pos"][:, 1]
             termination = height < self._termination_height_lower_bound
+            # Prevent the algo exploiting physical solver by limiting the height
             termination = torch.where(height > self._termination_height_upper_bound, True, termination)
             # Terminate if any velocity is extreme (e.g. physics solver blow-up)
             extreme_vel = (
