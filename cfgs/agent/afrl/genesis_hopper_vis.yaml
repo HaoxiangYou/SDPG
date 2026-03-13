@@ -80,6 +80,14 @@ config:
     # start_factor: 1.0
     # end_factor: 0.1
   
+  entropy_parameters:
+    initial_temperature: 1e-2
+    actor_regularization: true
+    soft_critic: False
+    temperature_auto_tune: true
+    target_std: 0.15
+    temperature_lr: 1e-3
+
   # batch size for training the critic
   mini_batch_size: 4096
   critic_iterations: 2
