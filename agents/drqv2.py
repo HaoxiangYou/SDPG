@@ -44,6 +44,7 @@ class ExtendedTimeStep(NamedTuple):
 
     step_type: Any
     reward: Any
+    raw_reward: Any
     discount: Any
     observation: Any
     action: Any
@@ -64,9 +65,7 @@ class ExtendedTimeStep(NamedTuple):
 
 
 class ActionRepeatWrapper:
-    """Same batch of actions repeated for num_repeats steps; returns list of TimeSteps with accumulated reward/discount per env.
-    If an episode ends on any inner step, we expose last() so the caller can reset episode counters (otherwise they would
-    accumulate across episodes and ep_len would exceed max_episode_length)."""
+    """Repeat a batch of actions while keeping episode boundaries per env intact."""
 
     def __init__(self, env, num_repeats: int):
         self._env = env
@@ -79,22 +78,53 @@ class ActionRepeatWrapper:
     def step(self, actions):
         # actions: (num_envs, action_dim)
         rewards = np.zeros(self._env.num_envs, dtype=np.float64)
+        raw_rewards = np.zeros(self._env.num_envs, dtype=np.float64)
         discounts = np.ones(self._env.num_envs, dtype=np.float64)
+        done = np.zeros(self._env.num_envs, dtype=bool)
         time_steps = None
-        any_last = np.zeros(self._env.num_envs, dtype=bool)  # True if any inner step had last() for that env
+        terminal_time_steps = [None] * self._env.num_envs
         for _ in range(self._num_repeats):
-            time_steps = self._env.step(actions)
+            step_actions = actions
+            if done.any():
+                if isinstance(actions, np.ndarray):
+                    step_actions = np.array(actions, copy=True)
+                    step_actions[done] = 0.0
+                else:
+                    step_actions = actions.clone()
+                    done_mask = torch.from_numpy(done).to(
+                        device=step_actions.device, dtype=torch.bool
+                    )
+                    step_actions[done_mask] = 0.0
+
+            time_steps = self._env.step(step_actions)
             for j, ts in enumerate(time_steps):
-                rewards[j] += (ts.reward or 0.0) * discounts[j]
-                discounts[j] *= ts.discount
+                if done[j]:
+                    continue
+                raw_rewards[j] += float(ts.raw_reward or 0.0)
+                # Keep the replay reward discounted within the repeated action,
+                # but track raw episodic returns separately for logging.
+                rewards[j] += float(ts.reward or 0.0) * discounts[j]
+                discounts[j] *= float(ts.discount)
                 if ts.last():
-                    any_last[j] = True
-        # Expose last() for any env that ended during the repeat so callers reset episode_steps/rewards
+                    done[j] = True
+                    terminal_time_steps[j] = ts._replace(
+                        reward=float(rewards[j]),
+                        raw_reward=float(raw_rewards[j]),
+                        discount=float(discounts[j]),
+                    )
+            if done.all():
+                break
+
+        assert time_steps is not None
+        if done.any():
+            self._env.reset(env_ids=np.where(done)[0].astype(np.int32))
         return [
-            ts._replace(
+            terminal_time_steps[j]
+            if terminal_time_steps[j] is not None
+            else ts._replace(
                 reward=float(rewards[j]),
+                raw_reward=float(raw_rewards[j]),
                 discount=float(discounts[j]),
-                step_type=StepType.LAST if any_last[j] else ts.step_type,
             )
             for j, ts in enumerate(time_steps)
         ]
@@ -115,11 +145,11 @@ class ActionRepeatWrapper:
         return getattr(self._env, name)
 
 
-class PixelDMCEnv:
+class DrQV2EnvWrapper:
     """
-    Wraps a BaseEnv that provides pixel (RGB) observations as dm_env for DrQ-v2.
+    Wrap a batched BaseEnv that provides pixel (RGB) observations as dm_env for DrQ-v2.
     reset() and step() always return a list of ExtendedTimeStep (length num_envs).
-    Expects RGB (9, 84, 84) per env; action is [-1, 1]. Action_repeat via ActionRepeatWrapper.
+    Expects RGB (9, 84, 84) per env; action is [-1, 1].
     """
 
     def __init__(
@@ -210,11 +240,31 @@ class PixelDMCEnv:
         return out
 
     def reset(self, env_ids=None) -> List[ExtendedTimeStep]:
+        env_ids_np = None
+        if env_ids is not None:
+            if torch.is_tensor(env_ids):
+                env_ids = env_ids.to(device=self._env.device, dtype=torch.int64).view(-1)
+            else:
+                env_ids = torch.as_tensor(
+                    np.asarray(env_ids, dtype=np.int64).ravel(),
+                    device=self._env.device,
+                    dtype=torch.int64,
+                )
+            env_ids_np = env_ids.detach().cpu().numpy()
         obs_dict, _ = self._env.reset(env_ids=env_ids)
         obs_list = self._get_obs(obs_dict, to_cpu=False)
-        self._last_obs = obs_list[0] if obs_list else None
+        if env_ids is None:
+            self._last_obs = obs_list[0] if obs_list else None
+            num_reset_envs = self._num_envs
+        else:
+            num_reset_envs = len(env_ids_np)
+            if num_reset_envs > 0:
+                zero_idx = np.where(env_ids_np == 0)[0]
+                if len(zero_idx) > 0:
+                    self._last_obs = obs_list[int(zero_idx[0])]
+
         zero_action = torch.zeros(
-            self._num_envs,
+            num_reset_envs,
             *self._action_spec.shape,
             dtype=torch.float32,
             device=self._env.device,
@@ -223,11 +273,12 @@ class PixelDMCEnv:
             ExtendedTimeStep(
                 step_type=StepType.FIRST,
                 reward=0.0,
+                raw_reward=0.0,
                 discount=1.0,
                 observation=obs_list[i],
                 action=zero_action[i],
             )
-            for i in range(self._num_envs)
+            for i in range(num_reset_envs)
         ]
 
     def step(self, action) -> List[ExtendedTimeStep]:
@@ -244,18 +295,15 @@ class PixelDMCEnv:
         )
         done = terminated | truncated
         obs_list = self._get_obs(obs_dict, to_cpu=False)
-        done_np = done.cpu().numpy()
-        done_ids = np.where(done_np.ravel())[0].astype(np.int32)
-        if len(done_ids) > 0:
-            env_ids = torch.from_numpy(done_ids).to(self._env.device)
-            self._env.reset(env_ids=env_ids)
+        done_np = done.cpu().numpy().ravel()
         rewards = reward.cpu().numpy().ravel()
         self._last_obs = obs_list[0] if obs_list else None
         return [
             ExtendedTimeStep(
-                step_type=StepType.LAST if done_np.ravel()[i] else StepType.MID,
+                step_type=StepType.LAST if done_np[i] else StepType.MID,
                 reward=float(rewards[i]),
-                discount=0.0 if done_np.ravel()[i] else self._discount,
+                raw_reward=float(rewards[i]),
+                discount=0.0 if done_np[i] else self._discount,
                 observation=obs_list[i],
                 action=action[i],
             )
@@ -295,7 +343,7 @@ class DrQv2Workspace:
     def __init__(
         self,
         cfg,
-        dm_env: PixelDMCEnv,
+        dm_env,
         work_dir: Path,
         full_config=None,
     ):
@@ -360,7 +408,7 @@ class DrQv2Workspace:
         self._global_step = 0
         self._global_episode = 0
         self._iter_count = 0  # number of while-loop iterations in train()
-        self.episode_reward_meter = AverageMeter(1, 100).to(self.device)
+        self.episode_raw_reward_meter = AverageMeter(1, 100).to(self.device)
         self.episode_length_meter = AverageMeter(1, 100).to(self.device)
 
     def _init_wandb(self, config: DictConfig) -> bool:
@@ -571,7 +619,7 @@ class DrQv2Workspace:
         time_steps = self.env.reset()
         num_done = self.process_time_steps(time_steps)
         self._global_episode += num_done
-        episode_rewards = np.zeros(self.num_envs)
+        episode_raw_rewards = np.zeros(self.num_envs)
         episode_steps = np.zeros(self.num_envs, dtype=np.int64)
         metrics = None
 
@@ -610,7 +658,7 @@ class DrQv2Workspace:
 
             time_steps = self.env.step(actions)
             for j, ts in enumerate(time_steps):
-                episode_rewards[j] += ts.reward
+                episode_raw_rewards[j] += ts.raw_reward
                 episode_steps[j] += 1
             num_done = self.process_time_steps(time_steps)
             self._global_episode += num_done
@@ -634,8 +682,8 @@ class DrQv2Workspace:
             done_mask = np.array([ts.last() for ts in time_steps])
             if np.any(done_mask):
                 done_ids = np.where(done_mask)[0]
-                rewards_done = torch.tensor(
-                    [episode_rewards[j] for j in done_ids],
+                raw_rewards_done = torch.tensor(
+                    [episode_raw_rewards[j] for j in done_ids],
                     dtype=torch.float32,
                     device=self.device,
                 ).unsqueeze(1)
@@ -644,13 +692,13 @@ class DrQv2Workspace:
                     dtype=torch.float32,
                     device=self.device,
                 ).unsqueeze(1)
-                self.episode_reward_meter.update(rewards_done)
+                self.episode_raw_reward_meter.update(raw_rewards_done)
                 self.episode_length_meter.update(lengths_done)
             if num_done > 0 and metrics is not None and np.any(done_mask):
                 elapsed_time, total_time = self.timer.reset()
                 policy_reward = (
-                    self.episode_reward_meter.get_mean().item()
-                    if self.episode_reward_meter.current_size > 0
+                    self.episode_raw_reward_meter.get_mean().item()
+                    if self.episode_raw_reward_meter.current_size > 0
                     else None
                 )
                 episode_lengths = (
@@ -682,7 +730,7 @@ class DrQv2Workspace:
             if np.any(done_mask):
                 for j in range(self.num_envs):
                     if done_mask[j]:
-                        episode_rewards[j] = 0.0
+                        episode_raw_rewards[j] = 0.0
                         episode_steps[j] = 0
 
         if getattr(self.cfg, "save_snapshot", False):
@@ -748,14 +796,13 @@ def make_runner(config: DictConfig):
     OmegaConf.set_struct(config, True)
 
     base_env = make_envs(config)
-    dm_env = PixelDMCEnv(
+    dm_env = DrQV2EnvWrapper(
         base_env,
         img_size=84,
         discount=float(getattr(config.agent.config, "discount", 0.99)),
     )
-    action_repeat = getattr(config.agent.config, "action_repeat", 1)
-    if action_repeat > 1:
-        dm_env = ActionRepeatWrapper(dm_env, action_repeat)
+    action_repeat = max(1, int(getattr(config.agent.config, "action_repeat", 1)))
+    dm_env = ActionRepeatWrapper(dm_env, action_repeat)
 
     work_dir = Path(getattr(config, "log_dir", Path.cwd()))
     work_dir.mkdir(parents=True, exist_ok=True)
