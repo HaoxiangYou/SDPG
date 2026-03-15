@@ -17,7 +17,7 @@ config:
     overrides:
       rl_games:
         config:
-          max_epochs: 500
+          max_epochs: 2000
 
   # ---------- Student (DAgger) ----------
   # Coefficients aligned with reference/D.VA/examples/cfg/teacher_student/hopper.yaml and algorithms/dagger.py
@@ -25,7 +25,7 @@ config:
     num_envs: 32  # num_actors in D.VA
 
     # DAgger
-    max_epochs: 1000
+    max_epochs: 20000
     steps_per_epoch: 32  # steps_num
     batch_size: 128
     learning_starts: 32000
