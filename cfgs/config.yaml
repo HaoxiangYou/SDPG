@@ -24,7 +24,7 @@ wandb:
   log_config: True  # Whether to log the config to wandb
 
 # General
-seed: 0
+seed: 123
 device: cuda
 
 train: True # Whether to train the agent or eval the trained agent

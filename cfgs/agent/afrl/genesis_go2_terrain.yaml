@@ -6,20 +6,13 @@ config:
     actor:
       # List of input sources, each with name, encoder, and RMS normalization flag
       inputs:
-        - name: proprioceptive_observations
+        - name: observations
           encoder: 
             type: mlp  
             network:
               units: [256, 128]
               activation: elu
           apply_rms: false
-        # - name: height_field
-        #   encoder:
-        #     type: mlp
-        #     network:
-        #       units: [256, 128]
-        #       activation: elu
-        #   apply_rms: false
       
       # Policy head processes concatenated encoded features
       policy_head:
@@ -37,6 +30,13 @@ config:
         - name: privileged_observations
           encoder: null
           apply_rms: false
+        - name: height_field
+          encoder: 
+            type: mlp
+            network:
+              units: [128, 256]
+              activation: elu
+          apply_rms: true
       # Value head processes concatenated encoded features to output scalar value
       value_head:
         type: mlp
@@ -53,7 +53,7 @@ config:
   # Total number of environments = num_base_envs  * ( num_action_perturbations + 1 )
   num_envs: ${compute_num_envs:${.num_base_envs},${.num_action_perturbations}}
 
-  max_epochs: 10000
+  max_epochs: 50000
   horizon_length: 24
   # Discount factor
   gamma: 0.99
@@ -67,8 +67,8 @@ config:
   reward_scale: 10.0
   target_critic_alpha: 0.0
 
-  actor_lr:  0.001
-  critic_lr: 0.001
+  actor_lr:  0.0005
+  critic_lr: 0.0005
   # Adam beta
   betas: [0.7, 0.95]
 
@@ -99,4 +99,4 @@ config:
   ret_rms: False
   normalize_delta_J: True
 
-  save_frequency: 400
+  save_frequency: 1000

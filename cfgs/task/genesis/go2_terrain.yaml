@@ -34,7 +34,7 @@ config:
 
   terrain_args:
       mesh_type: "heightfield"
-      curriculum: False
+      curriculum: True
       selected: False
       obtain_terrain_info_around_feet: True
       measure_heights: True
@@ -44,7 +44,7 @@ config:
       border_height: 1.0 
       terrain_length: 8.0 
       terrain_width: 8.0 
-      platform_size: 4.0 
+      platform_size: 2.0 
       num_rows: 10 # number of terrain rows (levels)
       num_cols: 10 # number of terrain cols (types)
       num_subterrains: 100 
@@ -55,7 +55,7 @@ config:
       restitution: 0.0 # coefficient of restitution of the terrain
       max_init_terrain_level: 1 # starting curriculum level
       # terrain types: [smooth slope, rough slope, stairs up, stairs down, hurtle, stepping stones, gap, pit]
-      terrain_proportions: [0.2, 0.1, 0.25, 0.25, 0.2]
+      terrain_proportions: [0.25, 0.25, 0.25, 0.25, 0.0]
 
   show_viewer: False
   show_FPS: False

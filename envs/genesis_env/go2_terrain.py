@@ -68,20 +68,22 @@ class Go2Terrain(GenesisEnv):
             device = torch.device("cuda")
         episode_length = 1000  # Will be converted based on dt in reference
         early_termination = True
-        self._num_single_obs = 45
-        self._obs_frame_stack = 5
-        self._num_obs = self._num_single_obs * self._obs_frame_stack
-        
-        self._num_single_privileged_obs = self._num_single_obs + 31 + 81 + 17 + 3
-        self._privileged_frame_stack = 5
-        self._num_privileged_obs = self._num_single_privileged_obs * self._privileged_frame_stack
 
         self._num_height_points = 81
+        
+        self._num_single_obs = 45
+        self._num_history_obs = 5
+        self._num_obs = self._num_single_obs * self._num_history_obs
+
+
+        self._num_single_privileged_obs = self._num_single_obs + 3 # + 81  + 31 + 17 + 3 # 60
+        self._privileged_frame_stack = 1
+        self._num_privileged_obs = self._num_single_privileged_obs * self._privileged_frame_stack
 
         self._observation_space = spaces.Dict(
             {
                 "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(self._num_privileged_obs,)),
-                "proprioceptive_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(self._num_obs,)),
+                "observations": spaces.Box(low=-np.inf, high=np.inf, shape=(self._num_obs,)),
                 "height_field": spaces.Box(low=-np.inf, high=np.inf, shape=(self._num_height_points,)),
             }
         )
@@ -113,6 +115,7 @@ class Go2Terrain(GenesisEnv):
         # Action parameters
         self._action_scale = 0.5
         self._clip_actions = 100.0
+        self._clip_obs = 100.0
 
         # Observation scales
         self._obs_scales = {
@@ -391,9 +394,6 @@ class Go2Terrain(GenesisEnv):
         self._motor_strengths = torch.ones((self._num_envs, self._num_actions), device=self._device, dtype=torch.float)
 
         self._foot_positions = torch.zeros((self._num_envs, self._num_feet, 3), device=self._device, dtype=torch.float)
-        self._foot_quaternions = torch.zeros(
-            (self._num_envs, self._num_feet, 4), device=self._device, dtype=torch.float
-        )
         self._foot_velocities = torch.zeros((self._num_envs, self._num_feet, 3), device=self._device, dtype=torch.float)
 
         # terrain related buffers
@@ -504,12 +504,10 @@ class Go2Terrain(GenesisEnv):
         self._last_last_actions[:] = self._last_actions[:]
         self._last_dof_vel[:] = self._dof_vel[:]
 
-    def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
-        """Compute observations based on go2_env.py structure."""
-        # Compute privileged observations (matching genesis go2_env.py structure)
-
+        # we have to compute the observation here becuase the compute_observation will be called multiple times
         _obs_buf = torch.cat(
-            [
+            [   
+                # self._base_lin_vel * self._obs_scales["lin_vel"], # 3
                 self._base_ang_vel * self._obs_scales["ang_vel"],  # 3
                 self._projected_gravity,  # 3
                 self._commands[:, :3] * self._commands_scale,  # 3
@@ -520,58 +518,38 @@ class Go2Terrain(GenesisEnv):
             axis=-1,
         )
 
-        clip_obs = 100.0
-        _obs_buf = torch.clip(_obs_buf, -clip_obs, clip_obs)
-
-        domain_randomization_info = torch.cat(
-            (
-                (self._friction_values - self._friction_value_offset),  # 1
-                self._added_base_mass,  # 1
-                self._base_com_bias,  # 3
-                self._rand_push_vels[:, :2],  # 2
-                (self._kp_scale - self._kp_scale_offset),  # num_actions
-                (self._kd_scale - self._kd_scale_offset),  # num_actions
-            ),
-            dim=-1,
-        )
-
-        # privileged observations
         _privileged_obs_buf = torch.cat(
-            (_obs_buf, domain_randomization_info, self._base_lin_vel * self._obs_scales["lin_vel"]),
+            (_obs_buf, self._base_lin_vel * self._obs_scales["lin_vel"]),
             axis=-1,
         )
 
-        if self._domain_rand_options["obtain_link_contact_states"]:
-            _privileged_obs_buf = torch.cat(
-                (
-                    _privileged_obs_buf,  # previous
-                    self._link_contact_states,  # contact states of thighs, calfs and feet (4+4+4)=12
-                ),
-                dim=-1,
-            )
+        _privileged_obs_buf = torch.clip(_privileged_obs_buf, -self._clip_obs, self._clip_obs)
 
-        if self._terrain_cfg["measure_heights"]:  # 81
-            heights = (
+        # add noise
+        if self._train:
+            _obs_buf += torch_rand_float(-1.0, 1.0, (self._num_single_obs,), self._device) * self._obs_noise
+
+        
+        _obs_buf = torch.clip(_obs_buf, -self._clip_obs, self._clip_obs)
+
+        self._obs_history_buf = torch.cat([self._obs_history_buf[:, self._num_single_obs :], _obs_buf.detach()], dim=1)
+        self._privileged_obs_buf = torch.cat([self._privileged_obs_buf[:, self._num_single_privileged_obs :], _privileged_obs_buf.detach()], dim=1)
+
+    def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
+        """Compute observations based on go2_env.py structure."""
+        # Compute privileged observations (matching genesis go2_env.py structure)
+
+        heights = (
                 torch.clip(self._base_pos[:, 2].unsqueeze(1) - 0.5 - self._measured_heights, -1, 1.0)
                 * self._obs_scales["height_measurements"]
             )
-            _privileged_obs_buf = torch.cat((_privileged_obs_buf, heights), dim=-1)
-
-        self._privileged_obs_buf = torch.cat(
-            [self._privileged_obs_buf[:, self._num_single_privileged_obs :], _privileged_obs_buf.detach()], dim=1
-        )
-
-         # add noise
-        if self._train:
-            _obs_buf += torch_rand_float(-1.0, 1.0, (self._num_single_obs,), self._device) * self._obs_noise
-        
-        self._obs_history_buf = torch.cat([self._obs_history_buf[:, self._num_single_obs :], _obs_buf.detach()], dim=1)
 
         observations = {
             "privileged_observations": self._privileged_obs_buf,
-            "proprioceptive_observations": self._obs_history_buf,
+            "observations": self._obs_history_buf,
             "height_field": heights,
         }
+
         return observations
 
     def get_observations(self):
@@ -588,7 +566,7 @@ class Go2Terrain(GenesisEnv):
         for i in range(len(self._reward_functions)):
             name = self._reward_names[i]
             reward += self._reward_functions[i]() * self._reward_scales[name]
-            self._infos[name] = self._reward_functions[i]()
+            self._infos[name] = self._reward_functions[i]() * self._reward_scales[name]
 
         if self._only_positive_rewards:
             reward = torch.clip(reward, min=0.0)
@@ -607,9 +585,9 @@ class Go2Terrain(GenesisEnv):
 
         if self._early_termination:
             # Terminate if roll or pitch exceeds threshold
-            # termination |= torch.abs(self._base_euler[:, 0]) > self._termination_roll_threshold
-            # termination |= torch.abs(self._base_euler[:, 1]) > self._termination_pitch_threshold
-            termination |= self._projected_gravity[:, 2] > self._max_projected_gravity
+            termination |= torch.abs(self._base_euler[:, 0]) > self._termination_roll_threshold
+            termination |= torch.abs(self._base_euler[:, 1]) > self._termination_pitch_threshold
+            # termination |= self._projected_gravity[:, 2] > self._max_projected_gravity
 
         return termination
 
@@ -646,8 +624,8 @@ class Go2Terrain(GenesisEnv):
         if len(env_ids) == 0:
             return
 
-        if self._terrain_cfg["curriculum"]:
-            self._update_terrain_curriculum(env_ids)
+        # if self._terrain_cfg["curriculum"]:
+        #     self._update_terrain_curriculum(env_ids)
 
         # TODO: update command curriculum
 
@@ -769,10 +747,9 @@ class Go2Terrain(GenesisEnv):
             device=self._device,
             dtype=torch.float,
         )
-
-        self._foot_positions[:] = self._rigid_solver.get_links_pos(self._feet_link_indices_world_frame)
-        self._foot_quaternions[:] = self._rigid_solver.get_links_quat(self._feet_link_indices_world_frame)
-        self._foot_velocities[:] = self._rigid_solver.get_links_vel(self._feet_link_indices_world_frame)
+        
+        self._foot_positions[:] = self._robot.get_links_pos()[:, self._feet_link_indices, :]
+        self._foot_velocities[:] = self._robot.get_links_vel()[:, self._feet_link_indices, :]
 
     def _get_env_origins(self):
         max_init_level = self._terrain_cfg["max_init_terrain_level"]
@@ -885,8 +862,8 @@ class Go2Terrain(GenesisEnv):
         px = foot_points[:, :, 0].view(-1)
         py = foot_points[:, :, 1].view(-1)
         # clip to the range of height samples
-        # px = torch.clip(px, 0, self._height_samples.shape[0]-2)
-        # py = torch.clip(py, 0, self._height_samples.shape[1]-2)
+        px = torch.clip(px, 0, self._height_samples.shape[0]-2)
+        py = torch.clip(py, 0, self._height_samples.shape[1]-2)
         # get heights around the feet, 9 points for each foot
         heights1 = self._height_samples[px - 1, py]  # [x-0.1, y]
         heights2 = self._height_samples[px + 1, py]  # [x+0.1, y]
@@ -1032,6 +1009,8 @@ class Go2Terrain(GenesisEnv):
         states = {
             "robot_states": robot_states,
             "progress_buf": self._progress_buf[env_ids].clone(),
+            "obs_history_buf": self._obs_history_buf[env_ids].clone(),
+            "privileged_obs_buf": self._privileged_obs_buf[env_ids].clone(),
         }
 
         return states
@@ -1074,6 +1053,12 @@ class Go2Terrain(GenesisEnv):
 
         # Update progress buffer
         self._progress_buf[env_ids] = states["progress_buf"].clone()
+
+        # Update observation history buffer
+        self._obs_history_buf[env_ids] = states["obs_history_buf"].clone()
+
+        # Update privileged observation buffer
+        self._privileged_obs_buf[env_ids] = states["privileged_obs_buf"].clone()
 
         # Update previous actions if provided
         self._last_actions[env_ids] = robot_states["last_actions"].clone()
@@ -1250,10 +1235,7 @@ class Go2Terrain(GenesisEnv):
 
     def _randomize_link_friction(self, env_ids):
         min_friction, max_friction = self._domain_rand_options["friction_range"]
-        # ratios = (
-        #     gs.rand((len(env_ids), 1), dtype=float).repeat(1, solver.n_geoms) * (max_friction - min_friction)
-        #     + min_friction
-        # )
+
         ratios = (
             gs.rand((len(env_ids), 1), dtype=float).repeat(1, self._robot.n_links) * (max_friction - min_friction)
             + min_friction
@@ -1273,18 +1255,8 @@ class Go2Terrain(GenesisEnv):
         com_displacement = (
             gs.rand((len(env_ids), 1, 3), dtype=float) * (max_displacement - min_displacement) + min_displacement
         )
-        # com_displacement[:, :, 0] -= 0.02
 
         self._base_com_bias[env_ids] = com_displacement[:, 0, :].detach().clone()
-
-        # self._rigid_solver.set_links_COM_shift(
-        #     com_displacement,
-        #     [
-        #         base_link_id,
-        #     ],
-        #     env_ids,
-        # )
-
         self._robot.set_COM_shift(com_displacement, self._base_link_index, env_ids)
 
     def _push_robots(self):
