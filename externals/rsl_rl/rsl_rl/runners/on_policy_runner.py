@@ -41,6 +41,7 @@ from torch.utils.tensorboard import SummaryWriter
 from rsl_rl.algorithms import PPO
 from rsl_rl.env import VecEnv
 from rsl_rl.modules import ActorCritic
+import numpy as np 
 
 
 class OnPolicyRunner:
@@ -49,19 +50,23 @@ class OnPolicyRunner:
         self.alg_cfg = train_cfg["algorithm"]
         self.policy_cfg = train_cfg["policy"]
         self.all_cfg = train_cfg
-        self.wandb_run_name = (
-            self.cfg["experiment_name"] + "_" + datetime.now().strftime("%b%d_%H-%M-%S") + "_" + self.cfg["run_name"]
-        )
         self.device = device
         self.env = env
         self._init_agent_and_algo()
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
         self.save_interval = self.cfg["save_interval"]
+        if "record_interval" in self.cfg.keys():
+            self.record_interval = self.cfg["record_interval"]
+        else:
+            self.record_interval = -1
+        if self.record_interval > 0:
+            self.record_video = True
+        else:
+            self.record_video = False
         self._init_storage()
 
         # Log
         self.log_dir = log_dir
-        self.sync_wandb = self.cfg["sync_wandb"] if "sync_wandb" in self.cfg else False
         self.writer = None
         self.tot_timesteps = 0
         self.tot_time = 0
@@ -145,8 +150,23 @@ class OnPolicyRunner:
             learn_time = stop - start
             if self.log_dir is not None:
                 self.log(locals())
-            if it % self.save_interval == 0:
-                self.save(os.path.join(self.log_dir, "model_{}.pt".format(it)))
+            if self.record_video:
+                self.log_video(it)
+            if it < 2500:
+                if it % self.save_interval == 0:
+                    self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(it)))
+                if it % self.record_interval == 0 and self.record_interval > 0:
+                    self.start_recording()
+            elif it < 5000:
+                if it % (2*self.save_interval) == 0:
+                    self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(it)))
+                if it % (2*self.record_interval) == 0 and self.record_interval > 0:
+                    self.start_recording()
+            else:
+                if it % (5*self.save_interval) == 0:
+                    self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(it)))
+                if it % (3*self.record_interval) == 0 and self.record_interval > 0:
+                    self.start_recording()
             ep_infos.clear()
 
         self.current_learning_iteration += num_learning_iterations
@@ -155,13 +175,6 @@ class OnPolicyRunner:
     def _pre_learn(self, init_at_random_ep_len):
         # initialize writer
         if self.log_dir is not None and self.writer is None:
-            if self.sync_wandb:
-                wandb.init(
-                    project="LeggedGym-Ex",
-                    name=self.wandb_run_name,
-                    sync_tensorboard=True,
-                    config=self.all_cfg,
-                )
             self.writer = SummaryWriter(log_dir=self.log_dir, flush_secs=10)
         if init_at_random_ep_len:
             self.env.episode_length_buf = torch.randint_like(
@@ -174,6 +187,7 @@ class OnPolicyRunner:
         iteration_time = locs["collection_time"] + locs["learn_time"]
 
         ep_string = ""
+        wandb_dict = {}
         if locs["ep_infos"]:
             for key in locs["ep_infos"][0]:
                 infotensor = torch.tensor([], device=self.device)
@@ -185,6 +199,15 @@ class OnPolicyRunner:
                         ep_info[key] = ep_info[key].unsqueeze(0)
                     infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
                 value = torch.mean(infotensor)
+                if "tracking" in key:
+                    wandb_dict['Tracking/' + key] = value
+                elif key[:4] == "rew_":
+                    wandb_dict['Reward/' + key[4:]] = value
+                elif "command" in key:
+                    continue
+                    wandb_dict['Command/' + key] = value
+                else:
+                    wandb_dict['Episode/' + key] = value
                 self.writer.add_scalar("Episode/" + key, value, locs["it"])
                 ep_string += f"""{f'Mean episode {key}:':>{pad}} {value:.4f}\n"""
         mean_std = self.alg.actor_critic.std.mean()
@@ -202,6 +225,22 @@ class OnPolicyRunner:
             self.writer.add_scalar("Train/mean_episode_length", statistics.mean(locs["lenbuffer"]), locs["it"])
             self.writer.add_scalar("Train/mean_reward/time", statistics.mean(locs["rewbuffer"]), self.tot_time)
             self.writer.add_scalar("Train/mean_episode_length/time", statistics.mean(locs["lenbuffer"]), self.tot_time)
+
+        wandb_dict['Loss/value_func'] = locs['mean_value_loss']
+        wandb_dict['Loss/surrogate'] = locs['mean_surrogate_loss']
+        # wandb_dict['Loss/entropy_coef'] = locs['entropy_coef']
+        wandb_dict['Loss/learning_rate'] = self.alg.learning_rate
+        wandb_dict['Loss/mean_noise_std'] = mean_std.item()
+        
+        wandb_dict['Perf/total_fps'] = fps
+        wandb_dict['Perf/collection time'] = locs['collection_time']
+        wandb_dict['Perf/learning_time'] = locs['learn_time']
+
+        if len(locs['rewbuffer']) > 0:
+            wandb_dict['Train/mean_reward'] = statistics.mean(locs['rewbuffer'])
+            wandb_dict['Train/mean_episode_length'] = statistics.mean(locs['lenbuffer'])
+
+        wandb.log(wandb_dict, step=locs['it'])
 
         str = f" \033[1m Learning iteration {locs['it']}/{self.current_learning_iteration + locs['num_learning_iterations']} \033[0m "
 
@@ -267,3 +306,14 @@ class OnPolicyRunner:
         if device is not None:
             self.alg.actor_critic.to(device)
         return self.alg.actor_critic.act_inference
+    
+    def start_recording(self):
+        self.env.start_recording()
+
+    def log_video(self, it):
+        frames = self.env.get_recorded_frames()
+        if frames is None:
+            return
+        else:
+            video_array = np.concatenate([np.expand_dims(frame, axis=0) for frame in frames ], axis=0).swapaxes(1, 3).swapaxes(2, 3)
+            wandb.log({"video": wandb.Video(video_array, fps=int(1/self.env.dt))}, step=it)

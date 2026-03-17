@@ -196,17 +196,16 @@ class Terrain:
         end_y = self.border + (j + 1) * self.width_per_env_pixels
         self.height_field_raw[start_x:end_x, start_y:end_y] = terrain.height_field_raw
 
-        # env_origin_x = (i + 0.5) * self.env_length
-        env_origin_x = i * self.env_length + 1.0
+        env_origin_x = (i + 0.5) * self.env_length
+        # env_origin_x = i * self.env_length + 1.0
         env_origin_y = (j + 0.5) * self.env_width
         # use the origin height as the max height of a 2mx2m square
-        # x1 = int((self.env_length / 2.0 - 0.5) / terrain.horizontal_scale)
-        # x2 = int((self.env_length / 2.0 + 0.5) / terrain.horizontal_scale)
-        # y1 = int((self.env_width / 2.0 - 0.5) / terrain.horizontal_scale)
-        # y2 = int((self.env_width / 2.0 + 0.5) / terrain.horizontal_scale)
-        # env_origin_z = np.max(terrain.height_field_raw[x1:x2, y1:y2])*terrain.vertical_scale
+        x1 = int((self.env_length / 2.0 - 0.5) / terrain.horizontal_scale)
+        x2 = int((self.env_length / 2.0 + 0.5) / terrain.horizontal_scale)
+        y1 = int((self.env_width / 2.0 - 0.5) / terrain.horizontal_scale)
+        y2 = int((self.env_width / 2.0 + 0.5) / terrain.horizontal_scale)
+        env_origin_z = np.max(terrain.height_field_raw[x1:x2, y1:y2])*terrain.vertical_scale
         # env origin z is always 0 because the terrain is always flat at the platform
-        env_origin_z = 0.0
         self.env_origins[i, j] = [env_origin_x, env_origin_y, env_origin_z]
 
         if self.type == "trimesh":
