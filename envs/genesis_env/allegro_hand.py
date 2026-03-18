@@ -346,11 +346,11 @@ class AllegroHand(GenesisEnv):
 
             observations["proprioception_and_target"] = proprioception_and_target
 
-            batch_size, num_stack, height, width, rgb = self._imgs_buf.shape
+            batch_size, num_stack, img_height, img_width, rgb = self._imgs_buf.shape
             # NOTE: for AFRL agent, RGB observation and privileged observations may has different shapes
             # Reshape: (batch, num_stack, H, W, 3) -> (batch, num_stack * 3, H, W)
             observations["RGB"] = self._imgs_buf.permute(0, 1, 4, 2, 3).reshape(
-                batch_size, num_stack * rgb, height, width
+                batch_size, num_stack * rgb, img_height, img_width
             )
 
         return observations
@@ -480,7 +480,7 @@ class AllegroHand(GenesisEnv):
             self._imgs_buf = torch.roll(self._imgs_buf, shifts=-1, dims=1)
             self._imgs_buf[:, -1] = new_img
 
-    def render(self, env_ids: Optional[Sequence[int]] = None) -> None:
+    def render(self, env_ids: Optional[Sequence[int]] = None) -> Optional[torch.Tensor]:
         if self._vis_obs:
             if env_ids is None:
                 env_ids = self.nominal_env_ids
