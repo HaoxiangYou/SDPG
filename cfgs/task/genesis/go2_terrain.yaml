@@ -16,12 +16,12 @@ config:
   vis_options:
     rendered_envs_idx: null
   
-  vis_obs: False
+  vis_obs: True
   sensors_args:
     camera:
       res: [84, 84]
-      pos: [0.2, 0.0, -0.1]
-      lookat: [0.8, 0.0, -0.3]
+      pos: [0.2, 0.0, 0.2]
+      lookat: [0.8, 0.0, 0.0]
       fov: 80.0
       lights:
         pos: [8.0, 0.0, 2.0]
@@ -83,7 +83,7 @@ config:
     penalize_contacts_on: ["thigh", "calf", "base", "head", "hip"]
 
 play:
-  num_envs: 64
+  num_envs: 16
   randomize_init: True
   show_viewer: True
   show_FPS: True
