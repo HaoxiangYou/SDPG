@@ -624,8 +624,8 @@ class Go2Terrain(GenesisEnv):
         if len(env_ids) == 0:
             return
 
-        # if self._terrain_cfg["curriculum"]:
-        #     self._update_terrain_curriculum(env_ids)
+        if self._terrain_cfg["curriculum"]:
+            self._update_terrain_curriculum(env_ids)
 
         # TODO: update command curriculum
 
@@ -771,23 +771,50 @@ class Go2Terrain(GenesisEnv):
         """Implements the game-inspired curriculum.
 
         Args:
-            env_ids (List[int]): ids of environments being reset
+            env_ids (List[int] or torch.Tensor): ids of environments being reset
         """
+        # Restrict updates to nominal environments only
+        env_ids = torch.as_tensor(env_ids, device=self._device, dtype=torch.long)
+        mask = torch.isin(env_ids, self._nominal_env_ids)
+        nominal_env_ids = env_ids[mask]
+        if nominal_env_ids.numel() == 0:
+            return
 
-        distance = torch.norm(self._base_pos[env_ids, :2] - self._env_origins[env_ids, :2], dim=1)
+        distance = torch.norm(
+            self._base_pos[nominal_env_ids, :2] - self._env_origins[nominal_env_ids, :2], dim=1
+        )
         max_episode_length_s = self._episode_length * self._dt
         # robots that walked far enough progress to harder terains
         move_up = distance > self._terrain.env_length / 2
         # robots that walked less than half of their required distance go to simpler terrains
-        move_down = (distance < torch.norm(self._commands[env_ids, :2], dim=1) * max_episode_length_s * 0.5) * ~move_up
+        move_down = (
+            distance
+            < torch.norm(self._commands[nominal_env_ids, :2], dim=1) * max_episode_length_s * 0.5
+        ) * ~move_up
 
-        self._terrain_levels[env_ids] += 1 * move_up - 1 * move_down
-        self._terrain_levels[env_ids] = torch.where(
-            self._terrain_levels[env_ids] >= self._max_terrain_level,
-            torch.randint_like(self._terrain_levels[env_ids], self._max_terrain_level),
-            torch.clip(self._terrain_levels[env_ids], 0),
+        self._terrain_levels[nominal_env_ids] += 1 * move_up - 1 * move_down
+        self._terrain_levels[nominal_env_ids] = torch.where(
+            self._terrain_levels[nominal_env_ids] >= self._max_terrain_level,
+            torch.randint_like(self._terrain_levels[nominal_env_ids], self._max_terrain_level),
+            torch.clip(self._terrain_levels[nominal_env_ids], 0),
         )  # (the minumum level is zero)
-        self._env_origins[env_ids] = self._terrain_origins[self._terrain_levels[env_ids], self._terrain_types[env_ids]]
+        self._env_origins[nominal_env_ids] = self._terrain_origins[
+            self._terrain_levels[nominal_env_ids], self._terrain_types[nominal_env_ids]
+        ]
+
+        # Reset auxiliary environments to match their nominal environments.
+        # Auxiliary env ids are contiguous: nominal_id + 1 ... nominal_id + num_auxiliary_envs
+        num_aux = int(self.num_auxiliary_envs)
+        if num_aux > 0:
+            offsets = torch.arange(1, num_aux + 1, device=self._device, dtype=torch.long)
+            aux_env_ids = nominal_env_ids[:, None] + offsets[None, :]
+            aux_env_ids = aux_env_ids.reshape(-1)
+            aux_env_ids = aux_env_ids[aux_env_ids < self._num_envs]
+
+            nominal_repeated = nominal_env_ids.repeat_interleave(num_aux)[: aux_env_ids.numel()]
+            self._terrain_levels[aux_env_ids] = self._terrain_levels[nominal_repeated]
+            self._terrain_types[aux_env_ids] = self._terrain_types[nominal_repeated]
+            self._env_origins[aux_env_ids] = self._env_origins[nominal_repeated]
 
     def _init_height_points(self):
         y = torch.tensor(self._terrain_cfg["measured_points_y"], device=self._device, requires_grad=False)
