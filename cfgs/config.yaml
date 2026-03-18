@@ -24,7 +24,7 @@ wandb:
   log_config: True  # Whether to log the config to wandb
 
 # General
-seed: 123
+seed: 0
 device: cuda
 run_name: null  # Optional override for the final log directory name and WandB run name
 
