@@ -22,8 +22,8 @@ config:
   sensors_args:
     camera:
       res: [84, 84]
-      pos: [0.35, -1.0, 0.625]
-      lookat: [0.0, -0.1, -0.3]
+      pos: [0.5, -2.0, 1.0]
+      lookat: [0.0, 0.0, 0.0]
       fov: 60.0
       lights:
         pos: [0.0, 0.0, 2.0]
