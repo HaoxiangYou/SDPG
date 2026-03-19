@@ -9,7 +9,7 @@ from gym import spaces
 
 from envs.genesis_env.genesis_env import GenesisEnv
 from utils.terrain import Terrain
-
+from genesis.utils.geom import pos_lookat_up_to_T
 
 def torch_rand_float(lower: float, upper: float, shape: Tuple[int, int], device: torch.device) -> torch.Tensor:
     return (upper - lower) * torch.rand(*shape, device=device) + lower
@@ -69,10 +69,19 @@ class Go2Terrain(GenesisEnv):
         episode_length = 1000  # Will be converted based on dt in reference
         early_termination = True
 
+        # self._num_single_obs = 45
+        # self._obs_frame_stack = 5
+        # self._num_obs = self._num_single_obs * self._obs_frame_stack
+        
+        # self._num_single_privileged_obs = self._num_single_obs + 31 + 81 + 17 + 3
+        # self._privileged_frame_stack = 5
+        # self._num_privileged_obs = self._num_single_privileged_obs * self._privileged_frame_stack
+
         self._num_height_points = 81
+
         
         self._num_single_obs = 45
-        self._num_history_obs = 5
+        self._num_history_obs = 20
         self._num_obs = self._num_single_obs * self._num_history_obs
 
 
@@ -87,11 +96,13 @@ class Go2Terrain(GenesisEnv):
                 "height_field": spaces.Box(low=-np.inf, high=np.inf, shape=(self._num_height_points,)),
             }
         )
+
         self._dt = sim_options.dt
         self._domain_rand_options = domain_rand_options
         self._terrain_cfg = terrain_args
         self._train = False
         self._debug = False
+        self._vis_obs = vis_obs
 
         super().__init__(
             num_envs=num_envs,
@@ -221,6 +232,57 @@ class Go2Terrain(GenesisEnv):
             self._domain_rand_options["kd_scale_range"][0] + self._domain_rand_options["kd_scale_range"][1]
         ) / 2  # mean value
         self._push_interval = np.ceil(self._domain_rand_options["push_interval_s"] / self._dt)
+
+        if self._vis_obs:
+            self._num_image_stack = 3
+            ego_centric_camera_observation_space = spaces.Box(
+                low=0,
+                high=255,
+                dtype=np.uint8,
+                shape=(
+                    self._num_image_stack * 3,
+                    self._sensors_args["camera"]["res"][0],
+                    self._sensors_args["camera"]["res"][1],
+                ),
+            )
+            # Initialize the sensors
+            # TODO: genesis at commit id 7db43e4caef2b185bf691d29fc545d6480cd224d only supports offset_T
+            offset_T = self._sensors_args["camera"].get("offset_T", None)
+            lookat = self._sensors_args["camera"].get("lookat", None)
+            if offset_T is not None:
+                offset_T = torch.tensor(offset_T, device=self._device)
+            else:
+                if lookat is not None:
+                    offset_T = pos_lookat_up_to_T(
+                        np.array(self._sensors_args["camera"]["pos"]), np.array(lookat), np.array((0.0, 0.0, 1.0))
+                    )
+                else:
+                    offset_T = np.eye(4)
+            # NOTE: A dummy link for the camera to attach to, genesis sensor camera does not support fixed rotation or axis
+            self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.01, collision=False, fixed=True))
+            self._torso_link = self._robot.get_link("base")
+            self._camera = self._scene.add_sensor(
+                gs.sensors.BatchRendererCameraOptions(
+                    res=self._sensors_args["camera"]["res"],
+                    pos=self._sensors_args["camera"]["pos"],
+                    offset_T=offset_T,
+                    fov=self._sensors_args["camera"]["fov"],
+                    entity_idx=self._camera_mount.idx,
+                    lights=[self._sensors_args["camera"]["lights"]],
+                    env_idx=self._nominal_env_ids.cpu().tolist(),
+                )
+            )
+            self._imgs_buf = torch.zeros(
+                self.nominal_env_ids.shape[0],
+                self._num_image_stack,
+                self._sensors_args["camera"]["res"][0],
+                self._sensors_args["camera"]["res"][1],
+                3,
+                device=self._device,
+                dtype=torch.uint8,
+            )
+            self._observation_space["ego_centric_camera_observation"] = ego_centric_camera_observation_space
+
 
     def _compare_reward_functions(self):
         # prepare list of functions
@@ -518,6 +580,47 @@ class Go2Terrain(GenesisEnv):
             axis=-1,
         )
 
+        if self._vis_obs:
+            new_img = self.render(env_ids=self.nominal_env_ids)
+            # Roll the buffer to shift old frames: [t-2, t-1, t-0] -> [t-1, t-0, None]
+            # This moves older frames "to the left" and makes room for the new frame
+            self._imgs_buf = torch.roll(self._imgs_buf, shifts=-1, dims=1)
+            self._imgs_buf[:, -1] = new_img
+        
+
+        # domain_randomization_info = torch.cat(
+        #     (
+        #         (self._friction_values - self._friction_value_offset),  # 1
+        #         self._added_base_mass,  # 1
+        #         self._base_com_bias,  # 3
+        #         self._rand_push_vels[:, :2],  # 2
+        #         (self._kp_scale - self._kp_scale_offset),  # num_actions
+        #         (self._kd_scale - self._kd_scale_offset),  # num_actions
+        #     ),
+        #     dim=-1,
+        # )
+
+        # _privileged_obs_buf = torch.cat(
+        #     (_obs_buf, domain_randomization_info, self._base_lin_vel * self._obs_scales["lin_vel"]),
+        #     axis=-1,
+        # )
+
+        # _privileged_obs_buf = torch.cat(
+        #         (
+        #             _privileged_obs_buf,  # previous
+        #             self._link_contact_states,  # contact states of thighs, calfs and feet (4+4+4)=12
+        #         ),
+        #         dim=-1,
+        #     )
+
+        # heights = (
+        #         torch.clip(self._base_pos[:, 2].unsqueeze(1) - 0.5 - self._measured_heights, -1, 1.0)
+        #         * self._obs_scales["height_measurements"]
+        #     )
+        
+        # _privileged_obs_buf = torch.cat((_privileged_obs_buf, heights), dim=-1)
+
+
         _privileged_obs_buf = torch.cat(
             (_obs_buf, self._base_lin_vel * self._obs_scales["lin_vel"]),
             axis=-1,
@@ -535,6 +638,23 @@ class Go2Terrain(GenesisEnv):
         self._obs_history_buf = torch.cat([self._obs_history_buf[:, self._num_single_obs :], _obs_buf.detach()], dim=1)
         self._privileged_obs_buf = torch.cat([self._privileged_obs_buf[:, self._num_single_privileged_obs :], _privileged_obs_buf.detach()], dim=1)
 
+    def render(self, env_ids: Optional[Sequence[int]] = None) -> None:
+        if self._vis_obs:
+            if env_ids is None:
+                env_ids = self.nominal_env_ids
+            # Attach the camera to the torso pose
+            pos = self._torso_link.get_pos()
+            self._camera_mount.set_pos(pos)
+
+            # TODO: genesis will refresh the image when the scene._dt is different from the last render time
+            # TODO: temporarily we hack by setting the last render time to 0 to force render the new image
+            self._camera._shared_metadata.last_render_timestep = 0
+            # TODO: the batch renderer will first render for all envs, and then return the data for the envs_idx, this may significantly increase the render memory
+            data = self._camera.read(envs_idx=env_ids)
+            return data.rgb
+        else:
+            return None
+
     def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         """Compute observations based on go2_env.py structure."""
         # Compute privileged observations (matching genesis go2_env.py structure)
@@ -549,6 +669,13 @@ class Go2Terrain(GenesisEnv):
             "observations": self._obs_history_buf,
             "height_field": heights,
         }
+
+        if self._vis_obs:
+            batch_size, num_stack, height, width, rgb = self._imgs_buf.shape
+            # Reshape: (batch, num_stack, H, W, 3) -> (batch, num_stack * 3, H, W)
+            observations["ego_centric_camera_observation"] = self._imgs_buf.permute(0, 1, 4, 2, 3).reshape(
+                batch_size, num_stack * rgb, height, width
+            )
 
         return observations
 
@@ -624,8 +751,8 @@ class Go2Terrain(GenesisEnv):
         if len(env_ids) == 0:
             return
 
-        # if self._terrain_cfg["curriculum"]:
-        #     self._update_terrain_curriculum(env_ids)
+        if self._terrain_cfg["curriculum"]:
+            self._update_terrain_curriculum(env_ids)
 
         # TODO: update command curriculum
 
@@ -705,7 +832,20 @@ class Go2Terrain(GenesisEnv):
         )
         self._progress_buf[env_ids] = torch.zeros(len(env_ids), device=self._device, dtype=torch.float)
 
-        # self._scene.draw_debug_spheres(self._terrain_origins[:, 0, :], radius=0.2, color=(0, 1, 0, 0.7))
+        if self._vis_obs:
+            # Find which nominal environments are being reset
+            # self.nominal_env_ids contains the global env_ids of nominal environments
+            # We need to find the indices within nominal_env_ids that match env_ids
+            mask = torch.isin(self.nominal_env_ids, env_ids)
+            nominal_idx_to_reset = torch.nonzero(mask, as_tuple=True)[0]
+
+            if len(nominal_idx_to_reset) > 0:
+                # Render fresh images for the reset nominal environments
+                reset_nominal_env_ids = self.nominal_env_ids[nominal_idx_to_reset]
+                new_img = self.render(env_ids=reset_nominal_env_ids)
+
+                # Initialize the image buffer for these environments
+                self._imgs_buf[nominal_idx_to_reset] = new_img.unsqueeze(1)
 
     def _set_actions(self, actions: torch.Tensor) -> None:
         """Set actions using position control (PD control)."""
@@ -771,24 +911,51 @@ class Go2Terrain(GenesisEnv):
         """Implements the game-inspired curriculum.
 
         Args:
-            env_ids (List[int]): ids of environments being reset
+            env_ids (List[int] or torch.Tensor): ids of environments being reset
         """
+        # Restrict updates to nominal environments only
+        env_ids = torch.as_tensor(env_ids, device=self._device, dtype=torch.long)
+        mask = torch.isin(env_ids, self._nominal_env_ids)
+        nominal_env_ids = env_ids[mask]
+        if nominal_env_ids.numel() == 0:
+            return
 
-        distance = torch.norm(self._base_pos[env_ids, :2] - self._env_origins[env_ids, :2], dim=1)
+        distance = torch.norm(
+            self._base_pos[nominal_env_ids, :2] - self._env_origins[nominal_env_ids, :2], dim=1
+        )
         max_episode_length_s = self._episode_length * self._dt
         # robots that walked far enough progress to harder terains
         move_up = distance > self._terrain.env_length / 2
         # robots that walked less than half of their required distance go to simpler terrains
-        move_down = (distance < torch.norm(self._commands[env_ids, :2], dim=1) * max_episode_length_s * 0.5) * ~move_up
+        move_down = (
+            distance
+            < torch.norm(self._commands[nominal_env_ids, :2], dim=1) * max_episode_length_s * 0.5
+        ) * ~move_up
 
-        self._terrain_levels[env_ids] += 1 * move_up - 1 * move_down
-        self._terrain_levels[env_ids] = torch.where(
-            self._terrain_levels[env_ids] >= self._max_terrain_level,
-            torch.randint_like(self._terrain_levels[env_ids], self._max_terrain_level),
-            torch.clip(self._terrain_levels[env_ids], 0),
+        self._terrain_levels[nominal_env_ids] += 1 * move_up - 1 * move_down
+        self._terrain_levels[nominal_env_ids] = torch.where(
+            self._terrain_levels[nominal_env_ids] >= self._max_terrain_level,
+            torch.randint_like(self._terrain_levels[nominal_env_ids], self._max_terrain_level),
+            torch.clip(self._terrain_levels[nominal_env_ids], 0),
         )  # (the minumum level is zero)
-        self._env_origins[env_ids] = self._terrain_origins[self._terrain_levels[env_ids], self._terrain_types[env_ids]]
+        self._env_origins[nominal_env_ids] = self._terrain_origins[
+            self._terrain_levels[nominal_env_ids], self._terrain_types[nominal_env_ids]
+        ]
 
+        # Reset auxiliary environments to match their nominal environments.
+        # Auxiliary env ids are contiguous: nominal_id + 1 ... nominal_id + num_auxiliary_envs
+        num_aux = int(self.num_auxiliary_envs)
+        if num_aux > 0:
+            offsets = torch.arange(1, num_aux + 1, device=self._device, dtype=torch.long)
+            aux_env_ids = nominal_env_ids[:, None] + offsets[None, :]
+            aux_env_ids = aux_env_ids.reshape(-1)
+            aux_env_ids = aux_env_ids[aux_env_ids < self._num_envs]
+
+            nominal_repeated = nominal_env_ids.repeat_interleave(num_aux)[: aux_env_ids.numel()]
+            self._terrain_levels[aux_env_ids] = self._terrain_levels[nominal_repeated]
+            self._terrain_types[aux_env_ids] = self._terrain_types[nominal_repeated]
+            self._env_origins[aux_env_ids] = self._env_origins[nominal_repeated]
+            
     def _init_height_points(self):
         y = torch.tensor(self._terrain_cfg["measured_points_y"], device=self._device, requires_grad=False)
         x = torch.tensor(self._terrain_cfg["measured_points_x"], device=self._device, requires_grad=False)
@@ -1058,6 +1225,7 @@ class Go2Terrain(GenesisEnv):
         self._obs_history_buf[env_ids] = states["obs_history_buf"].clone()
 
         # Update privileged observation buffer
+        # NOTE: This significantly affects the rewards when not commented out
         self._privileged_obs_buf[env_ids] = states["privileged_obs_buf"].clone()
 
         # Update previous actions if provided
@@ -1235,7 +1403,10 @@ class Go2Terrain(GenesisEnv):
 
     def _randomize_link_friction(self, env_ids):
         min_friction, max_friction = self._domain_rand_options["friction_range"]
-
+        # ratios = (
+        #     gs.rand((len(env_ids), 1), dtype=float).repeat(1, solver.n_geoms) * (max_friction - min_friction)
+        #     + min_friction
+        # )
         ratios = (
             gs.rand((len(env_ids), 1), dtype=float).repeat(1, self._robot.n_links) * (max_friction - min_friction)
             + min_friction
