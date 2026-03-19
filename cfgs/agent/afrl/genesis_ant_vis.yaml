@@ -46,7 +46,7 @@ config:
   num_envs: ${compute_num_envs:${.num_base_envs},${.num_action_perturbations}}
 
   max_epochs: 20000
-  horizon_length: 16
+  horizon_length: 32
   # Discount factor
   gamma: 0.99
   # TD(lambda)
