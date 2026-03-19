@@ -488,7 +488,6 @@ class AllegroHand(GenesisEnv):
             # TODO: genesis will refresh the image when the scene._dt is different from the last render time
             # TODO: temporarily we hack by setting the last render time to 0 to force render the new image
             self._camera._shared_metadata.last_render_timestep = 0
-            # TODO: the batch renderer will first render for all envs, and then return the data for the envs_idx, this may significantly increase the render memory
             data = self._camera.read(envs_idx=env_ids)
             return data.rgb
         else:

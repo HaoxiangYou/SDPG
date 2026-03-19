@@ -59,6 +59,7 @@ sensors_args = {
         "backward": 2.0,
     },
     "camera": {
+        "type": "rgb",
         "res": (84, 84),
         "pos": (0.2, 0.0, -0.1),
         "lookat": (0.8, 0.0, -0.3),
@@ -72,6 +73,10 @@ sensors_args = {
             "directional": True,
             "castshadow": False,
         },
+        "depth": {
+            "min_range": 0.0,
+            "max_range": 5.0,
+        },
     },
 }
 
@@ -82,6 +87,7 @@ env_kwargs = {
     "nominal_env_ids": None,
     "sensors_args": sensors_args,
     "terrain_args": terrain_args,
+    "debug": True,
 }
 
 
