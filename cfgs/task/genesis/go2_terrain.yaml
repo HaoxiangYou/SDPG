@@ -18,11 +18,20 @@ config:
   
   vis_obs: True
   sensors_args:
+    heightfield:
+      res: 0.2 # resolution to sample the heightfield in meters
+      ahead: 5.0 # distance to sample the heightfield ahead in meters
+      backward: 2.0 # distance to sample the heightfield backward in meters
     camera:
+      type: depth # options: rgb, depth
       res: [84, 84]
-      pos: [0.2, 0.0, 0.2]
-      lookat: [0.8, 0.0, 0.0]
+      pos: [0.2, 0.0, -0.1]  # [0.2, 0.0, 0.2] for rgb
+      lookat: [0.8, 0.0, -0.3] # [0.8, 0.0, 0.0] for rgb
       fov: 80.0
+      depth:
+        # Used only when camera.type == depth.
+        min_range: 0.0
+        max_range: 4.0
       lights:
         pos: [8.0, 0.0, 2.0]
         intensity: 0.8
