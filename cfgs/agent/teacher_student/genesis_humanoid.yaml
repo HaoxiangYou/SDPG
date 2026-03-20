@@ -17,7 +17,7 @@ config:
     overrides:
       rl_games:
         config:
-          max_epochs: 10000
+          max_epochs: 2000
 
   # ---------- Student (DAgger) ----------
   student:
