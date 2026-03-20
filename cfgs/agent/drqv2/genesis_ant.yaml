@@ -6,7 +6,7 @@ config:
   updates_per_step: 16
 
   num_train_frames: 12000000
-  num_seed_frames: 4000
+  num_seed_frames: 32000
   action_repeat: 2
   discount: 0.99
   replay_buffer_size: 1000000
