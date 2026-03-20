@@ -25,8 +25,8 @@ config:
     camera:
       type: depth # options: rgb, depth
       res: [84, 84]
-      pos: [0.2, 0.0, -0.1]  # [0.2, 0.0, 0.2] for rgb
-      lookat: [0.8, 0.0, -0.3] # [0.8, 0.0, 0.0] for rgb
+      pos: [0.32, 0.0, 0.15]  # [0.2, 0.0, 0.2] for rgb
+      lookat: [1.0, 0.0, 0.0] # [0.8, 0.0, 0.0] for rgb
       fov: 80.0
       depth:
         # Used only when camera.type == depth.
