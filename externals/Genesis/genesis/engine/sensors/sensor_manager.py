@@ -63,6 +63,17 @@ class SensorManager:
             self._cache_slices_by_type[sensor_cls] = slice(cls_cache_start_idx, cls_cache_end_idx)
 
         for dtype in cache_size_per_dtype.keys():
+            # TODO: Cache is allocated per-dtype with shape (n_envs, total_cache_size)
+            # shared across ALL sensor classes of the same dtype.  When a raycaster /
+            # depth-camera uses ``env_idx`` for subset rendering, its portion of this
+            # cache is still allocated at full (n_envs) size even though only
+            # len(env_idx) rows are actively used.  The raycaster manages its own
+            # compact cache internally and scatters results back here for delay /
+            # ring-buffer compatibility.  To fully reclaim this wasted memory,
+            # SensorManager would need per-sensor-class cache allocation instead of
+            # per-dtype, which would also require splitting the ring-buffer and
+            # clone logic.  Other float-dtype sensors (IMU, ContactForce, …) sharing
+            # this cache are unaffected.
             cache_shape = (self._sim._B, cache_size_per_dtype[dtype])
             self._ground_truth_cache[dtype] = torch.zeros(cache_shape, dtype=dtype, device=gs.device)
             self._cache[dtype] = torch.zeros(cache_shape, dtype=dtype, device=gs.device)

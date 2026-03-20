@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Optional, Sequence
 
 import numpy as np
 from pydantic import Field
@@ -270,6 +270,10 @@ class Raycaster(RigidSensorOptionsMixin, SensorOptions):
         The value to return for no hit. Defaults to max_range if not specified.
     return_world_frame : bool, optional
         Whether to return points in the world frame. Defaults to False (local frame).
+    env_idx : sequence of int, optional
+        If set, only these environment indices are ray-cast (subset rendering).
+        Reduces compute proportionally.  When reading back, real env ids are
+        transparently mapped to compact cache rows.  If None, all envs are used.
     debug_sphere_radius: float, optional
         The radius of each debug sphere drawn in the scene. Defaults to 0.02.
     debug_ray_start_color: float, optional
@@ -283,6 +287,7 @@ class Raycaster(RigidSensorOptionsMixin, SensorOptions):
     max_range: float = 20.0
     no_hit_value: float = Field(default_factory=lambda data: data["max_range"])
     return_world_frame: bool = False
+    env_idx: Optional[Sequence[int]] = None
 
     debug_sphere_radius: float = 0.02
     debug_ray_start_color: tuple[float, float, float, float] = (0.5, 0.5, 1.0, 1.0)
