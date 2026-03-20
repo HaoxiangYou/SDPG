@@ -165,6 +165,7 @@ class WalkerHurtle(GenesisEnv):
                     max_range=depth_cfg.get("max_range", 5.0),
                     return_world_frame=True,
                     draw_debug=self._debug,
+                    env_idx=self._nominal_env_ids.cpu().tolist(),
                 )
                 if "no_hit_value" in depth_cfg:
                     depth_camera_kwargs["no_hit_value"] = depth_cfg["no_hit_value"]
@@ -418,13 +419,10 @@ class WalkerHurtle(GenesisEnv):
 
             if self._camera_type == "depth":
                 self._scene.sim._sensor_manager.step()
-                # TODO: Genesis Depth Camera sensor requires much less memory than the gs-Madrona RGB render
-                # TODO: No additional changes are yet applied to Genesis Source Code to per nominal environment rendering
-                # TODO: Memory usage are good enough to run in 3070 or 4080 GPU
-                depth_image = self._camera.read_image()
+                depth_image = self._camera.read_image(envs_idx=env_ids)
                 if depth_image.ndim == 2:
                     depth_image = depth_image.unsqueeze(0)
-                img = self._depth_to_uint8(depth_image[env_ids])
+                img = self._depth_to_uint8(depth_image)
             else:
                 # TODO: genesis will refresh the image when the scene._dt is different from the last render time
                 # TODO: temporarily we hack by setting the last render time to 0 to force render the new image

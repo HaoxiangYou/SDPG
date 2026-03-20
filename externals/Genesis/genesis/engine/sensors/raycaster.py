@@ -131,22 +131,25 @@ def kernel_update_aabbs(
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
     aabb_state: ti.template(),
+    env_idx_map: ti.types.ndarray(ndim=1),  # [n_subset] -> real env index
 ):
-    for i_b, i_f in ti.ndrange(free_verts_state.pos.shape[1], faces_info.verts_idx.shape[0]):
-        aabb_state.aabbs[i_b, i_f].min.fill(ti.math.inf)
-        aabb_state.aabbs[i_b, i_f].max.fill(-ti.math.inf)
+    n_subset = env_idx_map.shape[0]
+    for i_local, i_f in ti.ndrange(n_subset, faces_info.verts_idx.shape[0]):
+        i_b = env_idx_map[i_local]  # real env for solver vertex lookup
+        aabb_state.aabbs[i_local, i_f].min.fill(ti.math.inf)
+        aabb_state.aabbs[i_local, i_f].max.fill(-ti.math.inf)
 
         for i in ti.static(range(3)):
             i_v = faces_info.verts_idx[i_f][i]
             i_fv = verts_info.verts_state_idx[i_v]
             if verts_info.is_fixed[i_v]:
                 pos_v = fixed_verts_state.pos[i_fv]
-                aabb_state.aabbs[i_b, i_f].min = ti.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
-                aabb_state.aabbs[i_b, i_f].max = ti.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
+                aabb_state.aabbs[i_local, i_f].min = ti.min(aabb_state.aabbs[i_local, i_f].min, pos_v)
+                aabb_state.aabbs[i_local, i_f].max = ti.max(aabb_state.aabbs[i_local, i_f].max, pos_v)
             else:
                 pos_v = free_verts_state.pos[i_fv, i_b]
-                aabb_state.aabbs[i_b, i_f].min = ti.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
-                aabb_state.aabbs[i_b, i_f].max = ti.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
+                aabb_state.aabbs[i_local, i_f].min = ti.min(aabb_state.aabbs[i_local, i_f].min, pos_v)
+                aabb_state.aabbs[i_local, i_f].max = ti.max(aabb_state.aabbs[i_local, i_f].max, pos_v)
 
 
 @ti.kernel
@@ -168,22 +171,35 @@ def kernel_cast_rays(
     sensor_cache_offsets: ti.types.ndarray(ndim=1),  # [n_sensors] - cache start index for each sensor
     sensor_point_offsets: ti.types.ndarray(ndim=1),  # [n_sensors] - point start index for each sensor
     sensor_point_counts: ti.types.ndarray(ndim=1),  # [n_sensors] - number of points for each sensor
-    output_hits: ti.types.ndarray(ndim=2),  # [n_env, total_cache_size]
+    env_idx_map: ti.types.ndarray(ndim=1),  # [n_subset] -> real env index (identity when no subset)
+    output_hits: ti.types.ndarray(ndim=2),  # [n_subset, total_cache_size]
 ):
     """
     Taichi kernel for ray casting, accelerated by a Bounding Volume Hierarchy (BVH).
 
-    The result `output_hits` will be a 2D array of shape (n_env, total_cache_size) where in the second dimension,
+    The result `output_hits` will be a 2D array of shape (n_subset, total_cache_size) where in the second dimension,
     each sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges (n_points)].
+
+    When ``env_idx_map`` is an identity mapping ``[0, 1, ..., n_envs-1]``, all envs
+    are ray-cast (original behaviour).  When it contains a subset of env indices,
+    only those envs are ray-cast and written into the compact ``output_hits``.
+
+    Index conventions:
+      - ``i_local`` — compact row (0 .. n_subset-1), used for BVH / AABB
+        (which are allocated with n_subset batches) and for ``output_hits``.
+      - ``i_b`` — real env index from the solver, used for solver-owned state
+        (``links_pos``, ``links_quat``, ``free_verts_state``).
     """
 
     n_triangles = faces_info.verts_idx.shape[0]
     n_points = ray_starts.shape[0]
-    # batch, point
-    for i_b, i_p in ti.ndrange(output_hits.shape[0], n_points):
+    n_subset = env_idx_map.shape[0]
+    # compact-row, point
+    for i_local, i_p in ti.ndrange(n_subset, n_points):
+        i_b = env_idx_map[i_local]  # real env index for solver state
         i_s = points_to_sensor_idx[i_p]
 
-        # --- 1. Setup Ray ---
+        # --- 1. Setup Ray (solver state → real env) ---
         link_pos = ti.math.vec3(links_pos[i_b, i_s, 0], links_pos[i_b, i_s, 1], links_pos[i_b, i_s, 2])
         link_quat = ti.math.vec4(
             links_quat[i_b, i_s, 0], links_quat[i_b, i_s, 1], links_quat[i_b, i_s, 2], links_quat[i_b, i_s, 3]
@@ -195,7 +211,7 @@ def kernel_cast_rays(
         ray_dir_local = ti.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2])
         ray_direction_world = ti_normalize(ti_transform_by_quat(ray_dir_local, link_quat), gs.EPS)
 
-        # --- 2. BVH Traversal ---
+        # --- 2. BVH Traversal (compact BVH → i_local, solver verts → i_b) ---
         # FIXME: this duplicates the logic in LBVH.query() which also does traversal
 
         max_range = max_ranges[i_s]
@@ -210,7 +226,7 @@ def kernel_cast_rays(
             stack_idx -= 1
             node_idx = node_stack[stack_idx]
 
-            node = bvh_nodes[i_b, node_idx]
+            node = bvh_nodes[i_local, node_idx]
 
             # Check if ray hits the node's bounding box
             aabb_t = ray_aabb_intersection(ray_start_world, ray_direction_world, node.bound.min, node.bound.max)
@@ -219,7 +235,7 @@ def kernel_cast_rays(
                 if node.left == -1:  # is leaf node
                     # A leaf node corresponds to one of the sorted triangles. Find the original triangle index.
                     sorted_leaf_idx = node_idx - (n_triangles - 1)
-                    i_f = ti.cast(bvh_morton_codes[0, sorted_leaf_idx][1], ti.i32)
+                    i_f = ti.cast(bvh_morton_codes[i_local, sorted_leaf_idx][1], ti.i32)
 
                     tri_vertices = ti.Matrix.zero(gs.ti_float, 3, 3)
                     for i in ti.static(range(3)):
@@ -257,35 +273,41 @@ def kernel_cast_rays(
         if hit_face >= 0:
             dist = max_range
             # Store distance at: cache_offset + (num_points_in_sensor * 3) + point_idx_in_sensor
-            output_hits[i_b, i_p_dist] = dist
+            output_hits[i_local, i_p_dist] = dist
 
             if is_world_frame[i_s]:
                 hit_point = ray_start_world + dist * ray_direction_world
 
                 # Store points at: cache_offset + point_idx_in_sensor * 3
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = hit_point.x
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = hit_point.y
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 2] = hit_point.z
+                output_hits[i_local, i_p_offset + i_p_sensor * 3 + 0] = hit_point.x
+                output_hits[i_local, i_p_offset + i_p_sensor * 3 + 1] = hit_point.y
+                output_hits[i_local, i_p_offset + i_p_sensor * 3 + 2] = hit_point.z
             else:
                 # Local frame output along provided local ray direction
                 hit_point = dist * ti_normalize(
                     ti.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2]), gs.EPS
                 )
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = hit_point.x
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = hit_point.y
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 2] = hit_point.z
+                output_hits[i_local, i_p_offset + i_p_sensor * 3 + 0] = hit_point.x
+                output_hits[i_local, i_p_offset + i_p_sensor * 3 + 1] = hit_point.y
+                output_hits[i_local, i_p_offset + i_p_sensor * 3 + 2] = hit_point.z
         else:
             # No hit
-            output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = 0.0
-            output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = 0.0
-            output_hits[i_b, i_p_offset + i_p_sensor * 3 + 2] = 0.0
-            output_hits[i_b, i_p_dist] = no_hit_values[i_s]
+            output_hits[i_local, i_p_offset + i_p_sensor * 3 + 0] = 0.0
+            output_hits[i_local, i_p_offset + i_p_sensor * 3 + 1] = 0.0
+            output_hits[i_local, i_p_offset + i_p_sensor * 3 + 2] = 0.0
+            output_hits[i_local, i_p_dist] = no_hit_values[i_s]
 
 
 @dataclass
 class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     bvh: LBVH | None = None
     aabb: AABB | None = None
+
+    # Subset rendering: only ray-cast these envs (None ⇒ all envs).
+    env_idx: list[int] | None = None
+    _env_idx_map_t: torch.Tensor | None = None
+    _compact_ground_truth_cache: torch.Tensor | None = None
+    _cls_cache_start_idx: int = 0
 
     sensors_ray_start_idx: list[int] = field(default_factory=list)
     total_n_rays: int = 0
@@ -346,6 +368,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             verts_info=shared_metadata.solver.verts_info,
             faces_info=shared_metadata.solver.faces_info,
             aabb_state=shared_metadata.aabb,
+            env_idx_map=shared_metadata._env_idx_map_t,
         )
         shared_metadata.bvh.build()
 
@@ -359,7 +382,20 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             )
             n_faces = self._shared_metadata.solver.faces_info.geom_idx.shape[0]
             n_envs = self._shared_metadata.solver.free_verts_state.pos.shape[1]
-            self._shared_metadata.aabb = AABB(n_batches=n_envs, n_aabbs=n_faces)
+
+            # Store env_idx for subset rendering (from first sensor) before AABB/BVH allocation
+            if self._options.env_idx is not None:
+                self._shared_metadata.env_idx = list(self._options.env_idx)
+                self._shared_metadata._env_idx_map_t = torch.tensor(
+                    self._shared_metadata.env_idx, dtype=gs.tc_int, device=gs.device
+                )
+                n_bvh_batches = len(self._shared_metadata.env_idx)
+            else:
+                self._shared_metadata._env_idx_map_t = torch.arange(
+                    n_envs, dtype=gs.tc_int, device=gs.device
+                )
+                n_bvh_batches = n_envs
+            self._shared_metadata.aabb = AABB(n_batches=n_bvh_batches, n_aabbs=n_faces)
 
             # FIXME: Empirically, the values 0 and 64 seem to be sufficient and decrease memory usage.
             # Should these parameters be exposed to the user?
@@ -367,6 +403,8 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
                 self._shared_metadata.aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64
             )
             self._update_bvh(self._shared_metadata)
+
+            self._shared_metadata._cls_cache_start_idx = self._cache_idx
 
         self._shared_metadata.patterns.append(self._options.pattern)
         pos_offset = self._shared_metadata.offsets_pos[0, -1, :]  # all envs have same offset on build
@@ -431,7 +469,22 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             links_pos = links_pos[None]
             links_quat = links_quat[None]
 
-        output_hits = shared_ground_truth_cache.contiguous()
+        env_idx = shared_metadata.env_idx
+        if env_idx is not None:
+            # Compact path: only ray-cast the subset of envs
+            if shared_metadata._compact_ground_truth_cache is None:
+                cache_size = shared_ground_truth_cache.shape[1]
+                shared_metadata._compact_ground_truth_cache = torch.zeros(
+                    len(env_idx), cache_size,
+                    dtype=shared_ground_truth_cache.dtype, device=gs.device,
+                )
+            output_hits = shared_metadata._compact_ground_truth_cache.contiguous()
+            env_idx_map = shared_metadata._env_idx_map_t
+        else:
+            # Full path: ray-cast all envs (identity mapping)
+            output_hits = shared_ground_truth_cache.contiguous()
+            env_idx_map = shared_metadata._env_idx_map_t
+
         kernel_cast_rays(
             fixed_verts_state=shared_metadata.solver.fixed_verts_state,
             free_verts_state=shared_metadata.solver.free_verts_state,
@@ -450,9 +503,16 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             sensor_cache_offsets=shared_metadata.sensor_cache_offsets,
             sensor_point_offsets=shared_metadata.sensor_point_offsets,
             sensor_point_counts=shared_metadata.sensor_point_counts,
+            env_idx_map=env_idx_map,
             output_hits=output_hits,
         )
-        if not shared_ground_truth_cache.is_contiguous():
+
+        if env_idx is not None:
+            # Scatter compact results back into the full SensorManager cache so
+            # that ring-buffer / delay logic and read_ground_truth() still work
+            # for the rendered envs via the standard path.
+            shared_ground_truth_cache[shared_metadata._env_idx_map_t.long()] = output_hits
+        elif not shared_ground_truth_cache.is_contiguous():
             shared_ground_truth_cache.copy_(output_hits)
 
     @classmethod
@@ -465,6 +525,60 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
     ):
         buffered_data.set(shared_ground_truth_cache)
         cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
+
+    # ===================== Compact-cache read (env_idx subset) =====================
+
+    def _real_to_compact_idx(self, envs_idx) -> torch.Tensor:
+        """Map real environment indices to compact cache row indices."""
+        env_idx_t = self._shared_metadata._env_idx_map_t.long()
+        if isinstance(envs_idx, (int, np.integer)):
+            envs_idx = [int(envs_idx)]
+        if isinstance(envs_idx, torch.Tensor):
+            envs_idx = envs_idx.cpu().tolist()
+        compact = []
+        for e in envs_idx:
+            matches = (env_idx_t == e).nonzero(as_tuple=True)[0]
+            if len(matches) == 0:
+                raise ValueError(f"Environment index {e} is not in env_idx {self._shared_metadata.env_idx}")
+            compact.append(matches[0].item())
+        return torch.tensor(compact, device=gs.device, dtype=torch.long)
+
+    def _read_compact(self, compact_cache: torch.Tensor, envs_idx=None):
+        """Read from the compact ground-truth cache with env_idx reverse mapping."""
+        env_idx = self._shared_metadata.env_idx
+        if envs_idx is not None:
+            compact_idx = self._real_to_compact_idx(envs_idx)
+        else:
+            compact_idx = torch.arange(len(env_idx), device=gs.device, dtype=torch.long)
+
+        offset = self._cache_idx - self._shared_metadata._cls_cache_start_idx
+        sensor_data = compact_cache[compact_idx, offset : offset + self._cache_size]
+        tensor_chunk = sensor_data.reshape((len(compact_idx), -1))
+
+        return_values = []
+        for i, shape in enumerate(self._return_shapes):
+            field_data = tensor_chunk[..., self._cache_slices[i]].reshape((len(compact_idx), *shape))
+            if self._manager._sim.n_envs == 0:
+                field_data = field_data[0]
+            return_values.append(field_data)
+
+        if len(return_values) == 1:
+            return return_values[0]
+        return self._return_data_class(*return_values)
+
+    @gs.assert_built
+    def read(self, envs_idx=None):
+        compact = self._shared_metadata._compact_ground_truth_cache
+        if compact is not None:
+            return self._read_compact(compact, envs_idx)
+        return self._get_formatted_data(self._manager.get_cloned_from_cache(self), envs_idx)
+
+    @gs.assert_built
+    def read_ground_truth(self, envs_idx=None):
+        compact = self._shared_metadata._compact_ground_truth_cache
+        if compact is not None:
+            return self._read_compact(compact, envs_idx)
+        return self._get_formatted_data(self._manager.get_cloned_from_cache(self, is_ground_truth=True), envs_idx)
 
     def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
         """
