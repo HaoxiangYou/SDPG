@@ -72,8 +72,8 @@ config:
   actor_lr_schedule:
     name: cosine  # Options: null, linear, cosine (cosine includes warmup)
     # CosineAnnealingLR with warmup parameters
-    T_max: 50000
-    eta_min: 1e-5
+    T_max: 20000
+    eta_min: 1e-4
     warmup_epochs: 100  # Number of epochs for warmup (linear increase from warmup_start_lr to actor_lr)
     warmup_start_lr: 0  # Starting learning rate for warmup (default: 0.0)
   
@@ -86,9 +86,7 @@ config:
     temperature_lr: 1e-3
 
   critic_lr_schedule:
-    name: linear  # Options: null, linear, cosine
-    start_factor: 1.0
-    end_factor: 0.1
+    name: null
   
   # batch size for training the critic
   mini_batch_size: 4096
