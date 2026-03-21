@@ -239,6 +239,6 @@
   </asset>
   <worldbody>
     <light pos="1 0 3.5" dir="0 0 -1" directional="true"/>
-    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
+    <!-- <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/> -->
   </worldbody>
 </mujoco>
