@@ -60,7 +60,7 @@ class Walker(GenesisEnv):
             self._num_image_stack = 3
             self._observation_space = spaces.Dict(
                 {
-                    "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(11,)),
+                    "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(17,)),
                     "RGB": spaces.Box(
                         low=0,
                         high=255,
