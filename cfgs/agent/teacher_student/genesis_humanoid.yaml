@@ -1,4 +1,4 @@
-# Teacher–student DAgger for Genesis Hopper (vis_obs required)
+# Teacher-student DAgger for Genesis Humanoid (vis_obs required)
 # Teacher: PPO only (trained via agents/rl_games.py). Student: same network init as AFRL (models.actor from config).
 # Override task.config.vis_obs=true or use a task that enables RGB.
 name: teacher_student
@@ -8,12 +8,12 @@ config:
   num_envs: ${.student.num_envs}
 
   # ---------- Teacher (PPO) ----------
-  # teacher_checkpoint: null → train teacher first (writes to run_dir/teacher/ with .hydra, training_logs/nn, summaries).
-  # teacher_checkpoint: /path/to/folder → rl_games-style folder (training_logs/nn, .hydra, summaries); copied to run_dir/teacher/ if external.
+  # teacher_checkpoint: null -> train teacher first (writes to run_dir/teacher/ with .hydra, training_logs/nn, summaries).
+  # teacher_checkpoint: /path/to/folder -> rl_games-style folder (training_logs/nn, .hydra, summaries); copied to run_dir/teacher/ if external.
   teacher:
-    teacher_ppo_agent: ppo/genesis_hopper
+    teacher_ppo_agent: ppo/genesis_humanoid
     teacher_checkpoint: null
-    # Merged into loaded PPO config (same structure as cfgs/agent/ppo/genesis_hopper.yaml config)
+    # Merged into loaded PPO config (same structure as cfgs/agent/ppo/genesis_humanoid.yaml config)
     overrides:
       rl_games:
         config:
@@ -24,7 +24,7 @@ config:
     num_envs: 32
 
     # DAgger
-    max_epochs: 20000
+    max_epochs: 120000
     steps_per_epoch: 32  # steps_num
     batch_size: 128
     learning_starts: 32000

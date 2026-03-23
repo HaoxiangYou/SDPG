@@ -11,13 +11,13 @@ config:
   # teacher_checkpoint: null → train teacher first (writes to run_dir/teacher/ with .hydra, training_logs/nn, summaries).
   # teacher_checkpoint: /path/to/folder → rl_games-style folder (training_logs/nn, .hydra, summaries); copied to run_dir/teacher/ if external.
   teacher:
-    teacher_ppo_agent: ppo/genesis_hopper
+    teacher_ppo_agent: ppo/genesis_ant
     teacher_checkpoint: null
-    # Merged into loaded PPO config (same structure as cfgs/agent/ppo/genesis_hopper.yaml config)
+    # Merged into loaded PPO config (same structure as cfgs/agent/ppo/genesis_ant.yaml config)
     overrides:
       rl_games:
         config:
-          max_epochs: 2000
+          max_epochs: 5000
 
   # ---------- Student (DAgger) ----------
   student:
@@ -25,7 +25,7 @@ config:
 
     # DAgger
     max_epochs: 20000
-    steps_per_epoch: 32  # steps_num
+    steps_per_epoch: 64  # steps_num
     batch_size: 128
     learning_starts: 32000
     num_update_per_epoch: 2000
@@ -43,12 +43,12 @@ config:
           encoder:
             type: drqv2
           network:
-            output_dim: 128
+            output_dim: 256
           apply_rms: false
       policy_head:
         type: mlp
         network:
-          units: [128, 64, 32]
+          units: [256, 64, 32]
           activation: elu
         fixed_std: true
-        log_std_init: -1.0
+        log_std_init: 0.0

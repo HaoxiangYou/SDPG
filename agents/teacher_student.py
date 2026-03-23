@@ -141,6 +141,19 @@ class TeacherStudentRunner:
             return f"{base_name}-{suffix}"
         return base_name
 
+    def _resolve_wandb_group(self, config: DictConfig, suffix: str | None = None) -> str | None:
+        if not getattr(config, "wandb", None):
+            return None
+        base_group = config.wandb.get("group")
+        if base_group is None:
+            return None
+        base_group = str(base_group).strip()
+        if not base_group:
+            return None
+        if suffix:
+            return f"{base_group}-{suffix}"
+        return base_group
+
     def _init_wandb(
         self,
         config: DictConfig,
@@ -154,7 +167,7 @@ class TeacherStudentRunner:
         wandb_kwargs = {
             "project": wandb_config.get("project", "teacher_student"),
             "entity": wandb_config.get("entity"),
-            "group": wandb_config.get("group"),
+            "group": self._resolve_wandb_group(config, suffix=suffix),
             "job_type": wandb_config.get("job_type"),
             "name": self._resolve_wandb_name(config, suffix=suffix),
             "tags": wandb_config.get("tags", []),
