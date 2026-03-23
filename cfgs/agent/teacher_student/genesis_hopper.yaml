@@ -21,7 +21,7 @@ config:
 
   # ---------- Student (DAgger) ----------
   student:
-    num_envs: 32  # num_actors in D.VA
+    num_envs: 32
 
     # DAgger
     max_epochs: 20000
