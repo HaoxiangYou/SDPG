@@ -24,14 +24,17 @@ config:
       backward: 2.0 # distance to sample the heightfield backward in meters
     camera:
       type: depth # options: rgb, depth
-      res: [84, 84]
+      res: [60, 106]
+      # (H, W) after crop+resize, matching extreme-parkour 58×87 (height × width).
+      obs_res: [58, 87]
       pos: [0.32, 0.0, 0.15]  # [0.2, 0.0, 0.2] for rgb
       lookat: [1.0, 0.0, 0.0] # [0.8, 0.0, 0.0] for rgb
       fov: 80.0
       depth:
-        # Used only when camera.type == depth.
+        # Used only when camera.type == depth. Matches extreme-parkour near/far clip (meters).
         min_range: 0.0
-        max_range: 4.0
+        max_range: 2.0
+        dis_noise: 0.0
       lights:
         pos: [8.0, 0.0, 2.0]
         intensity: 0.8
