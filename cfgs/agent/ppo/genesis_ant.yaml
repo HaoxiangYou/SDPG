@@ -2,7 +2,7 @@ name: ppo
 
 config:
 
-  num_envs: 4096
+  num_envs: 1024
 
   input_keys:
     actor: 
@@ -72,7 +72,7 @@ config:
       e_clip: 0.2
       horizon_length: 32
       minibatch_size: 8192
-      mini_epochs: 5
+      mini_epochs: 1
       critic_coef: 4
       clip_value: True
       seq_length: 4
