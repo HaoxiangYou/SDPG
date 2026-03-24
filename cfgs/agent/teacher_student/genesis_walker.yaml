@@ -1,0 +1,54 @@
+# Teacher–student DAgger for Genesis Walker (vis_obs required)
+# Teacher: PPO only (trained via agents/rl_games.py). Student: same network init as AFRL (models.actor from config).
+# Override task.config.vis_obs=true or use a task that enables RGB.
+name: teacher_student
+
+config:
+  # Resolved for Hydra root num_envs (task.config uses it)
+  num_envs: ${.student.num_envs}
+
+  # ---------- Teacher (PPO) ----------
+  # teacher_checkpoint: null → train teacher first (writes to run_dir/teacher/ with .hydra, training_logs/nn, summaries).
+  # teacher_checkpoint: /path/to/folder → rl_games-style folder (training_logs/nn, .hydra, summaries); copied to run_dir/teacher/ if external.
+  teacher:
+    teacher_ppo_agent: ppo/genesis_walker
+    teacher_checkpoint: null
+    # Merged into loaded PPO config (same structure as cfgs/agent/ppo/genesis_walker.yaml config)
+    overrides:
+      rl_games:
+        config:
+          max_epochs: 4000
+
+  # ---------- Student (DAgger) ----------
+  student:
+    num_envs: 48
+
+    # DAgger
+    max_epochs: 20000
+    steps_per_epoch: 32  # steps_num
+    batch_size: 128
+    learning_starts: 32000
+    num_update_per_epoch: 2000
+    supervised_loss_threshold: 0.1  # early stop threshold
+    max_replay_buffer_size: 100000
+    actor_lr: 2e-3  # actor_learning_rate
+    betas: [0.7, 0.95]
+    lr_schedule: linear
+    grad_norm: 1.0
+    save_frequency: 400
+
+    actor:
+      inputs:
+        - name: RGB
+          encoder:
+            type: drqv2
+          network:
+            output_dim: 128
+          apply_rms: false
+      policy_head:
+        type: mlp
+        network:
+          units: [128, 64, 32]
+          activation: elu
+        fixed_std: true
+        log_std_init: -1.0
