@@ -1,0 +1,32 @@
+# DrQ-v2 agent for Genesis Walker (pixel-based, uses externals/drqv2)
+name: drqv2
+
+config:
+  num_envs: 32
+  updates_per_step: 16
+
+  num_train_frames: 3000000
+  num_seed_frames: 4000
+  action_repeat: 2
+  discount: 0.99
+  replay_buffer_size: 1000000
+  replay_buffer_num_workers: 4
+  batch_size: 512
+  nstep: 1
+  save_snapshot: true
+  save_snapshot_every_frames: 500000  # save snapshot.pt every N global frames (after seed phase); also initial_snapshot.pt and last_snapshot.pt
+  save_video: false
+  use_tb: true
+
+  # Eval
+  eval_every_frames: 10000
+  num_eval_episodes: 10
+
+  lr: 1e-4
+  feature_dim: 50
+  hidden_dim: 1024
+  critic_target_tau: 0.01
+  update_every_steps: 2
+  num_expl_steps: 2000
+  stddev_schedule: "linear(1.0,0.1,100000)"
+  stddev_clip: 0.3
