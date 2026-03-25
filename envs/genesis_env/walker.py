@@ -118,9 +118,9 @@ class Walker(GenesisEnv):
         self._termination_height_lower_bound = -0.5
         self._termination_height_upper_bound = 0.7
         self._termination_angle = 1.0
-        self._forward_reward_scale = 10.0
-        self._health_bonus = 1.0
-        self._action_penalty_scale = -1e-1
+        self._forward_reward_scale = 1.0
+        self._health_bonus = 0.1
+        self._action_penalty_scale = -1e-2
 
         if self._vis_obs:
             # Initialize the sensors
@@ -253,12 +253,12 @@ class Walker(GenesisEnv):
 
     def _post_physics_step(self) -> None:
         """Update image buffer by rolling frames and appending new image."""
-        # if self._vis_obs:
-        #     new_img = self.render(env_ids=self.nominal_env_ids)
-        #     # Roll the buffer to shift old frames: [t-2, t-1, t-0] -> [t-1, t-0, None]
-        #     # This moves older frames "to the left" and makes room for the new frame
-        #     self._imgs_buf = torch.roll(self._imgs_buf, shifts=-1, dims=1)
-        #     self._imgs_buf[:, -1] = new_img
+        if self._vis_obs:
+            new_img = self.render(env_ids=self.nominal_env_ids)
+            # Roll the buffer to shift old frames: [t-2, t-1, t-0] -> [t-1, t-0, None]
+            # This moves older frames "to the left" and makes room for the new frame
+            self._imgs_buf = torch.roll(self._imgs_buf, shifts=-1, dims=1)
+            self._imgs_buf[:, -1] = new_img
 
     def render(self, env_ids: Optional[Sequence[int]] = None) -> Optional[torch.Tensor]:
         if self._vis_obs:

@@ -1,0 +1,27 @@
+# DreamerV3 for Genesis Walker.
+name: dreamerv3
+
+config:
+  num_envs: 16
+  size: [64, 64]
+  action_repeat: 2
+
+  # Replay / schedule.
+  prefill: 2500
+  steps: 500000
+  log_every: 10000
+  dataset_size: 1000000
+  save_snapshot: true
+  save_snapshot_every_frames: 100000
+
+  # World-model training.
+  batch_size: 16
+  batch_length: 64
+  train_ratio: 512
+  pretrain: 100
+
+  discount: 0.997
+  video_pred_log: false
+  compile: true
+  precision: 32
+  debug: false
