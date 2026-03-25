@@ -30,10 +30,6 @@ config:
       pos: [0.2, 0.0, -0.1]
       lookat: [0.8, 0.0, -0.3]
       fov: 80.0
-      depth:
-        # Used only when camera.type == depth.
-        min_range: 0.0
-        max_range: 4.0
       lights:
         pos: [8.0, 0.0, 2.0]
         intensity: 0.8

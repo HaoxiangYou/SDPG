@@ -160,6 +160,9 @@ class BatchRendererCameraOptions(BaseCameraOptions):
     use_rasterizer: bool = True
     update_ground_truth_only: bool = True
     env_idx: Optional[Sequence[int]] = None
+    render_rgb: bool = True
+    render_depth: bool = False
+    render_segmentation: bool = False
 
     def model_post_init(self, _):
         super().model_post_init(_)
@@ -167,3 +170,5 @@ class BatchRendererCameraOptions(BaseCameraOptions):
             gs.raise_exception(f"near must be positive, got: {self.near}")
         if self.far <= self.near:
             gs.raise_exception(f"far must be greater than near, got near={self.near}, far={self.far}")
+        if not (self.render_rgb or self.render_depth or self.render_segmentation):
+            gs.raise_exception("At least one of render_rgb, render_depth, render_segmentation must be True.")
