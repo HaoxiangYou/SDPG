@@ -571,8 +571,8 @@ class G1(GenesisEnv):
         )
 
         reward = (
-            2.0 * track_lin_vel_xy_exp
-            + 1.5 * track_ang_vel_z_exp
+            1.0 * track_lin_vel_xy_exp
+            + 1.0 * track_ang_vel_z_exp
             - 0.2 * lin_vel_z_l2
             - 0.05 * ang_vel_xy_l2
             - 2e-06 * dof_torques_l2
@@ -614,18 +614,17 @@ class G1(GenesisEnv):
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
         # IsaacLab G1 flat: base_contact = illegal_contact on torso_link, threshold 1.0 (no height-based term).
         # _ = states
-        # termination = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-        # if not self._early_termination or not self._torso_contact_link_indices:
-        #     return termination
-        # link_contact_forces = torch.tensor(
-        #     self._robot.get_links_net_contact_force(), device=self._device, dtype=torch.float
-        # )
-        # torso_force_norm = torch.norm(
-        #     link_contact_forces[:, self._torso_contact_link_indices, :], dim=-1
-        # ).max(dim=1).values
-        # termination = torso_force_norm > self._illegal_contact_force_threshold
-        robot_states = states["robot_states"]
         termination = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+
+        link_contact_forces = torch.tensor(
+            self._robot.get_links_net_contact_force(), device=self._device, dtype=torch.float
+        )
+        torso_force_norm = torch.norm(
+            link_contact_forces[:, self._torso_contact_link_indices, :], dim=-1
+        ).max(dim=1).values
+        termination = torso_force_norm > self._illegal_contact_force_threshold
+        robot_states = states["robot_states"]
+        # termination = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         if self._early_termination:
             termination = robot_states["base_pose"][:, 2] < self._termination_height_lower_bound
             # humanoid z position too high is likely due to simulation physics failure.
