@@ -102,8 +102,9 @@ class G1(GenesisEnv):
         )
         self._plane = self._scene.add_entity(gs.morphs.Plane())
 
-        # A record of the previous actions
+        # Action history used by action-rate penalty.
         self._prev_actions = torch.zeros(self._num_envs, self._num_actions, device=self._device)
+        self._current_actions = torch.zeros(self._num_envs, self._num_actions, device=self._device)
 
         self._motor_joint_names = [
             "left_hip_pitch_joint",
@@ -132,7 +133,7 @@ class G1(GenesisEnv):
         ]
 
         self._feet_link_names = ["left_ankle_roll_link", "right_ankle_roll_link"]
-        self._torso_contact_link_names = ["torso_link", "torso"]
+        self._torso_contact_link_names = ["pelvis"]
 
         self._hip_knee_joint_names = [
             "left_hip_pitch_joint",
@@ -169,7 +170,7 @@ class G1(GenesisEnv):
             "right_wrist_roll_joint",
         ]
         self._fingers_dev_joint_names: list[str] = []
-        self._torso_dev_joint_names: list[str] = []
+        self._torso_dev_joint_names: list[str] = ["waist_yaw_joint"]
 
         self._base_dof_idx = self._robot.base_joint.dofs_idx_local
         self._motors_dof_idx = [self._robot.get_joint(name).dof_start for name in self._motor_joint_names]
@@ -206,13 +207,43 @@ class G1(GenesisEnv):
             device=self._device,
         )
 
+        # Default joint angles [rad]
+        self._default_joint_angles = {
+            "left_hip_pitch_joint": -0.312,
+            "left_hip_roll_joint": 0.0,
+            "left_hip_yaw_joint": 0.0,
+            "left_knee_joint": 0.669,
+            "left_ankle_pitch_joint": -0.363,
+            "left_ankle_roll_joint": 0.0,
+            "right_hip_pitch_joint": 0.312,
+            "right_hip_roll_joint": 0.0,
+            "right_hip_yaw_joint": 0.0,
+            "right_knee_joint": -0.669,
+            "right_ankle_pitch_joint": 0.363,
+            "right_ankle_roll_joint": 0.0,
+            "waist_yaw_joint": 0.0,
+            "left_shoulder_pitch_joint": 0.2,
+            "left_shoulder_roll_joint": 0.2,
+            "left_shoulder_yaw_joint": 0.0,
+            "left_elbow_joint": 0.6,
+            "left_wrist_roll_joint": 0.0,
+            "right_shoulder_pitch_joint": 0.2,
+            "right_shoulder_roll_joint": -0.2,
+            "right_shoulder_yaw_joint": 0.0,
+            "right_elbow_joint": -0.6,
+            "right_wrist_roll_joint": 0.0,
+        }
+
+        self._termination_height_lower_bound = 0.6
+        self._termination_height_upper_bound = 1.0
         self._default_base_pos = torch.tensor([0, 0, 0.8], device=self._device).repeat(self._num_envs, 1)
         self._default_base_quat = torch.tensor([1, 0, 0, 0], device=self._device).repeat(self._num_envs, 1)
-        self._default_motor_dof_pos = torch.zeros(self._num_envs, len(self._motors_dof_idx), device=self._device)
-        self._current_actions = torch.zeros(self._num_envs, self._num_actions, device=self._device)
-        self._action_scale = 0.5
-
-        self._target = torch.tensor([200, 0, 0], device=self._device).repeat(self._num_envs, 1)
+        self._default_joint_angles = torch.tensor(
+            [self._default_joint_angles[name] for name in self._motor_joint_names],
+            device=self._device,
+        )
+        self._default_motor_dof_pos = self._default_joint_angles.repeat(self._num_envs, 1)
+        self._action_scale = 1.0
         # Velocity command curriculum target ranges.
         self._command_cfg = {
             "lin_vel_x_range": (0.0, 1.0),
@@ -267,6 +298,7 @@ class G1(GenesisEnv):
         self._torso_dev_motor_q_idx = motor_q_indices(self._torso_dev_motor_dof_idx)
         assert len(self._hip_knee_motor_dof_idx) > 0
         assert len(self._ankle_motor_dof_idx) > 0
+        self._hip_knee_ankle_motor_dof_idx = self._hip_knee_motor_dof_idx + self._ankle_motor_dof_idx
         assert len(self._hip_dev_motor_dof_idx) > 0
         assert len(self._arms_dev_motor_dof_idx) > 0
 
@@ -324,8 +356,6 @@ class G1(GenesisEnv):
             [self._soft_dof_pos_limits[dof_row[dof], :] for dof in self._motors_dof_idx],
             dim=0,
         )
-        self._nominal_motor_joints_pos = self._robot.get_dofs_position(self._motors_dof_idx).clone()
-        self._default_motor_dof_pos = self._nominal_motor_joints_pos.clone()
 
     def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -431,15 +461,20 @@ class G1(GenesisEnv):
         lin_vel_z_l2 = torch.square(base_vel[:, 2])
         # 3) ang_vel_xy_l2
         ang_vel_xy_l2 = torch.sum(torch.square(base_vel[:, 3:5]), dim=1)
-        # 4) dof_torques_l2 (hip + knee joints)
-        if len(self._hip_knee_motor_dof_idx) > 0:
-            dof_torques = self._robot.get_dofs_control_force(self._hip_knee_motor_dof_idx)
+        # 4) dof_torques_l2 (hip + knee + ankle joints)
+        if len(self._hip_knee_ankle_motor_dof_idx) > 0:
+            dof_torques = self._robot.get_dofs_control_force(self._hip_knee_ankle_motor_dof_idx)
             dof_torques_l2 = torch.sum(torch.square(dof_torques), dim=1)
         else:
             dof_torques_l2 = torch.zeros_like(track_lin_vel_xy_exp)
-        # 5) dof_acc_l2 (hip + knee joints)
-        dof_acc = (motor_joints_vel - self._last_motor_joints_vel) / max(self._scene.sim.dt, 1e-6)
-        dof_acc_l2 = torch.sum(torch.square(dof_acc), dim=1)
+        # 5) dof_acc_l2 (hip + knee joints only)
+        if len(self._hip_knee_motor_q_idx) > 0:
+            v = motor_joints_vel[:, self._hip_knee_motor_q_idx]
+            v_prev = self._last_motor_joints_vel[:, self._hip_knee_motor_q_idx]
+            dof_acc = (v - v_prev) / max(self._scene.sim.dt, 1e-6)
+            dof_acc_l2 = torch.sum(torch.square(dof_acc), dim=1)
+        else:
+            dof_acc_l2 = torch.zeros_like(track_lin_vel_xy_exp)
 
         # 6) action_rate_l2
         action_rate_l2 = torch.sum(torch.square(self._current_actions - prev_actions), dim=1)
@@ -494,7 +529,7 @@ class G1(GenesisEnv):
             torch.sum(
                 torch.abs(
                     motor_joints_pos[:, self._hip_dev_motor_q_idx]
-                    - self._nominal_motor_joints_pos[:, self._hip_dev_motor_q_idx]
+                    - self._default_joint_angles[self._hip_dev_motor_q_idx]
                 ),
                 dim=1,
             )
@@ -505,7 +540,7 @@ class G1(GenesisEnv):
             torch.sum(
                 torch.abs(
                     motor_joints_pos[:, self._arms_dev_motor_q_idx]
-                    - self._nominal_motor_joints_pos[:, self._arms_dev_motor_q_idx]
+                    - self._default_joint_angles[self._arms_dev_motor_q_idx]
                 ),
                 dim=1,
             )
@@ -516,7 +551,7 @@ class G1(GenesisEnv):
             torch.sum(
                 torch.abs(
                     motor_joints_pos[:, self._fingers_dev_motor_q_idx]
-                    - self._nominal_motor_joints_pos[:, self._fingers_dev_motor_q_idx]
+                    - self._default_joint_angles[self._fingers_dev_motor_q_idx]
                 ),
                 dim=1,
             )
@@ -527,7 +562,7 @@ class G1(GenesisEnv):
             torch.sum(
                 torch.abs(
                     motor_joints_pos[:, self._torso_dev_motor_q_idx]
-                    - self._nominal_motor_joints_pos[:, self._torso_dev_motor_q_idx]
+                    - self._default_joint_angles[self._torso_dev_motor_q_idx]
                 ),
                 dim=1,
             )
@@ -536,8 +571,8 @@ class G1(GenesisEnv):
         )
 
         reward = (
-            1.0 * track_lin_vel_xy_exp
-            + 1.0 * track_ang_vel_z_exp
+            2.0 * track_lin_vel_xy_exp
+            + 1.5 * track_ang_vel_z_exp
             - 0.2 * lin_vel_z_l2
             - 0.05 * ang_vel_xy_l2
             - 2e-06 * dof_torques_l2
@@ -555,39 +590,46 @@ class G1(GenesisEnv):
         )
 
         self._last_motor_joints_vel = motor_joints_vel.clone()
+        # Roll action history after computing action_rate_l2.
         self._prev_actions = self._current_actions.clone()
 
-        self._infos["track_lin_vel_xy_exp"] = 1.0 * track_lin_vel_xy_exp
-        self._infos["track_ang_vel_z_exp"] = 1.0 * track_ang_vel_z_exp
-        self._infos["lin_vel_z_l2"] = -0.2 * lin_vel_z_l2
-        self._infos["ang_vel_xy_l2"] = -0.05 * ang_vel_xy_l2
-        self._infos["dof_torques_l2"] = -2e-06 * dof_torques_l2
-        self._infos["dof_acc_l2"] = -1e-07 * dof_acc_l2
-        self._infos["action_rate_l2"] = -0.005 * action_rate_l2
-        self._infos["feet_air_time"] = 0.75 * feet_air_time
-        self._infos["flat_orientation_l2"] = -1.0 * flat_orientation_l2
-        self._infos["dof_pos_limits"] = -1.0 * dof_pos_limits
+        self._infos["track_lin_vel_xy_exp"] = 1.0 * torch.mean(track_lin_vel_xy_exp)
+        self._infos["track_ang_vel_z_exp"] = 1.0 * torch.mean(track_ang_vel_z_exp)
+        self._infos["lin_vel_z_l2"] = -0.2 * torch.mean(lin_vel_z_l2)
+        self._infos["ang_vel_xy_l2"] = -0.05 * torch.mean(ang_vel_xy_l2)
+        self._infos["dof_torques_l2"] = -2e-06 * torch.mean(dof_torques_l2)
+        self._infos["dof_acc_l2"] = -1e-07 * torch.mean(dof_acc_l2)
+        self._infos["action_rate_l2"] = -0.005 * torch.mean(action_rate_l2)
+        self._infos["feet_air_time"] = 0.75 * torch.mean(feet_air_time)
+        self._infos["flat_orientation_l2"] = -1.0 * torch.mean(flat_orientation_l2)
+        self._infos["dof_pos_limits"] = -1.0 * torch.mean(dof_pos_limits)
         self._infos["termination_penalty"] = -200.0 * termination_penalty
-        self._infos["feet_slide"] = -0.1 * feet_slide
-        self._infos["joint_deviation_hip"] = -0.1 * joint_deviation_hip
-        self._infos["joint_deviation_arms"] = -0.1 * joint_deviation_arms
-        self._infos["joint_deviation_fingers"] = -0.05 * joint_deviation_fingers
-        self._infos["joint_deviation_torso"] = -0.1 * joint_deviation_torso
+        self._infos["feet_slide"] = -0.1 * torch.mean(feet_slide)
+        self._infos["joint_deviation_hip"] = -0.1 * torch.mean(joint_deviation_hip)
+        self._infos["joint_deviation_arms"] = -0.1 * torch.mean(joint_deviation_arms)
+        self._infos["joint_deviation_fingers"] = -0.05 * torch.mean(joint_deviation_fingers)
+        self._infos["joint_deviation_torso"] = -0.1 * torch.mean(joint_deviation_torso)
         return reward
 
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
         # IsaacLab G1 flat: base_contact = illegal_contact on torso_link, threshold 1.0 (no height-based term).
-        _ = states
+        # _ = states
+        # termination = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        # if not self._early_termination or not self._torso_contact_link_indices:
+        #     return termination
+        # link_contact_forces = torch.tensor(
+        #     self._robot.get_links_net_contact_force(), device=self._device, dtype=torch.float
+        # )
+        # torso_force_norm = torch.norm(
+        #     link_contact_forces[:, self._torso_contact_link_indices, :], dim=-1
+        # ).max(dim=1).values
+        # termination = torso_force_norm > self._illegal_contact_force_threshold
+        robot_states = states["robot_states"]
         termination = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-        if not self._early_termination or not self._torso_contact_link_indices:
-            return termination
-        link_contact_forces = torch.tensor(
-            self._robot.get_links_net_contact_force(), device=self._device, dtype=torch.float
-        )
-        torso_force_norm = torch.norm(
-            link_contact_forces[:, self._torso_contact_link_indices, :], dim=-1
-        ).max(dim=1).values
-        termination = torso_force_norm > self._illegal_contact_force_threshold
+        if self._early_termination:
+            termination = robot_states["base_pose"][:, 2] < self._termination_height_lower_bound
+            # humanoid z position too high is likely due to simulation physics failure.
+            termination = torch.where(robot_states["base_pose"][:, 2] > self._termination_height_upper_bound, True, termination)
         return termination
 
     def _reset_idx(self, env_ids: torch.Tensor) -> None:
@@ -640,14 +682,14 @@ class G1(GenesisEnv):
 
     def _set_actions(self, actions: torch.Tensor) -> None:
         actions = actions.view(self._num_envs, self._num_actions)
-        actions = actions.clamp(min=-1.0, max=1.0)
-        target_dof_pos = actions * self._action_scale + self._default_motor_dof_pos
-        self._robot.control_dofs_position(target_dof_pos, self._motors_dof_idx)
+        actions = actions.clamp(min=-1.0, max=1.0) * self._action_scale
+        motor_torques = actions * self._motor_strength
+        self._robot.control_dofs_force(motor_torques, dofs_idx_local=self._motors_dof_idx)
         self._current_actions = actions.clone()
 
     def _current_command_ranges(self):
         # Linear ramp [0, 1] over command_curriculum_steps.
-        progress = min(1.0, self._sim_step_count / float(self._command_curriculum_steps))
+        progress = 1.0 # min(1.0, self._sim_step_count / float(self._command_curriculum_steps))
         x_lo, x_hi = self._command_cfg["lin_vel_x_range"]
         y_lo, y_hi = self._command_cfg["lin_vel_y_range"]
         z_lo, z_hi = self._command_cfg["ang_vel_z_range"]

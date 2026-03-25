@@ -8,7 +8,7 @@ config:
   # if None, all envs are treated as nominal environments
   nominal_env_ids: null
   
-  randomize_init: True
+  randomize_init: False
   sim_options:
     dt: 0.005
     substeps: 1
@@ -39,7 +39,7 @@ config:
 
 
 play:
-  num_envs: 64
+  num_envs: 16
   randomize_init: True
   show_viewer: True
   show_FPS: True
