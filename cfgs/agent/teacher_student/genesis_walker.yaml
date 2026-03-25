@@ -21,11 +21,11 @@ config:
 
   # ---------- Student (DAgger) ----------
   student:
-    num_envs: 48
+    num_envs: 32
 
     # DAgger
     max_epochs: 20000
-    steps_per_epoch: 32  # steps_num
+    steps_per_epoch: 48  # steps_num
     batch_size: 128
     learning_starts: 32000
     num_update_per_epoch: 2000
