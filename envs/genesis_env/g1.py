@@ -246,9 +246,9 @@ class G1(GenesisEnv):
         self._action_scale = 1.0
         # Velocity command curriculum target ranges.
         self._command_cfg = {
-            "lin_vel_x_range": (0.5, 1.0),
-            "lin_vel_y_range": (0.0, 0.0),
-            "ang_vel_z_range": (0.0, 0.0),
+            "lin_vel_x_range": (0.3, 1.0),
+            "lin_vel_y_range": (-0.5, 0.5),
+            "ang_vel_z_range": (-1.0, 1.0),
         }
         # Start from near-zero commands and gradually expand to full ranges.
         self._command_curriculum_steps = 200_000
