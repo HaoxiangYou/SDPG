@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
 
 from utils.model_utils import get_activation_func, init_module
 
@@ -189,7 +189,7 @@ class Drqv2Encoder(CNNEncoder):
         # Convert OmegaConf DictConfig to regular dict if needed
         if encoder_cfg is None:
             drqv2_cfg = {}
-        elif isinstance(encoder_cfg, dict) and not isinstance(encoder_cfg, OmegaConf.DictConfig):
+        elif isinstance(encoder_cfg, dict) and not isinstance(encoder_cfg, DictConfig):
             drqv2_cfg = encoder_cfg.copy()
         else:
             # Convert OmegaConf DictConfig to regular dict
@@ -231,13 +231,12 @@ class DepthEncoder(CNNEncoder):
     def __init__(self, input_shape, encoder_cfg, device="cuda:0"):
         nn.Module.__init__(self)
         self.device = device
-
         if encoder_cfg is None:
             net: dict = {}
-        elif isinstance(encoder_cfg, OmegaConf.DictConfig):
-            net = OmegaConf.to_container(encoder_cfg, resolve=True) or {}
         elif isinstance(encoder_cfg, dict):
             net = dict(encoder_cfg)
+        elif isinstance(encoder_cfg, DictConfig):
+            net = OmegaConf.to_container(encoder_cfg, resolve=True) or {}
         else:
             net = {}
 

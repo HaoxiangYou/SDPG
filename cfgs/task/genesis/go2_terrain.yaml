@@ -57,9 +57,9 @@ config:
       terrain_length: 8.0 
       terrain_width: 8.0 
       platform_size: 2.0 
-      num_rows: 10 # number of terrain rows (levels)
+      num_rows: 3 # number of terrain rows (levels)
       num_cols: 10 # number of terrain cols (types)
-      num_subterrains: 100 
+      num_subterrains: 30 
       horizontal_scale: 0.1 # [m] distance between height samples in x and y direction
       vertical_scale: 0.005 # [m] distance between height samples in z direction
       static_friction: 1.0 # coefficient of static friction of the terrain

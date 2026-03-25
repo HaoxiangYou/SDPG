@@ -15,7 +15,7 @@ config:
           apply_rms: false
         - name: ego_centric_camera_observation
           encoder:
-            type: drqv2
+            type: depth
           apply_rms: false
       
       # Policy head processes concatenated encoded features
@@ -49,7 +49,7 @@ config:
           activation: elu
 
   # Number of base environments for rollout
-  num_base_envs: 64
+  num_base_envs: 32
   # Number of auxiliary environments for estimating the descent direction
   num_action_perturbations: 63
   # Number of top k perturbations to use for the ascent direction computation

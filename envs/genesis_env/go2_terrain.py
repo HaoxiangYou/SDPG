@@ -65,6 +65,7 @@ class Go2Terrain(GenesisEnv):
         show_viewer: bool = False,
         show_FPS: bool = False,
         domain_rand_options: Dict[str, Any] | None = None,
+        debug: bool = False,
     ) -> None:
         if device is None:
             device = torch.device("cuda")
@@ -103,7 +104,7 @@ class Go2Terrain(GenesisEnv):
         self._domain_rand_options = domain_rand_options
         self._terrain_cfg = terrain_args
         self._train = False
-        self._debug = False
+        self._debug = debug
         self._vis_obs = vis_obs
 
         super().__init__(
@@ -306,6 +307,7 @@ class Go2Terrain(GenesisEnv):
                     max_range=depth_cfg.get("max_range", 5.0),
                     return_world_frame=True,
                     draw_debug=self._debug,
+                    env_idx=self._nominal_env_ids.cpu().tolist(),
                 )
                 if "no_hit_value" in depth_cfg:
                     depth_camera_kwargs["no_hit_value"] = depth_cfg["no_hit_value"]
@@ -711,13 +713,11 @@ class Go2Terrain(GenesisEnv):
                 # TODO: Genesis Depth Camera sensor requires much less memory than the gs-Madrona RGB render
                 # TODO: No additional changes are yet applied to Genesis Source Code to per nominal environment rendering
                 # TODO: Memory usage are good enough to run in 3070 or 4080 GPU
-                depth_image = self._camera.read_image()
+                depth_image = self._camera.read_image(envs_idx=env_ids)
                 if depth_image.ndim == 2:
                     depth_image = depth_image.unsqueeze(0)
-                if env_ids is not None and depth_image.shape[0] == self._num_envs:
-                    depth_image = depth_image[env_ids]
-
                 img = self._process_depth_extreme_parkour(depth_image)
+                
             else:
                 # TODO: genesis will refresh the image when the scene._dt is different from the last render time
                 # TODO: temporarily we hack by setting the last render time to 0 to force render the new image
