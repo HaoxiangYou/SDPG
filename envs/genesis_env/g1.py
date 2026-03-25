@@ -246,9 +246,9 @@ class G1(GenesisEnv):
         self._action_scale = 1.0
         # Velocity command curriculum target ranges.
         self._command_cfg = {
-            "lin_vel_x_range": (0.0, 1.0),
-            "lin_vel_y_range": (-0.5, 0.5),
-            "ang_vel_z_range": (-1.0, 1.0),
+            "lin_vel_x_range": (0.5, 1.0),
+            "lin_vel_y_range": (0.0, 0.0),
+            "ang_vel_z_range": (0.0, 0.0),
         }
         # Start from near-zero commands and gradually expand to full ranges.
         self._command_curriculum_steps = 200_000
@@ -341,7 +341,7 @@ class G1(GenesisEnv):
             )
 
     def build_scene(self) -> None:
-        self._scene.build(n_envs=self._num_envs, env_spacing=(0.0, 1.0), n_envs_per_row=self._num_envs)
+        self._scene.build(n_envs=self._num_envs, env_spacing=(0.0, 1.0/self._num_envs), n_envs_per_row=self._num_envs)
 
         dof_limits = torch.stack(self._robot.get_dofs_limit(self._all_dof_idx), dim=1)
         soft_limit = 0.9
@@ -477,7 +477,7 @@ class G1(GenesisEnv):
             dof_acc_l2 = torch.zeros_like(track_lin_vel_xy_exp)
 
         # 6) action_rate_l2
-        action_rate_l2 = torch.sum(torch.square(self._current_actions - prev_actions), dim=1)
+        action_rate_l2 = torch.sum(torch.square(actions - prev_actions), dim=1)
 
         # 7) feet_air_time (biped-style positive reward)
         if len(self._feet_link_indices) > 0:
@@ -657,7 +657,6 @@ class G1(GenesisEnv):
         )
 
         self._prev_actions[env_ids] = torch.zeros(len(env_ids), self._num_actions, device=self._device)
-        self._current_actions[env_ids] = torch.zeros(len(env_ids), self._num_actions, device=self._device)
         self._last_motor_joints_vel[env_ids] = torch.zeros(len(env_ids), len(self._motors_dof_idx), device=self._device)
         self._last_contacts[env_ids] = torch.zeros(
             len(env_ids), len(self._feet_link_indices), device=self._device, dtype=torch.bool
