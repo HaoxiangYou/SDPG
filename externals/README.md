@@ -78,6 +78,21 @@ Mirrors Patch 03's approach for the **depth camera** (ray-casting path). When an
 
 Reference commit: `de76b998625450c18711b4274f5c873cf73f3cf7`.
 
+#### Patch 05: BatchRenderer depth and segmentation output
+
+The Madrona batch renderer already computes depth and segmentation internally but previously only exposed RGB. This patch adds per-camera control over which outputs to render and cache.
+
+- **Options**: `externals/Genesis/genesis/options/sensors/camera.py` — added `render_rgb` (default `True`), `render_depth` (default `False`), `render_segmentation` (default `False`) to `BatchRendererCameraOptions`. Validation ensures at least one is enabled.
+- **Data**: `externals/Genesis/genesis/engine/sensors/camera.py`:
+  - `CameraData`: fields are now `rgb`, `depth`, `segmentation` (all `Optional[torch.Tensor]`, default `None`). Backward-compatible — existing code accessing `data.rgb` works unchanged.
+  - `BatchRendererCameraSharedMetadata`: added `depth_cache` and `segmentation_cache` dicts alongside `image_cache`.
+  - `_camera_read_from_image_cache`: refactored with `_select_from_cache` helper; accepts optional `cached_depth` and `cached_seg` kwargs.
+  - `BatchRendererCameraSensor.build()`: conditionally allocates RGB (`uint8`), depth (`float`), and segmentation (`int32`) caches based on the render flags.
+  - `BatchRendererCameraSensor._render_current_state()`: passes `render_rgb`/`render_depth`/`render_segmentation` flags to `renderer.render()`; stores results in the appropriate caches. Removed leftover debug code (matplotlib/pdb).
+  - `BatchRendererCameraSensor.read()`: overrides base to pass depth and segmentation caches to the read helper.
+
+Backward-compatible: cameras without explicit `render_depth`/`render_segmentation` behave identically to before (RGB only). Depth clipping is controlled by `near`/`far` on the camera options (passed to Madrona as `cam_znears`/`cam_zfars`).
+
 Example update command (adjust ref as needed):
 
 ```bash
