@@ -133,7 +133,7 @@ class G1Hurtle(GenesisEnv):
 
         self._termination_height_lower_bound = 0.6
         self._termination_height_upper_bound = 1.0
-        self._default_base_pos = torch.tensor([0, 0, 0.8], device=self._device).repeat(self._num_envs, 1)
+        self._default_base_pos = torch.tensor([0.2, 0, 0.8], device=self._device).repeat(self._num_envs, 1)
         self._default_base_quat = torch.tensor([1, 0, 0, 0], device=self._device).repeat(self._num_envs, 1)
         self._default_joint_angles = torch.tensor(
             [self._default_joint_angles[name] for name in self._motor_joint_names],
@@ -206,7 +206,7 @@ class G1Hurtle(GenesisEnv):
                     offset_T = np.eye(4)
 
             self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.01, collision=False, fixed=True))
-            self._torso_link = self._robot.get_link("torso")
+            self._torso_link = self._robot.get_link("torso_link")
             camera_cfg = self._sensors_args["camera"]
 
             self._camera = self._scene.add_sensor(
@@ -283,7 +283,7 @@ class G1Hurtle(GenesisEnv):
         )
 
     def build_scene(self) -> None:
-        self._scene.build(n_envs=self._num_envs, env_spacing=(0.0, 2.0), n_envs_per_row=self._num_envs)
+        self._scene.build(n_envs=self._num_envs, env_spacing=(0.0, 2.0 / self._num_envs), n_envs_per_row=self._num_envs)
 
     def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         observations = {}
