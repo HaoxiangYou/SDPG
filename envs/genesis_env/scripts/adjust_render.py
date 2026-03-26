@@ -73,10 +73,8 @@ sensors_args = {
             "directional": True,
             "castshadow": False,
         },
-        "depth": {
-            "min_range": 0.0,
-            "max_range": 5.0,
-        },
+        "near": 0.01,
+        "far": 5.0,
     },
 }
 

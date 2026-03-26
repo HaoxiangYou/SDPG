@@ -46,7 +46,9 @@ if TYPE_CHECKING:
 class CameraData(NamedTuple):
     """Camera sensor return data."""
 
-    rgb: torch.Tensor
+    rgb: Optional[torch.Tensor] = None
+    depth: Optional[torch.Tensor] = None
+    segmentation: Optional[torch.Tensor] = None
 
 
 class MinimalVisualizerWrapper:
@@ -178,8 +180,12 @@ class BatchRendererCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMe
     lights: Optional[Any] = None
     # List of BatchRendererCameraSensor instances
     sensors: Optional[List["BatchRendererCameraSensor"]] = None
-    # {sensor_idx: np.ndarray with shape (B, H, W, 3)}
-    image_cache: Optional[Dict[int, np.ndarray]] = None
+    # {sensor_idx: torch.Tensor with shape (B, H, W, 3)}
+    image_cache: Optional[Dict[int, torch.Tensor]] = None
+    # {sensor_idx: torch.Tensor with shape (B, H, W)}
+    depth_cache: Optional[Dict[int, torch.Tensor]] = None
+    # {sensor_idx: torch.Tensor with shape (B, H, W)}
+    segmentation_cache: Optional[Dict[int, torch.Tensor]] = None
     # Track when batch was last rendered
     last_render_timestep: int = -1
     # MinimalVisualizerWrapper instance
@@ -340,19 +346,43 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[SharedSensorMetadata]):
 
 
 # ========================== Camera Sensor Helpers ==========================
-def _camera_read_from_image_cache(sensor, cached_image, envs_idx, *, to_numpy: bool) -> CameraData:
+
+
+def _select_from_cache(cached, envs_idx, env_idx_cache):
+    """Index into a cached tensor with env subset remapping."""
+    if cached is None:
+        return None
+    if envs_idx is None:
+        return cached
+    if env_idx_cache is not None:
+        if isinstance(envs_idx, torch.Tensor):
+            envs_idx = envs_idx.cpu().numpy()
+        envs_idx = np.atleast_1d(envs_idx)
+        cache_idx = np.array([np.where(env_idx_cache == e)[0][0] for e in envs_idx])
+        if isinstance(cached, torch.Tensor):
+            cache_idx = torch.as_tensor(cache_idx, device=cached.device)
+        return cached[cache_idx]
+    return cached[envs_idx]
+
+
+def _camera_read_from_image_cache(sensor, cached_image, envs_idx, *, to_numpy: bool,
+                                  cached_depth=None, cached_seg=None) -> CameraData:
     """
-    Shared helper to convert a cached RGB image array into CameraData with correct env handling.
+    Shared helper to convert cached image arrays into CameraData with correct env handling.
 
     Parameters
     ----------
     sensor : any camera sensor with _manager and _return_data_class
-    cached_image : np.ndarray | torch.Tensor
-        Image cache for this camera, shaped (B, H, W, 3) or (H, W, 3) depending on n_envs.
+    cached_image : np.ndarray | torch.Tensor | None
+        RGB image cache for this camera, shaped (B, H, W, 3).
     envs_idx : None | int | sequence
         Environment index/indices to select.
     to_numpy : bool
         If True and cached_image is a torch Tensor, convert to numpy first.
+    cached_depth : torch.Tensor | None
+        Depth cache, shaped (B, H, W).
+    cached_seg : torch.Tensor | None
+        Segmentation cache, shaped (B, H, W).
     """
     if to_numpy and isinstance(cached_image, torch.Tensor):
         cached_image = tensor_to_array(cached_image)
@@ -360,22 +390,16 @@ def _camera_read_from_image_cache(sensor, cached_image, envs_idx, *, to_numpy: b
     n_envs = sensor._manager._sim.n_envs
     env_idx_cache = getattr(sensor._shared_metadata, "env_idx", None)
 
-    if envs_idx is None:
-        if n_envs == 0:
-            return sensor._return_data_class(rgb=cached_image[0])
-        return sensor._return_data_class(rgb=cached_image)
-    # Map actual env indices to cache indices when only a subset is stored
-    if env_idx_cache is not None:
-        if isinstance(envs_idx, torch.Tensor):
-            envs_idx = envs_idx.cpu().numpy()
-        envs_idx = np.atleast_1d(envs_idx)
-        cache_idx = np.array([np.where(env_idx_cache == e)[0][0] for e in envs_idx])
-        if isinstance(cached_image, torch.Tensor):
-            cache_idx = torch.as_tensor(cache_idx, device=cached_image.device)
-        return sensor._return_data_class(rgb=cached_image[cache_idx])
-    if isinstance(envs_idx, (int, np.integer)):
-        return sensor._return_data_class(rgb=cached_image[envs_idx])
-    return sensor._return_data_class(rgb=cached_image[envs_idx])
+    if n_envs == 0 and envs_idx is None:
+        rgb = cached_image[0] if cached_image is not None else None
+        depth = cached_depth[0] if cached_depth is not None else None
+        seg = cached_seg[0] if cached_seg is not None else None
+        return sensor._return_data_class(rgb=rgb, depth=depth, segmentation=seg)
+
+    rgb = _select_from_cache(cached_image, envs_idx, env_idx_cache)
+    depth = _select_from_cache(cached_depth, envs_idx, env_idx_cache)
+    seg = _select_from_cache(cached_seg, envs_idx, env_idx_cache)
+    return sensor._return_data_class(rgb=rgb, depth=depth, segmentation=seg)
 
 
 # ========================== Rasterizer Camera Sensor ==========================
@@ -742,6 +766,8 @@ class BatchRendererCameraSensor(BaseCameraSensor):
             self._shared_metadata.sensors = []
             self._shared_metadata.lights = gs.List()
             self._shared_metadata.image_cache = {}
+            self._shared_metadata.depth_cache = {}
+            self._shared_metadata.segmentation_cache = {}
             self._shared_metadata.last_render_timestep = -1
 
             all_sensors = self._manager._sensors_by_type[type(self)]
@@ -790,9 +816,18 @@ class BatchRendererCameraSensor(BaseCameraSensor):
         ridx = self._shared_metadata.env_idx
         n_envs = len(ridx) if ridx is not None else max(self._manager._sim._B, 1)
         h, w = self._options.res[1], self._options.res[0]
-        self._shared_metadata.image_cache[self._idx] = torch.zeros(
-            (n_envs, h, w, 3), dtype=torch.uint8, device=gs.device
-        )
+        if self._options.render_rgb:
+            self._shared_metadata.image_cache[self._idx] = torch.zeros(
+                (n_envs, h, w, 3), dtype=torch.uint8, device=gs.device
+            )
+        if self._options.render_depth:
+            self._shared_metadata.depth_cache[self._idx] = torch.zeros(
+                (n_envs, h, w), dtype=gs.tc_float, device=gs.device
+            )
+        if self._options.render_segmentation:
+            self._shared_metadata.segmentation_cache[self._idx] = torch.zeros(
+                (n_envs, h, w), dtype=torch.int32, device=gs.device
+            )
 
     def _render_current_state(self):
         """Perform the actual render for the current state."""
@@ -804,27 +839,52 @@ class BatchRendererCameraSensor(BaseCameraSensor):
 
         self._shared_metadata.renderer.update_scene(force_render=True)
 
-        rgb_arr, *_ = self._shared_metadata.renderer.render(
-            rgb=True,
-            depth=False,
-            segmentation=False,
+        want_rgb = any(s._options.render_rgb for s in sensors)
+        want_depth = any(s._options.render_depth for s in sensors)
+        want_seg = any(s._options.render_segmentation for s in sensors)
+
+        rgb_arr, depth_arr, seg_arr, *_ = self._shared_metadata.renderer.render(
+            rgb=want_rgb,
+            depth=want_depth,
+            segmentation=want_seg,
             normal=False,
             antialiasing=False,
             force_render=True,
         )
 
-        # rgb_arr might be a tuple of arrays (one per camera) or a single array
-        # Handle both cases
-        if isinstance(rgb_arr, (tuple, list)):
-            rgb_arr = torch.stack([torch.as_tensor(arr).to(dtype=torch.uint8, device=gs.device) for arr in rgb_arr])
-        else:
-            rgb_arr = torch.as_tensor(rgb_arr).to(dtype=torch.uint8, device=gs.device)
+        def _to_stacked_tensor(arr, dtype):
+            if arr is None:
+                return None
+            if isinstance(arr, (tuple, list)):
+                return torch.stack([torch.as_tensor(a).to(dtype=dtype, device=gs.device) for a in arr])
+            return torch.as_tensor(arr).to(dtype=dtype, device=gs.device)
+
+        rgb_t = _to_stacked_tensor(rgb_arr, torch.uint8) if want_rgb else None
+        depth_t = _to_stacked_tensor(depth_arr, gs.tc_float) if want_depth else None
+        seg_t = _to_stacked_tensor(seg_arr, torch.int32) if want_seg else None
 
         for cam_idx, sensor in enumerate(sensors):
-            sensor._shared_metadata.image_cache[sensor._idx] = rgb_arr[cam_idx]
+            if rgb_t is not None and sensor._options.render_rgb:
+                sensor._shared_metadata.image_cache[sensor._idx] = rgb_t[cam_idx]
+            if depth_t is not None and sensor._options.render_depth:
+                sensor._shared_metadata.depth_cache[sensor._idx] = depth_t[cam_idx]
+            if seg_t is not None and sensor._options.render_segmentation:
+                sensor._shared_metadata.segmentation_cache[sensor._idx] = seg_t[cam_idx]
             sensor._stale = False
 
         self._shared_metadata.last_render_timestep = self._manager._sim.scene.t
+
+    @gs.assert_built
+    def read(self, envs_idx=None) -> CameraData:
+        """Render if needed, then read cached rgb/depth/segmentation."""
+        self._ensure_rendered_for_current_state()
+        cached_image = self._shared_metadata.image_cache.get(self._idx)
+        cached_depth = self._shared_metadata.depth_cache.get(self._idx)
+        cached_seg = self._shared_metadata.segmentation_cache.get(self._idx)
+        return _camera_read_from_image_cache(
+            self, cached_image, envs_idx, to_numpy=False,
+            cached_depth=cached_depth, cached_seg=cached_seg,
+        )
 
     def _apply_camera_transform(self, camera_T: torch.Tensor):
         """Update batch renderer camera from a world transform."""

@@ -60,6 +60,39 @@ Patch 03 incorporates the changes from commits `0ceb3ed2` (camera sensor `env_id
 
 Reference commits: `0ceb3ed2b1dc4a6d220c02df3a116c3c7ffcd879`, `db92b374144f77df6270bc579ade0232bf4680c2`,`7f2ae642fd55bd18ac7532cd55df6e63924815b5`.
 
+#### Patch 04: depth camera / raycaster `env_idx` and subset rendering (save memory)
+
+Mirrors Patch 03's approach for the **depth camera** (ray-casting path). When an `env_idx` subset is provided, the BVH, AABB, and output cache are allocated only for the subset of environments, drastically reducing GPU memory (e.g., 4 envs instead of 1024).
+
+- **Options**: `externals/Genesis/genesis/options/sensors/options.py` — `RaycasterOptions.env_idx` (`Optional[Sequence[int]]`). Inherited by `DepthCamera`.
+- **Raycaster engine**: `externals/Genesis/genesis/engine/sensors/raycaster.py`:
+  - `RaycasterSharedMetadata`: added `env_idx`, `_env_idx_map_t`, `_compact_ground_truth_cache`, `_cls_cache_start_idx` fields for subset tracking.
+  - `kernel_update_aabbs`: takes `env_idx_map`; loops over `n_subset` compact rows, reads solver vertex positions with real env index (`i_b`), writes AABB with compact index (`i_local`).
+  - `kernel_cast_rays`: BVH nodes and morton codes indexed by `i_local` (compact); solver state (`links_pos`, `links_quat`, `free_verts_state`) indexed by `i_b` (real env); `output_hits` indexed by `i_local`.
+  - `build()`: allocates `AABB(n_batches=len(env_idx))` and `LBVH(...)` with the compact batch count. Always sets `_env_idx_map_t` (identity for non-subset, real mapping for subset).
+  - `_update_bvh()`: passes `_env_idx_map_t` to `kernel_update_aabbs`.
+  - `_update_shared_ground_truth_cache()`: when `env_idx` is set, ray-casts into `_compact_ground_truth_cache` (subset-sized), then scatters back into the full `SensorManager` cache for ring-buffer / delay compatibility.
+  - `read()` / `read_ground_truth()`: overridden to read from the compact cache when available, with `_real_to_compact_idx` for transparent index remapping.
+- **Depth camera**: `externals/Genesis/genesis/engine/sensors/depth_camera.py` — `build()` sets `_shape` based on `len(env_idx)`; `read_image(envs_idx=None)` delegates to `self.read()` and reshapes.
+- **SensorManager**: `externals/Genesis/genesis/engine/sensors/sensor_manager.py` — `# TODO` comment noting that `_ground_truth_cache` is still allocated at full `n_envs` size per dtype (shared across all sensor classes of that dtype). Per-sensor-class cache allocation would be needed for full memory reclamation from the `SensorManager` side.
+
+Reference commit: `de76b998625450c18711b4274f5c873cf73f3cf7`.
+
+#### Patch 05: BatchRenderer depth and segmentation output
+
+The Madrona batch renderer already computes depth and segmentation internally but previously only exposed RGB. This patch adds per-camera control over which outputs to render and cache.
+
+- **Options**: `externals/Genesis/genesis/options/sensors/camera.py` — added `render_rgb` (default `True`), `render_depth` (default `False`), `render_segmentation` (default `False`) to `BatchRendererCameraOptions`. Validation ensures at least one is enabled.
+- **Data**: `externals/Genesis/genesis/engine/sensors/camera.py`:
+  - `CameraData`: fields are now `rgb`, `depth`, `segmentation` (all `Optional[torch.Tensor]`, default `None`). Backward-compatible — existing code accessing `data.rgb` works unchanged.
+  - `BatchRendererCameraSharedMetadata`: added `depth_cache` and `segmentation_cache` dicts alongside `image_cache`.
+  - `_camera_read_from_image_cache`: refactored with `_select_from_cache` helper; accepts optional `cached_depth` and `cached_seg` kwargs.
+  - `BatchRendererCameraSensor.build()`: conditionally allocates RGB (`uint8`), depth (`float`), and segmentation (`int32`) caches based on the render flags.
+  - `BatchRendererCameraSensor._render_current_state()`: passes `render_rgb`/`render_depth`/`render_segmentation` flags to `renderer.render()`; stores results in the appropriate caches. Removed leftover debug code (matplotlib/pdb).
+  - `BatchRendererCameraSensor.read()`: overrides base to pass depth and segmentation caches to the read helper.
+
+Backward-compatible: cameras without explicit `render_depth`/`render_segmentation` behave identically to before (RGB only). Depth clipping is controlled by `near`/`far` on the camera options (passed to Madrona as `cam_znears`/`cam_zfars`).
+
 Example update command (adjust ref as needed):
 
 ```bash
