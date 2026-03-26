@@ -11,7 +11,6 @@ from gym import spaces
 from envs.genesis_env.genesis_env import GenesisEnv
 from utils.terrain import Terrain
 from genesis.utils.geom import pos_lookat_up_to_T
-from utils.geom_utils import lookat_to_depth_euler
 
 def torch_rand_float(lower: float, upper: float, shape: Tuple[int, int], device: torch.device) -> torch.Tensor:
     return (upper - lower) * torch.rand(*shape, device=device) + lower
@@ -84,7 +83,7 @@ class Go2Terrain(GenesisEnv):
 
         
         self._num_single_obs = 45
-        self._num_history_obs = 20
+        self._num_history_obs = 5
         self._num_obs = self._num_single_obs * self._num_history_obs
 
 
@@ -252,7 +251,7 @@ class Go2Terrain(GenesisEnv):
                 self._depth_out_w = int(obs_res[1])
                 image_shape = (self._num_image_stack, self._depth_out_h, self._depth_out_w)
             else:
-                self._num_image_stack = 3
+                self._num_image_stack = 1
                 image_shape = (self._num_image_stack * 3, image_res[0], image_res[1])
             if self._camera_type == "depth":
                 ego_centric_camera_observation_space = spaces.Box(
@@ -269,7 +268,6 @@ class Go2Terrain(GenesisEnv):
                     shape=image_shape,
                 )
             # Initialize the sensors
-            # TODO: genesis at commit id 7db43e4caef2b185bf691d29fc545d6480cd224d only supports offset_T
             offset_T = self._sensors_args["camera"].get("offset_T", None)
             lookat = self._sensors_args["camera"].get("lookat", None)
             if offset_T is not None:
@@ -281,39 +279,25 @@ class Go2Terrain(GenesisEnv):
                     )
                 else:
                     offset_T = np.eye(4)
-            # NOTE: A dummy link for the camera to attach to, genesis sensor camera does not support fixed rotation or axis
             self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.01, collision=False, fixed=True))
             self._torso_link = self._robot.get_link("base")
-            if self._camera_type == "depth":
-                depth_cfg = self._depth_camera_cfg
-                if lookat is not None:
-                    euler_offset = lookat_to_depth_euler(self._sensors_args["camera"]["pos"], lookat)
-                else:
-                    euler_offset = (0.0, 0.0, 0.0)
-                depth_camera_kwargs = dict(
-                    pattern=gs.sensors.DepthCameraPattern(
-                        res=(self._depth_res_hw[1], self._depth_res_hw[0]),
-                        fx=depth_cfg.get("fx", None),
-                        fy=depth_cfg.get("fy", None),
-                        cx=depth_cfg.get("cx", None),
-                        cy=depth_cfg.get("cy", None),
-                        fov_horizontal=depth_cfg.get("fov_horizontal", self._sensors_args["camera"]["fov"]),
-                        fov_vertical=depth_cfg.get("fov_vertical", None),
-                    ),
+            camera_cfg = self._sensors_args["camera"]
+            self._camera = self._scene.add_sensor(
+                gs.sensors.BatchRendererCameraOptions(
+                    res=camera_cfg["res"],
+                    pos=camera_cfg["pos"],
+                    offset_T=offset_T,
+                    fov=camera_cfg["fov"],
+                    near=camera_cfg.get("near", 0.01),
+                    far=camera_cfg.get("far", 100.0),
                     entity_idx=self._camera_mount.idx,
-                    pos_offset=tuple(self._sensors_args["camera"]["pos"]),
-                    euler_offset=euler_offset,
-                    min_range=depth_cfg.get("min_range", 0.0),
-                    max_range=depth_cfg.get("max_range", 5.0),
-                    return_world_frame=True,
-                    draw_debug=self._debug,
+                    lights=[camera_cfg["lights"]],
                     env_idx=self._nominal_env_ids.cpu().tolist(),
+                    render_rgb=(self._camera_type == "rgb"),
+                    render_depth=(self._camera_type == "depth"),
                 )
-                if "no_hit_value" in depth_cfg:
-                    depth_camera_kwargs["no_hit_value"] = depth_cfg["no_hit_value"]
-                self._camera = self._scene.add_sensor(
-                    gs.sensors.DepthCamera(**depth_camera_kwargs)
-                )
+            )
+            if self._camera_type == "depth":
                 self._imgs_buf = torch.zeros(
                     self.nominal_env_ids.shape[0],
                     self._num_image_stack,
@@ -323,17 +307,6 @@ class Go2Terrain(GenesisEnv):
                     dtype=torch.float32,
                 )
             else:
-                self._camera = self._scene.add_sensor(
-                    gs.sensors.BatchRendererCameraOptions(
-                        res=self._sensors_args["camera"]["res"],
-                        pos=self._sensors_args["camera"]["pos"],
-                        offset_T=offset_T,
-                        fov=self._sensors_args["camera"]["fov"],
-                        entity_idx=self._camera_mount.idx,
-                        lights=[self._sensors_args["camera"]["lights"]],
-                        env_idx=self._nominal_env_ids.cpu().tolist(),
-                    )
-                )
                 self._imgs_buf = torch.zeros(
                     self.nominal_env_ids.shape[0],
                     self._num_image_stack,
@@ -415,7 +388,7 @@ class Go2Terrain(GenesisEnv):
             "feet_contact_stand_still": 0.5,
             "feet_clearance": 0.2,
             # "feet_distance": -1.0,
-            # "hip_pos": -0.05,
+            "hip_pos": -0.05,
         }
 
         # PD control parameters
@@ -708,22 +681,26 @@ class Go2Terrain(GenesisEnv):
             pos = self._torso_link.get_pos()
             self._camera_mount.set_pos(pos)
 
-            if self._camera_type == "depth":
+            # Prefer the unified BatchRenderer path (same style as walker_hurtle):
+            # force refresh then read rgb/depth from camera.read(...).
+            # Keep a fallback for BVH DepthCamera that only supports read_image(...).
+            if hasattr(self._camera, "read"):
+                self._camera._shared_metadata.last_render_timestep = 0
+                data = self._camera.read(envs_idx=env_ids)
+                if self._camera_type == "depth":
+                    depth_image = data.depth
+                    if depth_image.ndim == 2:
+                        depth_image = depth_image.unsqueeze(0)
+                    img = self._process_depth_extreme_parkour(depth_image)
+                else:
+                    img = data.rgb
+            else:
+                # BVH DepthCamera path: explicit sensor step + read_image.
                 self._scene.sim._sensor_manager.step()
-                # TODO: Genesis Depth Camera sensor requires much less memory than the gs-Madrona RGB render
-                # TODO: No additional changes are yet applied to Genesis Source Code to per nominal environment rendering
-                # TODO: Memory usage are good enough to run in 3070 or 4080 GPU
                 depth_image = self._camera.read_image(envs_idx=env_ids)
                 if depth_image.ndim == 2:
                     depth_image = depth_image.unsqueeze(0)
                 img = self._process_depth_extreme_parkour(depth_image)
-                
-            else:
-                # TODO: genesis will refresh the image when the scene._dt is different from the last render time
-                # TODO: temporarily we hack by setting the last render time to 0 to force render the new image
-                self._camera._shared_metadata.last_render_timestep = 0
-                data = self._camera.read(envs_idx=env_ids)
-                img = data.rgb
             return img
         else:
             return None
@@ -977,9 +954,6 @@ class Go2Terrain(GenesisEnv):
                                             (num_nominal_envs,), device=self._device).repeat_interleave(self._num_envs // num_nominal_envs)
         self._max_terrain_level = self._terrain_cfg["num_rows"]
         self._terrain_origins = torch.from_numpy(self._terrain.env_origins).to(self._device).to(torch.float)
-        if self._debug:
-            self._terrain_levels = torch.zeros_like(self._terrain_levels)
-            self._terrain_types = torch.zeros_like(self._terrain_types)
         self._env_origins[:] = self._terrain_origins[self._terrain_levels, self._terrain_types]
         self._custom_origins = True
 
@@ -1250,12 +1224,6 @@ class Go2Terrain(GenesisEnv):
         d = depth_image.float()
         if d.dim() == 2:
             d = d.unsqueeze(0)
-        exp_h, exp_w = self._depth_res_hw
-        if d.shape[-2] != exp_h or d.shape[-1] != exp_w:
-            raise RuntimeError(
-                f"Depth tensor has shape {tuple(d.shape)}; expected last dims (H, W)=({exp_h}, {exp_w}) "
-                f"from camera.res. If you changed res, keep YAML as [height, width] matching DepthCamera read_image."
-            )
         # Same crop as legged_robot.crop_depth_image: drop last 2 rows, 4 cols each side (for 60×106 → 58×98).
         d = d[:, :-2, 4:-4]
         if dis_noise > 0.0:
@@ -1266,6 +1234,11 @@ class Go2Terrain(GenesisEnv):
         d = d.squeeze(1)
         # Same normalization as extreme-parkour for positive depths: (d - near) / (far - near) - 0.5
         d = (d - near) / max(far - near, 1e-6) - 0.5
+        if d.shape[-2] != out_h or d.shape[-1] != out_w:
+            raise RuntimeError(
+                f"Depth tensor has shape {tuple(d.shape)}; expected last dims (H, W)=({out_h}, {out_w}) "
+                f"from camera.res. If you changed res, keep YAML as [height, width] matching DepthCamera read_image."
+            )
         return d
 
     def get_states(self, env_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:

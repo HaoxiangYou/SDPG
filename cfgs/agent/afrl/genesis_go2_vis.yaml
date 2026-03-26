@@ -49,7 +49,7 @@ config:
           activation: elu
 
   # Number of base environments for rollout
-  num_base_envs: 32
+  num_base_envs: 64
   # Number of auxiliary environments for estimating the descent direction
   num_action_perturbations: 63
   # Number of top k perturbations to use for the ascent direction computation
