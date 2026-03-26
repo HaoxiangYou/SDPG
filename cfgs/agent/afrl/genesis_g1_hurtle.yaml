@@ -1,0 +1,97 @@
+name: afrl
+
+config:
+
+  model:
+    actor:
+      inputs:
+        - name: proprioceptive_observations
+          encoder:
+            type: mlp
+            network:
+              units: [256]
+              activation: elu
+          apply_rms: true
+        - name: height_field
+          encoder: 
+            type: mlp
+            network:
+              units: [128, 256]
+              activation: elu
+          apply_rms: false
+      
+      policy_head:
+        type: mlp
+        network:
+          units: [256, 128]
+          activation: elu
+        fixed_std: false
+        state_dependent_std: false
+        log_std_init: 0.0
+    
+    critic:
+      inputs:
+        - name: proprioceptive_observations
+          encoder:
+            type: mlp
+            network:
+              units: [256]
+              activation: elu
+          apply_rms: true
+        - name: height_field
+          encoder: 
+            type: mlp
+            network:
+              units: [128, 256]
+              activation: elu
+          apply_rms: false
+      
+      value_head:
+        type: mlp
+        network:
+          units: [128]
+          activation: elu
+
+  num_base_envs: 64
+  num_action_perturbations: 63
+  num_envs: ${compute_num_envs:${.num_base_envs},${.num_action_perturbations}}
+
+  max_epochs: 20000
+  horizon_length: 32
+  gamma: 0.99
+  lam: 0.95
+  causality: True
+  eligibility_trace: True
+  
+  reward_scale: 1.0
+  target_critic_alpha: 0.01
+
+  actor_lr:  2e-3
+  critic_lr: 2e-4
+  betas: [0.7, 0.95]
+  
+  actor_lr_schedule:
+    name: cosine
+    T_max: 5000
+    eta_min: 1e-5
+    warmup_epochs: 100
+    warmup_start_lr: 0
+  
+  critic_lr_schedule:
+    name: null
+  
+  bounds:
+    mean_bounds: [-2, 2]
+    log_std_bounds: [-5, 2]
+
+  mini_batch_size: 4096
+  critic_iterations: 2
+
+  truncated_grads: True
+  grad_norm: 1.0
+
+  obs_rms: True
+  ret_rms: False
+  normalize_delta_J: True
+
+  save_frequency: 400
