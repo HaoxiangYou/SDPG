@@ -133,6 +133,7 @@ class G1Hurtle(GenesisEnv):
 
         self._termination_height_lower_bound = 0.6
         self._termination_height_upper_bound = 1.0
+        self._termination_angle = 1.0
         self._default_base_pos = torch.tensor([0.2, 0, 0.8], device=self._device).repeat(self._num_envs, 1)
         self._default_base_quat = torch.tensor([1, 0, 0, 0], device=self._device).repeat(self._num_envs, 1)
         self._default_joint_angles = torch.tensor(
@@ -348,6 +349,13 @@ class G1Hurtle(GenesisEnv):
             if hasattr(self, "_terrain_y_half_width"):
                 y_pos = robot_states["base_pose"][:, 1]
                 termination = torch.where(torch.abs(y_pos) > self._terrain_y_half_width, True, termination)
+            # Quaternion [w, x, y, z] -> roll / pitch
+            quat = robot_states["base_pose"][:, 3:]
+            w, x, y, z = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+            roll = torch.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
+            pitch = torch.asin(torch.clamp(2 * (w * y - z * x), -1.0, 1.0))
+            termination = torch.where(torch.abs(roll) > self._termination_angle, True, termination)
+            termination = torch.where(torch.abs(pitch) > self._termination_angle, True, termination)
         return termination
 
     def _reset_idx(self, env_ids: torch.Tensor) -> None:
