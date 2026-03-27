@@ -83,7 +83,7 @@ class Go2Terrain(GenesisEnv):
 
         
         self._num_single_obs = 45
-        self._num_history_obs = 5
+        self._num_history_obs = 20
         self._num_obs = self._num_single_obs * self._num_history_obs
 
 
