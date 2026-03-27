@@ -602,19 +602,39 @@ class G1(GenesisEnv):
     def _resample_vel_commands(self, env_ids: torch.Tensor) -> None:
         if len(env_ids) == 0:
             return
-        (x_range, y_range, z_range) = self._current_command_ranges()
-        self._vel_command[env_ids, 0] = (x_range[1] - x_range[0]) * torch.rand(
-            len(env_ids), device=self._device
-        ) + x_range[0]
-        self._vel_command[env_ids, 1] = (y_range[1] - y_range[0]) * torch.rand(
-            len(env_ids), device=self._device
-        ) + y_range[0]
-        self._vel_command[env_ids, 2] = (z_range[1] - z_range[0]) * torch.rand(
-            len(env_ids), device=self._device
-        ) + z_range[0]
+        env_ids = torch.as_tensor(env_ids, device=self._device, dtype=torch.long)
+        nominal_mask = torch.isin(env_ids, self._nominal_env_ids)
+        nominal_env_ids = env_ids[nominal_mask]
+
+        if nominal_env_ids.numel() > 0:
+            (x_range, y_range, z_range) = self._current_command_ranges()
+            self._vel_command[nominal_env_ids, 0] = (x_range[1] - x_range[0]) * torch.rand(
+                len(nominal_env_ids), device=self._device
+            ) + x_range[0]
+            self._vel_command[nominal_env_ids, 1] = (y_range[1] - y_range[0]) * torch.rand(
+                len(nominal_env_ids), device=self._device
+            ) + y_range[0]
+            self._vel_command[nominal_env_ids, 2] = (z_range[1] - z_range[0]) * torch.rand(
+                len(nominal_env_ids), device=self._device
+            ) + z_range[0]
+            num_aux = int(self.num_auxiliary_envs)
+            if num_aux > 0:
+                offsets = torch.arange(1, num_aux + 1, device=self._device, dtype=torch.long)
+                synced_aux_env_ids = nominal_env_ids[:, None] + offsets[None, :]
+                synced_aux_env_ids = synced_aux_env_ids.reshape(-1)
+                synced_aux_env_ids = synced_aux_env_ids[synced_aux_env_ids < self._num_envs]
+                if synced_aux_env_ids.numel() > 0:
+                    nominal_repeated = nominal_env_ids.repeat_interleave(num_aux)[: synced_aux_env_ids.numel()]
+                    self._vel_command[synced_aux_env_ids] = self._vel_command[nominal_repeated]
+
+        aux_env_ids = env_ids[~nominal_mask]
+        if aux_env_ids.numel() > 0:
+            block_size = self.num_auxiliary_envs + 1
+            nominal_indices = torch.div(aux_env_ids, block_size, rounding_mode="floor")
+            nominal_sources = self._nominal_env_ids[nominal_indices]
+            self._vel_command[aux_env_ids] = self._vel_command[nominal_sources]
 
     def _post_physics_step(self) -> None:
-        """Update image buffer by rolling frames and appending new image."""
         self._sim_step_count += self._num_envs
         # Resample commands a few times per episode, following the Go2 pattern.
         env_ids = (self._progress_buf % int(self._episode_length / 5) == 0).nonzero(as_tuple=False).flatten()
