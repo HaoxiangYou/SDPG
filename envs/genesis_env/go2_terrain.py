@@ -772,32 +772,51 @@ class Go2Terrain(GenesisEnv):
         return termination
 
     def _resample_commands(self, envs_idx: Optional[torch.Tensor] = None) -> None:
-        """Resample velocity commands for specified environments.
+        """Resample velocity commands for nominal environments and propagate to auxiliaries.
 
         Args:
-            envs_idx: Boolean tensor mask of environments to resample commands for,
-                     or tensor of environment indices (Long), or None to resample for all environments.
+            envs_idx: Environment indices to consider for resampling.
+                Only nominal environments within this set are resampled;
+                their auxiliary environments are then set to the same commands.
         """
-        self._commands[envs_idx, 0] = torch_rand_float(
+        envs_idx = torch.as_tensor(envs_idx, device=self._device, dtype=torch.long)
+        mask = torch.isin(envs_idx, self._nominal_env_ids)
+        nominal_env_ids = envs_idx[mask]
+        if nominal_env_ids.numel() == 0:
+            return
+
+        self._commands[nominal_env_ids, 0] = torch_rand_float(
             self._command_cfg["lin_vel_x_range"][0],
             self._command_cfg["lin_vel_x_range"][1],
-            (len(envs_idx), 1),
+            (len(nominal_env_ids), 1),
             self._device,
         ).squeeze(1)
-        self._commands[envs_idx, 1] = torch_rand_float(
+        self._commands[nominal_env_ids, 1] = torch_rand_float(
             self._command_cfg["lin_vel_y_range"][0],
             self._command_cfg["lin_vel_y_range"][1],
-            (len(envs_idx), 1),
+            (len(nominal_env_ids), 1),
             self._device,
         ).squeeze(1)
 
-        self._commands[envs_idx, 3] = torch_rand_float(
+        self._commands[nominal_env_ids, 3] = torch_rand_float(
             self._command_cfg["heading_range"][0],
             self._command_cfg["heading_range"][1],
-            (len(envs_idx), 1),
+            (len(nominal_env_ids), 1),
             device=self.device,
         ).squeeze(1)
-        self._commands[envs_idx, :3] *= (torch.norm(self._commands[envs_idx, :3], dim=1) > 0.2).unsqueeze(1)
+        self._commands[nominal_env_ids, :3] *= (
+            torch.norm(self._commands[nominal_env_ids, :3], dim=1) > 0.2
+        ).unsqueeze(1)
+
+        num_aux = int(self.num_auxiliary_envs)
+        if num_aux > 0:
+            offsets = torch.arange(1, num_aux + 1, device=self._device, dtype=torch.long)
+            aux_env_ids = nominal_env_ids[:, None] + offsets[None, :]
+            aux_env_ids = aux_env_ids.reshape(-1)
+            aux_env_ids = aux_env_ids[aux_env_ids < self._num_envs]
+
+            nominal_repeated = nominal_env_ids.repeat_interleave(num_aux)[: aux_env_ids.numel()]
+            self._commands[aux_env_ids] = self._commands[nominal_repeated]
 
     def _reset_idx(self, env_ids: torch.Tensor) -> None:
         """Reset environments by index."""
