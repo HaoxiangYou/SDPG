@@ -375,7 +375,6 @@ class G1(GenesisEnv):
         """
 
         observations = {}
-        # adapt from Jie Xu's implementation
         n_batch = states["progress_buf"].shape[0]
         robot_states = states["robot_states"]
 
