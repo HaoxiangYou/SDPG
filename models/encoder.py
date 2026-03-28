@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
 
 from utils.model_utils import get_activation_func, init_module
 
@@ -189,7 +189,7 @@ class Drqv2Encoder(CNNEncoder):
         # Convert OmegaConf DictConfig to regular dict if needed
         if encoder_cfg is None:
             drqv2_cfg = {}
-        elif isinstance(encoder_cfg, dict) and not isinstance(encoder_cfg, OmegaConf.DictConfig):
+        elif isinstance(encoder_cfg, dict) and not isinstance(encoder_cfg, DictConfig):
             drqv2_cfg = encoder_cfg.copy()
         else:
             # Convert OmegaConf DictConfig to regular dict
@@ -216,6 +216,73 @@ class Drqv2Encoder(CNNEncoder):
         # Call parent constructor with Drqv2 configuration
         super(Drqv2Encoder, self).__init__(input_shape, drqv2_cfg, device=device)
 
+
+class DepthEncoder(CNNEncoder):
+    """Extreme-parkour-style depth encoder (DepthOnlyFCBackbone58x87): 1×58×87 → latent.
+
+    Inherits ``forward`` / projection layout from :class:`CNNEncoder`; fixed conv + pool backbone matches
+    ``externals/extreme-parkour``. Expects ``x`` of shape (batch, 1, 58, 87) or (batch, 58, 87) with
+    preprocessed depth in ~[-0.5, 0.5] (e.g. ``go2_terrain`` pipeline).
+
+    Config (same style as other encoders): optional nested ``network``; ``output_dim`` overrides latent size
+    (default 32). Other CNNEncoder conv/projection keys are ignored.
+    """
+
+    def __init__(self, input_shape, encoder_cfg, device="cuda:0"):
+        nn.Module.__init__(self)
+        self.device = device
+        if encoder_cfg is None:
+            net: dict = {}
+        elif isinstance(encoder_cfg, dict):
+            net = dict(encoder_cfg)
+        elif isinstance(encoder_cfg, DictConfig):
+            net = OmegaConf.to_container(encoder_cfg, resolve=True) or {}
+        else:
+            net = {}
+
+        if "network" in net:
+            net = net.get("network", {}) or {}
+
+        output_dim = int(net.get("output_dim", 32))
+
+        if isinstance(input_shape, tuple) and len(input_shape) == 3:
+            in_ch = int(input_shape[0])
+        else:
+            in_ch = 1
+
+        # Match externals/extreme-parkour DepthOnlyFCBackbone58x87 (no padding on convs).
+        self.convnet = nn.Sequential(
+            nn.Conv2d(in_ch, 32, kernel_size=5),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.ELU(),
+            nn.Conv2d(32, 64, kernel_size=3),
+            nn.ELU(),
+        ).to(device)
+
+        repr_dim = 64 * 25 * 39
+        self.repr_dim = repr_dim
+        self.output_projection = nn.Sequential(
+            nn.Linear(repr_dim, 128),
+            nn.ELU(),
+            nn.Linear(128, output_dim),
+            nn.Tanh(),
+        ).to(device)
+
+        for module in (self.convnet, self.output_projection):
+            for m in module.modules():
+                if isinstance(m, nn.Conv2d):
+                    init_module(m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0), gain=np.sqrt(2))
+                elif isinstance(m, nn.Linear):
+                    init_module(m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0), gain=np.sqrt(2))
+
+        self.output_dim = output_dim
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.dim() == 3:
+            x = x.unsqueeze(1)
+        elif x.dim() != 4:
+            raise ValueError(f"DepthEncoder expects (B,H,W) or (B,C,H,W); got shape {tuple(x.shape)}")
+        return CNNEncoder.forward(self, x)
 
 def build_encoder(input_name, input_shape, encoder_cfg, device="cuda:0"):
     """Build an encoder based on config.
@@ -249,5 +316,7 @@ def build_encoder(input_name, input_shape, encoder_cfg, device="cuda:0"):
         return CNNEncoder(input_shape, network_cfg, device=device)
     elif encoder_type == "drqv2":
         return Drqv2Encoder(input_shape, network_cfg, device=device)
+    elif encoder_type == "depth":
+        return DepthEncoder(input_shape, network_cfg, device=device)
     else:
         raise ValueError(f"Unknown encoder type: {encoder_type} for input {input_name}")
