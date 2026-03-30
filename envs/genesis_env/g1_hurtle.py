@@ -337,7 +337,7 @@ class G1Hurtle(GenesisEnv):
         forward_vel = states["robot_states"]["base_vel"][:, 0]
         side_vel = states["robot_states"]["base_vel"][:, 1]
         center_deviation = states["robot_states"]["base_pose"][:, 1]
-        forward_reward = torch.minimum(forward_vel, self._forward_velocity_threshold) * self._forward_reward_scale
+        forward_reward = torch.clamp(forward_vel, max=self._forward_velocity_threshold) * self._forward_reward_scale
         velocity_penalty = (forward_vel**2 + side_vel**2) * self._velocity_penalty_scale
         center_deviation_penalty = center_deviation**2 * self._center_deviation_penalty_scale
     
