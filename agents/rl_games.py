@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
@@ -154,6 +154,62 @@ class WandbAlgoObserver(IsaacAlgoObserver):
         wandb.log(wandb_metrics, step=epoch_num)
 
 
+def _resolve_wandb_name(config: DictConfig) -> str | None:
+    if not getattr(config, "wandb", None):
+        return None
+    base_name = config.wandb.get("name")
+    if base_name is None:
+        run_name = getattr(config, "run_name", None)
+        if run_name:
+            base_name = run_name
+    if base_name is None and HydraConfig.initialized():
+        base_name = HydraConfig.get().runtime.output_dir.split("/")[-1]
+    if base_name is None:
+        return None
+    base_name = str(base_name).strip()
+    return base_name or None
+
+
+def _init_wandb(config: DictConfig) -> bool:
+    if not getattr(config, "wandb", None) or not config.wandb.get("enable", False):
+        return False
+    if wandb.run is not None:
+        return False
+
+    wandb_config = config.wandb
+    wandb_kwargs = {
+        "project": wandb_config.get("project", "ppo"),
+        "entity": wandb_config.get("entity"),
+        "group": wandb_config.get("group"),
+        "job_type": wandb_config.get("job_type"),
+        "name": _resolve_wandb_name(config),
+        "tags": wandb_config.get("tags", []),
+        "notes": wandb_config.get("notes"),
+    }
+    wandb_kwargs = {k: v for k, v in wandb_kwargs.items() if v is not None}
+    wandb.init(**wandb_kwargs)
+    wandb.define_metric("env_step")
+    wandb.define_metric("*", step_metric="env_step")
+    if wandb_config.get("log_config", True):
+        config_dict = OmegaConf.to_container(config, resolve=True)
+        wandb.config.update(config_dict)
+    print("Wandb logging enabled")
+    return True
+
+
+class RlGamesRunnerWrapper:
+    def __init__(self, runner: Runner, own_wandb_run: bool = False):
+        self._runner = runner
+        self._own_wandb_run = own_wandb_run
+
+    def run(self, args: Dict[str, Any]):
+        try:
+            return self._runner.run(args)
+        finally:
+            if self._own_wandb_run and wandb.run is not None:
+                wandb.finish()
+
+
 def make_runner(
     config: DictConfig,
     env: Optional[BaseEnv] = None,
@@ -196,8 +252,12 @@ def make_runner(
         print(f"Output directory: {output_dir}")
         agent_config["config"]["full_experiment_name"] = "training_logs"
 
-    runner = Runner(algo_observer=algo_observer or IsaacAlgoObserver())
+    own_wandb_run = _init_wandb(config)
+    if algo_observer is None:
+        algo_observer = WandbAlgoObserver(enabled=bool(getattr(config, "wandb", None) and config.wandb.get("enable", False)))
+
+    runner = Runner(algo_observer=algo_observer)
     runner.load({"params": agent_config})
     runner.reset()
 
-    return runner
+    return RlGamesRunnerWrapper(runner, own_wandb_run=own_wandb_run)
