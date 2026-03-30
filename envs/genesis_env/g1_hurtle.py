@@ -133,7 +133,6 @@ class G1Hurtle(GenesisEnv):
 
         self._termination_height_lower_bound = 0.6
         self._termination_height_upper_bound = 1.0
-        self._termination_angle = 1.0
         self._default_base_pos = torch.tensor([0.2, 0, 0.8], device=self._device).repeat(self._num_envs, 1)
         self._default_base_quat = torch.tensor([1, 0, 0, 0], device=self._device).repeat(self._num_envs, 1)
         self._default_joint_angles = torch.tensor(
