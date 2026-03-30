@@ -15,7 +15,7 @@ config:
           apply_rms: false
         - name: ego_centric_camera_observation
           encoder:
-            type: drqv2
+            type: depth
           apply_rms: false
       
       # Policy head processes concatenated encoded features

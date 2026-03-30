@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 import genesis as gs
 import numpy as np
 import torch
+import torch.nn.functional as F
 from genesis.utils.geom import axis_angle_to_quat, inv_quat, quat_to_xyz, transform_by_quat, transform_quat_by_quat
 from gym import spaces
 
@@ -63,6 +64,7 @@ class Go2Terrain(GenesisEnv):
         show_viewer: bool = False,
         show_FPS: bool = False,
         domain_rand_options: Dict[str, Any] | None = None,
+        debug: bool = False,
     ) -> None:
         if device is None:
             device = torch.device("cuda")
@@ -101,7 +103,7 @@ class Go2Terrain(GenesisEnv):
         self._domain_rand_options = domain_rand_options
         self._terrain_cfg = terrain_args
         self._train = False
-        self._debug = False
+        self._debug = debug
         self._vis_obs = vis_obs
 
         super().__init__(
@@ -234,19 +236,38 @@ class Go2Terrain(GenesisEnv):
         self._push_interval = np.ceil(self._domain_rand_options["push_interval_s"] / self._dt)
 
         if self._vis_obs:
-            self._num_image_stack = 3
-            ego_centric_camera_observation_space = spaces.Box(
-                low=0,
-                high=255,
-                dtype=np.uint8,
-                shape=(
-                    self._num_image_stack * 3,
-                    self._sensors_args["camera"]["res"][0],
-                    self._sensors_args["camera"]["res"][1],
-                ),
-            )
+            camera_cfg = self._sensors_args.get("camera", {}) if self._sensors_args is not None else {}
+            self._camera_type = camera_cfg.get("type", "rgb")
+            self._depth_camera_cfg = camera_cfg.get("depth", {})
+            
+            image_res = self._sensors_args["camera"]["res"]
+            if self._camera_type == "depth":
+                self._num_image_stack = 1
+                # camera.res in YAML is [H, W] (e.g. 60×106 for parkour-aligned depth). Genesis DepthCameraPattern takes (width, height).
+                self._depth_res_hw = (int(image_res[0]), int(image_res[1]))
+                # obs_res: (H, W) after crop + bicubic resize (default 58×87, same as IsaacGym resized (87,58) in width×height order).
+                obs_res = self._sensors_args["camera"]["obs_res"]
+                self._depth_out_h = int(obs_res[0])
+                self._depth_out_w = int(obs_res[1])
+                image_shape = (self._num_image_stack, self._depth_out_h, self._depth_out_w)
+            else:
+                self._num_image_stack = 1
+                image_shape = (self._num_image_stack * 3, image_res[0], image_res[1])
+            if self._camera_type == "depth":
+                ego_centric_camera_observation_space = spaces.Box(
+                    low=-0.5,
+                    high=0.5,
+                    dtype=np.float32,
+                    shape=image_shape,
+                )
+            else:
+                ego_centric_camera_observation_space = spaces.Box(
+                    low=0,
+                    high=255,
+                    dtype=np.uint8,
+                    shape=image_shape,
+                )
             # Initialize the sensors
-            # TODO: genesis at commit id 7db43e4caef2b185bf691d29fc545d6480cd224d only supports offset_T
             offset_T = self._sensors_args["camera"].get("offset_T", None)
             lookat = self._sensors_args["camera"].get("lookat", None)
             if offset_T is not None:
@@ -258,29 +279,43 @@ class Go2Terrain(GenesisEnv):
                     )
                 else:
                     offset_T = np.eye(4)
-            # NOTE: A dummy link for the camera to attach to, genesis sensor camera does not support fixed rotation or axis
             self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.01, collision=False, fixed=True))
             self._torso_link = self._robot.get_link("base")
+            camera_cfg = self._sensors_args["camera"]
             self._camera = self._scene.add_sensor(
                 gs.sensors.BatchRendererCameraOptions(
-                    res=self._sensors_args["camera"]["res"],
-                    pos=self._sensors_args["camera"]["pos"],
+                    res=camera_cfg["res"],
+                    pos=camera_cfg["pos"],
                     offset_T=offset_T,
-                    fov=self._sensors_args["camera"]["fov"],
+                    fov=camera_cfg["fov"],
+                    near=camera_cfg.get("near", 0.01),
+                    far=camera_cfg.get("far", 100.0),
                     entity_idx=self._camera_mount.idx,
-                    lights=[self._sensors_args["camera"]["lights"]],
+                    lights=[camera_cfg["lights"]],
                     env_idx=self._nominal_env_ids.cpu().tolist(),
+                    render_rgb=(self._camera_type == "rgb"),
+                    render_depth=(self._camera_type == "depth"),
                 )
             )
-            self._imgs_buf = torch.zeros(
-                self.nominal_env_ids.shape[0],
-                self._num_image_stack,
-                self._sensors_args["camera"]["res"][0],
-                self._sensors_args["camera"]["res"][1],
-                3,
-                device=self._device,
-                dtype=torch.uint8,
-            )
+            if self._camera_type == "depth":
+                self._imgs_buf = torch.zeros(
+                    self.nominal_env_ids.shape[0],
+                    self._num_image_stack,
+                    self._depth_out_h,
+                    self._depth_out_w,
+                    device=self._device,
+                    dtype=torch.float32,
+                )
+            else:
+                self._imgs_buf = torch.zeros(
+                    self.nominal_env_ids.shape[0],
+                    self._num_image_stack,
+                    image_res[0],
+                    image_res[1],
+                    3,
+                    device=self._device,
+                    dtype=torch.uint8,
+                )
             self._observation_space["ego_centric_camera_observation"] = ego_centric_camera_observation_space
 
 
@@ -353,7 +388,7 @@ class Go2Terrain(GenesisEnv):
             "feet_contact_stand_still": 0.5,
             "feet_clearance": 0.2,
             # "feet_distance": -1.0,
-            # "hip_pos": -0.05,
+            "hip_pos": -0.05,
         }
 
         # PD control parameters
@@ -638,7 +673,7 @@ class Go2Terrain(GenesisEnv):
         self._obs_history_buf = torch.cat([self._obs_history_buf[:, self._num_single_obs :], _obs_buf.detach()], dim=1)
         self._privileged_obs_buf = torch.cat([self._privileged_obs_buf[:, self._num_single_privileged_obs :], _privileged_obs_buf.detach()], dim=1)
 
-    def render(self, env_ids: Optional[Sequence[int]] = None) -> None:
+    def render(self, env_ids: Optional[Sequence[int]] = None) -> Optional[torch.Tensor]:
         if self._vis_obs:
             if env_ids is None:
                 env_ids = self.nominal_env_ids
@@ -646,12 +681,27 @@ class Go2Terrain(GenesisEnv):
             pos = self._torso_link.get_pos()
             self._camera_mount.set_pos(pos)
 
-            # TODO: genesis will refresh the image when the scene._dt is different from the last render time
-            # TODO: temporarily we hack by setting the last render time to 0 to force render the new image
-            self._camera._shared_metadata.last_render_timestep = 0
-            # TODO: the batch renderer will first render for all envs, and then return the data for the envs_idx, this may significantly increase the render memory
-            data = self._camera.read(envs_idx=env_ids)
-            return data.rgb
+            # Prefer the unified BatchRenderer path (same style as walker_hurtle):
+            # force refresh then read rgb/depth from camera.read(...).
+            # Keep a fallback for BVH DepthCamera that only supports read_image(...).
+            if hasattr(self._camera, "read"):
+                self._camera._shared_metadata.last_render_timestep = 0
+                data = self._camera.read(envs_idx=env_ids)
+                if self._camera_type == "depth":
+                    depth_image = data.depth
+                    if depth_image.ndim == 2:
+                        depth_image = depth_image.unsqueeze(0)
+                    img = self._process_depth_extreme_parkour(depth_image)
+                else:
+                    img = data.rgb
+            else:
+                # BVH DepthCamera path: explicit sensor step + read_image.
+                self._scene.sim._sensor_manager.step()
+                depth_image = self._camera.read_image(envs_idx=env_ids)
+                if depth_image.ndim == 2:
+                    depth_image = depth_image.unsqueeze(0)
+                img = self._process_depth_extreme_parkour(depth_image)
+            return img
         else:
             return None
 
@@ -671,11 +721,14 @@ class Go2Terrain(GenesisEnv):
         }
 
         if self._vis_obs:
-            batch_size, num_stack, height, width, rgb = self._imgs_buf.shape
-            # Reshape: (batch, num_stack, H, W, 3) -> (batch, num_stack * 3, H, W)
-            observations["ego_centric_camera_observation"] = self._imgs_buf.permute(0, 1, 4, 2, 3).reshape(
-                batch_size, num_stack * rgb, height, width
-            )
+            if self._camera_type == "depth":
+                observations["ego_centric_camera_observation"] = self._imgs_buf
+            else:
+                batch_size, num_stack, img_height, img_width, rgb = self._imgs_buf.shape
+                # Reshape: (batch, num_stack, H, W, 3) -> (batch, num_stack * 3, H, W)
+                observations["ego_centric_camera_observation"] = self._imgs_buf.permute(0, 1, 4, 2, 3).reshape(
+                    batch_size, num_stack * rgb, img_height, img_width
+                )
 
         return observations
 
@@ -719,32 +772,51 @@ class Go2Terrain(GenesisEnv):
         return termination
 
     def _resample_commands(self, envs_idx: Optional[torch.Tensor] = None) -> None:
-        """Resample velocity commands for specified environments.
+        """Resample velocity commands for nominal environments and propagate to auxiliaries.
 
         Args:
-            envs_idx: Boolean tensor mask of environments to resample commands for,
-                     or tensor of environment indices (Long), or None to resample for all environments.
+            envs_idx: Environment indices to consider for resampling.
+                Only nominal environments within this set are resampled;
+                their auxiliary environments are then set to the same commands.
         """
-        self._commands[envs_idx, 0] = torch_rand_float(
+        envs_idx = torch.as_tensor(envs_idx, device=self._device, dtype=torch.long)
+        mask = torch.isin(envs_idx, self._nominal_env_ids)
+        nominal_env_ids = envs_idx[mask]
+        if nominal_env_ids.numel() == 0:
+            return
+
+        self._commands[nominal_env_ids, 0] = torch_rand_float(
             self._command_cfg["lin_vel_x_range"][0],
             self._command_cfg["lin_vel_x_range"][1],
-            (len(envs_idx), 1),
+            (len(nominal_env_ids), 1),
             self._device,
         ).squeeze(1)
-        self._commands[envs_idx, 1] = torch_rand_float(
+        self._commands[nominal_env_ids, 1] = torch_rand_float(
             self._command_cfg["lin_vel_y_range"][0],
             self._command_cfg["lin_vel_y_range"][1],
-            (len(envs_idx), 1),
+            (len(nominal_env_ids), 1),
             self._device,
         ).squeeze(1)
 
-        self._commands[envs_idx, 3] = torch_rand_float(
+        self._commands[nominal_env_ids, 3] = torch_rand_float(
             self._command_cfg["heading_range"][0],
             self._command_cfg["heading_range"][1],
-            (len(envs_idx), 1),
+            (len(nominal_env_ids), 1),
             device=self.device,
         ).squeeze(1)
-        self._commands[envs_idx, :3] *= (torch.norm(self._commands[envs_idx, :3], dim=1) > 0.2).unsqueeze(1)
+        self._commands[nominal_env_ids, :3] *= (
+            torch.norm(self._commands[nominal_env_ids, :3], dim=1) > 0.2
+        ).unsqueeze(1)
+
+        num_aux = int(self.num_auxiliary_envs)
+        if num_aux > 0:
+            offsets = torch.arange(1, num_aux + 1, device=self._device, dtype=torch.long)
+            aux_env_ids = nominal_env_ids[:, None] + offsets[None, :]
+            aux_env_ids = aux_env_ids.reshape(-1)
+            aux_env_ids = aux_env_ids[aux_env_ids < self._num_envs]
+
+            nominal_repeated = nominal_env_ids.repeat_interleave(num_aux)[: aux_env_ids.numel()]
+            self._commands[aux_env_ids] = self._commands[nominal_repeated]
 
     def _reset_idx(self, env_ids: torch.Tensor) -> None:
         """Reset environments by index."""
@@ -843,7 +915,7 @@ class Go2Terrain(GenesisEnv):
                 # Render fresh images for the reset nominal environments
                 reset_nominal_env_ids = self.nominal_env_ids[nominal_idx_to_reset]
                 new_img = self.render(env_ids=reset_nominal_env_ids)
-
+                
                 # Initialize the image buffer for these environments
                 self._imgs_buf[nominal_idx_to_reset] = new_img.unsqueeze(1)
 
@@ -901,9 +973,6 @@ class Go2Terrain(GenesisEnv):
                                             (num_nominal_envs,), device=self._device).repeat_interleave(self._num_envs // num_nominal_envs)
         self._max_terrain_level = self._terrain_cfg["num_rows"]
         self._terrain_origins = torch.from_numpy(self._terrain.env_origins).to(self._device).to(torch.float)
-        if self._debug:
-            self._terrain_levels = torch.zeros_like(self._terrain_levels)
-            self._terrain_types = torch.zeros_like(self._terrain_types)
         self._env_origins[:] = self._terrain_origins[self._terrain_levels, self._terrain_types]
         self._custom_origins = True
 
@@ -1148,6 +1217,48 @@ class Go2Terrain(GenesisEnv):
                     heights9.view(self._num_envs, -1)[0, i] * self._terrain_cfg["vertical_scale"]
                 )
             self._scene.draw_debug_spheres(height_points[0, :], radius=0.02, color=(1, 0, 0, 0.7))
+
+    def _depth_to_uint8(self, depth_image: torch.Tensor) -> torch.Tensor:
+        depth_cfg = self._depth_camera_cfg
+        min_range = float(depth_cfg.get("min_range", 0.0))
+        max_range = float(depth_cfg.get("max_range", 5.0))
+
+        depth_norm = (depth_image - min_range) / max(max_range - min_range, 1e-6)
+        depth_norm = depth_norm.clamp(0.0, 1.0)
+        return torch.round(depth_norm * 255.0).to(torch.uint8)
+
+    def _process_depth_extreme_parkour(self, depth_image: torch.Tensor) -> torch.Tensor:
+        """Match extreme-parkour (IsaacGym) depth preprocessing: crop → noise → clip → bicubic resize → normalize.
+
+        Assumes raw ``depth_image`` from Genesis is **positive** distance in meters with spatial shape
+        ``self._depth_res_hw`` (from ``camera.res`` [H, W], e.g. 60×106). Uses ``camera.depth.min_range`` /
+        ``max_range`` as ``near_clip`` / ``far_clip``. Output shape: ``(batch, H, W)`` with ``H,W = obs_res``.
+        """
+        cfg = self._depth_camera_cfg
+        near = float(cfg.get("min_range", 0.0))
+        far = float(cfg.get("max_range", 2.0))
+        dis_noise = float(cfg.get("dis_noise", 0.0))
+        out_h, out_w = self._depth_out_h, self._depth_out_w
+
+        d = depth_image.float()
+        if d.dim() == 2:
+            d = d.unsqueeze(0)
+        # Same crop as legged_robot.crop_depth_image: drop last 2 rows, 4 cols each side (for 60×106 → 58×98).
+        d = d[:, :-2, 4:-4]
+        if dis_noise > 0.0:
+            d = d + dis_noise * 2.0 * (torch.rand(1, device=d.device, dtype=d.dtype) - 0.5)
+        d = torch.clamp(d, min=near, max=far)
+        d = d.unsqueeze(1)
+        d = F.interpolate(d, size=(out_h, out_w), mode="bicubic", align_corners=False)
+        d = d.squeeze(1)
+        # Same normalization as extreme-parkour for positive depths: (d - near) / (far - near) - 0.5
+        d = (d - near) / max(far - near, 1e-6) - 0.5
+        if d.shape[-2] != out_h or d.shape[-1] != out_w:
+            raise RuntimeError(
+                f"Depth tensor has shape {tuple(d.shape)}; expected last dims (H, W)=({out_h}, {out_w}) "
+                f"from camera.res. If you changed res, keep YAML as [height, width] matching DepthCamera read_image."
+            )
+        return d
 
     def get_states(self, env_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
         """Get robot states for computing observations and rewards."""
