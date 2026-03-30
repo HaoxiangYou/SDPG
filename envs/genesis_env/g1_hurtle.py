@@ -141,12 +141,11 @@ class G1Hurtle(GenesisEnv):
         )
         self._default_motor_dof_pos = self._default_joint_angles.repeat(self._num_envs, 1)
 
-        self._forward_reward_scale = 1.0
-        self._health_bonus = 0.02
-        self._velocity_penalty_scale = -5e-3
-        self._center_deviation_penalty_scale = -5e-2
-        self._forward_velocity_threshold = 4
-        self._action_penalty_scale = -1e-2
+        self._target = torch.tensor([200.0, 0.0, 0.0], device=self._device).repeat(self._num_envs, 1)
+        self._height_reward_scale = 10.0
+        self._termination_height_tolerance = 0.1
+        self._up_reward_scale = 0.1
+        self._action_penalty = -0.002
 
         # proprioceptive: base_height(1) + projected_gravity(3) + base_vel(6) + motor_pos(23) + motor_vel(23) = 56
         proprioceptive_observations_dim = 56
@@ -333,18 +332,33 @@ class G1Hurtle(GenesisEnv):
         return observations
 
     def compute_reward(self, states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
-        # rewards from "emergence of locomotion behavior in rich environments" paper
-        forward_vel = states["robot_states"]["base_vel"][:, 0]
-        side_vel = states["robot_states"]["base_vel"][:, 1]
-        center_deviation = states["robot_states"]["base_pose"][:, 1]
-        forward_reward = torch.clamp(forward_vel, max=self._forward_velocity_threshold) * self._forward_reward_scale
-        velocity_penalty = (forward_vel**2 + side_vel**2) * self._velocity_penalty_scale
-        center_deviation_penalty = center_deviation**2 * self._center_deviation_penalty_scale
-    
-        action_penalty = torch.sum(actions**2, dim=-1) * self._action_penalty_scale
+        # Adapt from Jie Xu's humanoid reward
+        n_batch = states["progress_buf"].shape[0]
+        robot_states = states["robot_states"]
 
-        reward = forward_reward + velocity_penalty + center_deviation_penalty + action_penalty + self._health_bonus
-        return reward
+        base_pose = robot_states["base_pose"]
+        base_quat = base_pose[:, 3:]
+        height = base_pose[:, 2]
+        height_diff = height - (self._termination_height_lower_bound + self._termination_height_tolerance)
+        height_reward = torch.clip(height_diff, -1.0, self._termination_height_tolerance)
+        height_reward = torch.where(height_reward < 0.0, -200.0 * height_reward * height_reward, height_reward)
+        height_reward = torch.where(height_reward > 0.0, self._height_reward_scale * height_reward, height_reward)
+
+        forward_reward = robot_states["base_vel"][:, 0]
+
+        target_dirs = self._target - base_pose[:, :3]
+        target_dirs[:, 2] = 0.0
+        target_dirs = torch.nn.functional.normalize(target_dirs, dim=-1)
+        heading_vec = transform_by_quat(
+            torch.tensor([1.0, 0.0, 0.0], device=self._device).repeat(n_batch, 1), base_quat
+        )
+        up_vec = transform_by_quat(torch.tensor([0.0, 0.0, 1.0], device=self._device).repeat(n_batch, 1), base_quat)
+
+        up_reward = self._up_reward_scale * up_vec[:, 2]
+        heading_reward = (heading_vec * target_dirs).sum(dim=-1)
+        action_penalty = self._action_penalty * torch.sum(actions**2, dim=-1)
+
+        return height_reward + forward_reward + up_reward + heading_reward + action_penalty
 
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
         robot_states = states["robot_states"]
