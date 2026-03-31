@@ -55,8 +55,9 @@ def main() -> None:
     if "play" in cfg.task:
         cfg.task.config = OmegaConf.merge(cfg.task.config, cfg.task.play)
 
-    # Load trajectory and infer dimensions
-    states = torch.load(cfg.traj_path, weights_only=False)
+    # Load trajectory and move to target device
+    device = torch.device(cfg.device)
+    states = torch.load(cfg.traj_path, weights_only=False, map_location=device)
     batch_size, time_steps = _infer_batch_time(states)
     if cfg.max_frames is not None:
         time_steps = min(time_steps, int(cfg.max_frames))
