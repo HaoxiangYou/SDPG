@@ -101,7 +101,7 @@ def main() -> None:
         if batch_size > num_envs:
             state_t = select_entries(state_t, list(range(num_envs)))
         env.set_states(state_t)
-        env._scene.step()
+        env._scene._visualizer.update()
 
     print(f"Replay complete ({time_steps} frames).")
 
