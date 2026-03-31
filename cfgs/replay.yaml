@@ -1,0 +1,10 @@
+defaults:
+  - task: genesis/hopper
+  - _self_
+
+device: cuda
+num_envs: 1  # placeholder; actual value is inferred from trajectory
+
+traj_path: null  # Path to the .pt trajectory file (required)
+max_frames: null  # Cap the number of timesteps to replay (optional)
+replay_num_envs: null  # Override number of envs (optional, default: trajectory batch size)

@@ -77,7 +77,7 @@ def make_runner(config: DictConfig):
             raise ValueError(f"Invalid agent name: {agent_name}")
 
 
-@hydra.main(version_base=None, config_path="../cfgs", config_name="config")
+@hydra.main(version_base=None, config_path="../cfgs", config_name="run")
 def main(cfg: DictConfig) -> None:
     """Main function that runs with Hydra config.
 
