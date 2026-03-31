@@ -36,9 +36,12 @@ class GenesisEnv(BaseEnv):
         show_FPS: bool = False,
     ) -> None:
         if device is None:
-            device = torch.device("cuda")
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             device = torch.device(device)
+            if device.type == "cuda" and not torch.cuda.is_available():
+                gs.warn(f"Requested device '{device}' but CUDA is not available, falling back to CPU.")
+                device = torch.device("cpu")
         self._device = device
 
         self._num_envs = num_envs
