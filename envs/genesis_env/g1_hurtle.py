@@ -157,9 +157,12 @@ class G1Hurtle(GenesisEnv):
             ),
         }
 
+        self._env_spacing = 1.0
+
         if self._terrain_args is not None:
             self._create_terrain()
             self._terrain_y_half_width = self._terrain_args["terrain_width"] / 2.0
+            self._env_spacing += self._terrain_y_half_width * 2.0
             if self._sensors_args is not None and "heightfield" in self._sensors_args:
                 self._init_height_points()
                 self._measured_heights = torch.zeros(
@@ -285,7 +288,7 @@ class G1Hurtle(GenesisEnv):
         )
 
     def build_scene(self) -> None:
-        self._scene.build(n_envs=self._num_envs, env_spacing=(0.0, 2.0), n_envs_per_row=self._num_envs)
+        self._scene.build(n_envs=self._num_envs, env_spacing=(0.0, self._env_spacing), n_envs_per_row=self._num_envs)
 
     def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         observations = {}
@@ -453,7 +456,7 @@ class G1Hurtle(GenesisEnv):
             points_to_draw[:, :, 1] -= self._terrain_args["border_size"] + self._terrain_args["terrain_width"] / 2.0
 
             center_env_id = (self._num_envs - 1) / 2.0
-            y_offset = (env_ids - center_env_id) * 2.0
+            y_offset = (env_ids - center_env_id) * self._env_spacing
             points_to_draw[:, :, 1] += y_offset.unsqueeze(1)
 
             points_to_draw = points_to_draw.view(-1, 3)
