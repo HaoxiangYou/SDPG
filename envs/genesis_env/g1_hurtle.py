@@ -11,6 +11,14 @@ from envs.genesis_env.genesis_env import GenesisEnv
 from utils.terrain import Terrain
 
 
+def _quat_apply_yaw(quat: torch.Tensor, vec: torch.Tensor) -> torch.Tensor:
+    """Rotate vectors by yaw component only of quaternion (Genesis w,x,y,z convention)."""
+    quat_yaw = quat.clone().view(-1, 4)
+    quat_yaw[:, 1:3] = 0.0  # zero x, y to keep only yaw (w, z)
+    quat_yaw = quat_yaw / quat_yaw.norm(p=2, dim=-1, keepdim=True).clamp(min=1e-9)
+    return transform_by_quat(vec, quat_yaw)
+
+
 class G1Hurtle(GenesisEnv):
     """G1 hurtle environment."""
 
@@ -416,30 +424,43 @@ class G1Hurtle(GenesisEnv):
         self._robot.control_dofs_force(actions, dofs_idx_local=self._motors_dof_idx)
 
     def _init_height_points(self) -> None:
-        """Initialize height sample points along X."""
+        """Initialize a 2D grid of height sample points in the robot body frame."""
         hf = self._sensors_args["heightfield"]
-        res = float(hf.get("res", 0.2))
-        ahead = float(hf.get("ahead", 8.0))
-        backward = float(hf.get("backward", 2.0))
-        n = int(round((ahead + backward) / res)) + 1
-        x_offsets = torch.linspace(-backward, ahead, n, device=self._device, dtype=torch.float)
-        self._num_height_points = n
+        x = torch.tensor(hf["measured_points_x"], device=self._device, dtype=torch.float)
+        y = torch.tensor(hf["measured_points_y"], device=self._device, dtype=torch.float)
+        grid_x, grid_y = torch.meshgrid(x, y, indexing="ij")
+
+        self._num_height_points = grid_x.numel()
         self._height_points = torch.zeros(
             self._num_envs, self._num_height_points, 3, device=self._device, dtype=torch.float
         )
-        self._height_points[:, :, 0] = x_offsets.unsqueeze(0).expand(self._num_envs, -1)
+        self._height_points[:, :, 0] = grid_x.flatten()
+        self._height_points[:, :, 1] = grid_y.flatten()
 
     def _update_height_measurements(self, env_ids: Optional[Sequence[int]] = None) -> None:
-        """Sample terrain height along X at current base pose."""
+        """Sample terrain heights on a 2D grid rotated by the robot's yaw heading."""
         if env_ids is None:
             env_ids = torch.arange(self._num_envs, device=self._device, dtype=torch.int32)
         if not hasattr(self, "_measured_heights") or len(env_ids) == 0:
             return
-        base_pos = self._robot.get_pos(envs_idx=env_ids)[:, :3]
-        points_continuous = base_pos.unsqueeze(1) + self._height_points[env_ids]
-        points_continuous[:, :, 1] += self._terrain_args["border_size"] + self._terrain_args["terrain_width"] / 2.0
 
-        points_grid = (points_continuous / self._terrain_args["horizontal_scale"]).long()
+        base_pos = self._robot.get_pos(envs_idx=env_ids)[:, :3]
+        base_quat = self._robot.get_quat(envs_idx=env_ids)  # (w, x, y, z)
+
+        # Rotate body-frame grid offsets by yaw, then shift to world frame
+        n_pts = self._num_height_points
+        rotated_offsets = _quat_apply_yaw(
+            base_quat.unsqueeze(1).expand(-1, n_pts, -1).reshape(-1, 4),
+            self._height_points[env_ids].reshape(-1, 3),
+        ).reshape(len(env_ids), n_pts, 3)
+
+        points_world = base_pos.unsqueeze(1) + rotated_offsets
+
+        # Shift Y into terrain-grid coordinate frame
+        points_terrain = points_world.clone()
+        points_terrain[:, :, 1] += self._terrain_args["border_size"] + self._terrain_args["terrain_width"] / 2.0
+
+        points_grid = (points_terrain / self._terrain_args["horizontal_scale"]).long()
         px = points_grid[:, :, 0].view(-1).clamp(0, self._height_samples.shape[0] - 2)
         py = points_grid[:, :, 1].view(-1).clamp(0, self._height_samples.shape[1] - 2)
 
@@ -448,21 +469,21 @@ class G1Hurtle(GenesisEnv):
         heights3 = self._height_samples[px, py + 1]
         heights = torch.min(torch.min(heights1, heights2), heights3) * self._terrain_args["vertical_scale"]
 
-        self._measured_heights[env_ids] = heights.view(env_ids.shape[0], -1)
+        self._measured_heights[env_ids] = heights.view(len(env_ids), -1)
 
         if self._debug:
-            points_to_draw = points_continuous.clone()
-            points_to_draw[:, :, 2] = heights.view(env_ids.shape[0], -1)
-            points_to_draw[:, :, 1] -= self._terrain_args["border_size"] + self._terrain_args["terrain_width"] / 2.0
+            # Draw measurement points at sampled terrain height in viewer world frame
+            points_to_draw = points_world.clone()
+            points_to_draw[:, :, 2] = heights.view(len(env_ids), -1)
 
             center_env_id = (self._num_envs - 1) / 2.0
-            y_offset = (env_ids - center_env_id) * self._env_spacing
+            y_offset = (env_ids.float() - center_env_id) * self._env_spacing
             points_to_draw[:, :, 1] += y_offset.unsqueeze(1)
 
-            points_to_draw = points_to_draw.view(-1, 3)
-
             self._scene.clear_debug_objects()
-            self._scene.draw_debug_spheres(points_to_draw, radius=0.01, color=(1.0, 0.0, 0.0, 0.5))
+            self._scene.draw_debug_spheres(
+                points_to_draw.reshape(-1, 3), radius=0.02, color=(1.0, 0.0, 0.0, 0.5)
+            )
 
     def _post_physics_step(self) -> None:
         """Post physics step."""

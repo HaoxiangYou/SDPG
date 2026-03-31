@@ -21,9 +21,8 @@ config:
   vis_obs: False
   sensors_args:
     heightfield:
-      res: 0.05
-      ahead: 2.0
-      backward: 1.0
+      measured_points_x: [-0.8, -0.6, -0.4, -0.2, 0., 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0]
+      measured_points_y: [-0.4, -0.3, -0.2, -0.1, 0., 0.1, 0.2, 0.3, 0.4]
     camera:
       type: rgb # options: rgb, depth
       res: [84, 84]
