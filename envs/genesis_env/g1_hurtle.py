@@ -105,11 +105,11 @@ class G1Hurtle(GenesisEnv):
 
         self._action_scale = torch.tensor(
             [
-                2.219, 0.524, 2.758, 0.756, 0.510, 0.262,   # left leg
-                2.219, 0.524, 2.758, 0.756, 0.510, 0.262,   # right leg
-                2.618,                                         # waist
-                2.470, 1.788, 2.618, 1.494, 1.972,           # left arm
-                2.470, 1.788, 2.618, 1.494, 1.972,           # right arm
+                2.219, 1.396, 0.785, 1.949, 0.510, 0.262,   # left leg
+                2.219, 1.396, 0.785, 1.949, 0.510, 0.262,   # right leg
+                0.262,                                         # waist
+                1.571, 1.788, 0.314, 1.494, 0.986,           # left arm
+                1.571, 1.788, 0.314, 1.494, 0.986,           # right arm
             ],
             device=self._device,
         )
@@ -323,6 +323,8 @@ class G1Hurtle(GenesisEnv):
         self._robot.set_dofs_kp(self._kp, self._motors_dof_idx)
         self._robot.set_dofs_kv(self._kd, self._motors_dof_idx)
 
+        self._joint_lower_limits, self._joint_upper_limits = self._robot.get_dofs_limit(self._motors_dof_idx)
+
     def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         observations = {}
         robot_states = states["robot_states"]
@@ -447,6 +449,7 @@ class G1Hurtle(GenesisEnv):
         actions = actions.view(self._num_envs, self._num_actions)
         actions = actions.clamp(min=-1.0, max=1.0)
         target_dof_pos = actions * self._action_scale + self._default_motor_dof_pos
+        target_dof_pos = target_dof_pos.clamp(self._joint_lower_limits, self._joint_upper_limits)
         self._robot.control_dofs_position(target_dof_pos, self._motors_dof_idx)
 
     def _init_height_points(self) -> None:
