@@ -70,6 +70,7 @@ class G1Hurtle(GenesisEnv):
 
         self._robot = self._scene.add_entity(
             gs.morphs.MJCF(file=os.path.join(os.path.dirname(__file__), "../../assets/g1_description/g1_23dof_rev_1_0.xml")),
+            material=gs.materials.Rigid(gravity_compensation=1.0),
             surface=gs.surfaces.Default(color=(1.0, 0.5, 0.0, 1.0)),
         )
 
@@ -102,13 +103,34 @@ class G1Hurtle(GenesisEnv):
         self._base_dof_idx = self._robot.base_joint.dofs_idx_local
         self._motors_dof_idx = [self._robot.get_joint(name).dof_start for name in self._motor_joint_names]
 
-        self._motor_strength = torch.tensor(
+        self._action_scale = torch.tensor(
             [
-                88.0, 139.0, 88.0, 139.0, 50.0, 50.0,
-                88.0, 139.0, 88.0, 139.0, 50.0, 50.0,
-                88.0,
-                25.0, 25.0, 25.0, 25.0, 25.0,
-                25.0, 25.0, 25.0, 25.0, 25.0,
+                2.219, 0.524, 2.758, 0.756, 0.510, 0.262,   # left leg
+                2.219, 0.524, 2.758, 0.756, 0.510, 0.262,   # right leg
+                2.618,                                         # waist
+                2.470, 1.788, 2.618, 1.494, 1.972,           # left arm
+                2.470, 1.788, 2.618, 1.494, 1.972,           # right arm
+            ],
+            device=self._device,
+        )
+
+        self._kp = torch.tensor(
+            [
+                200.0, 150.0, 150.0, 200.0, 20.0, 20.0,   # left leg
+                200.0, 150.0, 150.0, 200.0, 20.0, 20.0,   # right leg
+                200.0,                                       # waist
+                40.0, 40.0, 40.0, 40.0, 40.0,              # left arm
+                40.0, 40.0, 40.0, 40.0, 40.0,              # right arm
+            ],
+            device=self._device,
+        )
+        self._kd = torch.tensor(
+            [
+                5.0, 5.0, 5.0, 5.0, 2.0, 2.0,             # left leg
+                5.0, 5.0, 5.0, 5.0, 2.0, 2.0,             # right leg
+                5.0,                                         # waist
+                10.0, 10.0, 10.0, 10.0, 10.0,              # left arm
+                10.0, 10.0, 10.0, 10.0, 10.0,              # right arm
             ],
             device=self._device,
         )
@@ -298,6 +320,9 @@ class G1Hurtle(GenesisEnv):
     def build_scene(self) -> None:
         self._scene.build(n_envs=self._num_envs, env_spacing=(0.0, self._env_spacing), n_envs_per_row=self._num_envs)
 
+        self._robot.set_dofs_kp(self._kp, self._motors_dof_idx)
+        self._robot.set_dofs_kv(self._kd, self._motors_dof_idx)
+
     def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         observations = {}
         robot_states = states["robot_states"]
@@ -420,8 +445,9 @@ class G1Hurtle(GenesisEnv):
 
     def _set_actions(self, actions: torch.Tensor) -> None:
         actions = actions.view(self._num_envs, self._num_actions)
-        actions = actions.clamp(min=-1.0, max=1.0) * self._motor_strength
-        self._robot.control_dofs_force(actions, dofs_idx_local=self._motors_dof_idx)
+        actions = actions.clamp(min=-1.0, max=1.0)
+        target_dof_pos = actions * self._action_scale + self._default_motor_dof_pos
+        self._robot.control_dofs_position(target_dof_pos, self._motors_dof_idx)
 
     def _init_height_points(self) -> None:
         """Initialize a 2D grid of height sample points in the robot body frame."""
