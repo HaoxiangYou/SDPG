@@ -70,7 +70,6 @@ class G1Hurtle(GenesisEnv):
 
         self._robot = self._scene.add_entity(
             gs.morphs.MJCF(file=os.path.join(os.path.dirname(__file__), "../../assets/g1_description/g1_23dof_rev_1_0.xml")),
-            material=gs.materials.Rigid(gravity_compensation=1.0),
             surface=gs.surfaces.Default(color=(1.0, 0.5, 0.0, 1.0)),
         )
 
