@@ -57,7 +57,7 @@ config:
   top_k_perturbations: null
   num_envs: ${compute_num_envs:${.num_base_envs},${.num_action_perturbations}}
 
-  max_epochs: 40000
+  max_epochs: 100000
   horizon_length: 16
   gamma: 0.99
   lam: 0.95
@@ -73,7 +73,7 @@ config:
   
   actor_lr_schedule:
     name: cosine
-    T_max: 40000
+    T_max: 100000
     eta_min: 1e-5
     warmup_epochs: 100
     warmup_start_lr: 0
@@ -86,6 +86,14 @@ config:
   bounds:
     mean_bounds: [-2, 2]
     log_std_bounds: [-5, 2]
+
+  entropy_parameters:
+    initial_temperature: 1e-2
+    actor_regularization: true
+    soft_critic: False
+    temperature_auto_tune: true
+    target_std: 0.15
+    temperature_lr: 1e-3
 
   mini_batch_size: 4096
   critic_iterations: 2
