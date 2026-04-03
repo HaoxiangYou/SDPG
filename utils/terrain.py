@@ -154,6 +154,7 @@ class Terrain:
             ho_hi, hs_hi = hr["high"]["offset"], hr["high"]["scale"]
             num_stones = args.get("num_stones", 2)
             x_range = args.get("x_range", [1.5, 2.5])
+            half_valid_width = args.get("half_valid_width", [0.6, 0.9])
             terrain_utils.parkour_hurtle_terrain(
                 terrain,
                 num_stones=num_stones,
@@ -163,7 +164,7 @@ class Terrain:
                 pad_height=0,
                 x_range=x_range,
                 y_range=[0.0, 0.0],
-                half_valid_width=[0.6, 0.9],
+                half_valid_width=half_valid_width,
             )
 
         elif choice < self.proportions[5]:  # stepping stones
