@@ -70,7 +70,6 @@ class G1Hurtle(GenesisEnv):
 
         self._robot = self._scene.add_entity(
             gs.morphs.MJCF(file=os.path.join(os.path.dirname(__file__), "../../assets/g1_description/g1_23dof_rev_1_0.xml")),
-            surface=gs.surfaces.Default(color=(1.0, 0.5, 0.0, 1.0)),
         )
 
         self._motor_joint_names = [
