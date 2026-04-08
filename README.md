@@ -9,7 +9,7 @@ conda activate AFRL
 pip install -e ".[dev]"
 
 # Optional: install Genesis in editable mode 
-cd externals/Genesis && pip install -e ".[dev]" && cd ../..
+pip install -e "externals/Genesis[dev]"
 ```
 
 
