@@ -4,6 +4,7 @@ Usage:
     python envs/genesis_env/scripts/memory_test.py genesis/hopper
     python envs/genesis_env/scripts/memory_test.py genesis/walker_hurtle --num_envs 512
     python envs/genesis_env/scripts/memory_test.py genesis/go2_terrain --num_envs 2048 --vis_obs
+    python envs/genesis_env/scripts/memory_test.py genesis/walker_hurtle --vis_obs config.sensors_args.camera.type=depth config.sensors_args.camera.res="[256, 256]"
 """
 
 import argparse
@@ -13,6 +14,7 @@ from pathlib import Path
 
 import genesis as gs
 import torch
+import yaml
 from omegaconf import OmegaConf
 
 from utils.common_utils import snakecase_to_pascalcase
@@ -39,7 +41,7 @@ def main() -> None:
     parser.add_argument("--num_envs", type=int, default=64)
     parser.add_argument("--vis_obs", action="store_true")
     parser.add_argument("--device", default="cuda")
-    args = parser.parse_args()
+    args, overrides = parser.parse_known_args()
 
     cfgs_dir = Path(__file__).resolve().parent.parent.parent.parent / "cfgs"
     task_yaml = cfgs_dir / "task" / f"{args.task}.yaml"
@@ -48,8 +50,22 @@ def main() -> None:
 
     task_cfg = OmegaConf.load(task_yaml)
     task_cfg.config.num_envs = args.num_envs
-    if "play" in task_cfg:
-        task_cfg.config = OmegaConf.merge(task_cfg.config, task_cfg.play)
+    for ov in overrides:
+        key, _, val = ov.partition("=")
+        if not val:
+            raise ValueError(f"Invalid override (expected key=value): {ov}")
+        # Walk the key path to verify every segment exists
+        parts = key.split(".")
+        node = task_cfg
+        for i, part in enumerate(parts):
+            if not OmegaConf.is_config(node) or part not in node:
+                valid = list(node.keys()) if OmegaConf.is_config(node) else []
+                tried = ".".join(parts[: i + 1])
+                raise KeyError(f"Key '{tried}' not found. Available keys at '{'.'.join(parts[:i]) or 'root'}': {valid}")
+            node = node[part]
+        new = yaml.safe_load(val)
+        print(f"Override: {key}: {node} -> {new}")
+        OmegaConf.update(task_cfg, key, new)
     OmegaConf.resolve(task_cfg)
 
     env_name = task_cfg.name
