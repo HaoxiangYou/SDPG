@@ -8,6 +8,7 @@ from genesis.utils.geom import pos_lookat_up_to_T
 from gym import spaces
 
 from envs.genesis_env.genesis_env import GenesisEnv
+from utils.geom_utils import lookat_to_depth_euler
 from utils.terrain import Terrain
 
 
@@ -112,98 +113,48 @@ class WalkerHurtle(GenesisEnv):
         if self._vis_obs:
             camera_cfg = self._sensors_args.get("camera", {}) if self._sensors_args is not None else {}
             self._camera_type = camera_cfg.get("type", "rgb")
+            self._use_bvh_depth = self._camera_type == "depth" and camera_cfg.get("depth_backend", "madrona") == "bvh"
+            self._camera_near = float(camera_cfg.get("near", 0.01))
+            self._camera_far = float(camera_cfg.get("far", 5.0))
             self._num_image_stack = 3
-            image_res = self._sensors_args["camera"]["res"]
-            if self._camera_type == "depth":
-                image_shape = (self._num_image_stack, image_res[0], image_res[1])
-            else:
-                image_shape = (self._num_image_stack * 3, image_res[0], image_res[1])
+            image_res = camera_cfg["res"]
+            n_channels = self._num_image_stack if self._camera_type == "depth" else self._num_image_stack * 3
             observation_space_dict["ego_centric_camera_observation"] = spaces.Box(
-                low=0,
-                high=255,
-                dtype=np.uint8,
-                shape=image_shape,
+                low=0, high=255, dtype=np.uint8, shape=(n_channels, image_res[0], image_res[1]),
             )
-            # Initialize the sensors
-            # TODO: genesis at commit id 7db43e4caef2b185bf691d29fc545d6480cd224d only supports offset_T
-            offset_T = self._sensors_args["camera"].get("offset_T", None)
-            lookat = self._sensors_args["camera"].get("lookat", None)
-            if offset_T is not None:
-                offset_T = torch.tensor(offset_T, device=self._device)
-            else:
-                if lookat is not None:
-                    offset_T = pos_lookat_up_to_T(
-                        np.array(self._sensors_args["camera"]["pos"]), np.array(lookat), np.array((0.0, 0.0, 1.0))
-                    )
-                else:
-                    offset_T = np.eye(4)
-            # NOTE: A dummy link for the camera to attach to, genesis sensor camera does not support fixed rotation or axis
+
             self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.01, collision=False, fixed=True))
             self._torso_link = self._robot.get_link("torso")
-            camera_cfg = self._sensors_args["camera"]
+            lookat = camera_cfg.get("lookat", None)
+            env_idx = self._nominal_env_ids.cpu().tolist()
 
-            # NOTE: We use gs-Madrona (BatchRenderer) for both RGB and depth.
-            # Madrona scales with image resolution, not scene face count.
-            # For scenes with very few faces but high resolution, the BVH-based
-            # DepthCamera (raycaster) may be more efficient. To switch back:
-            #
-            #   from envs.genesis_env.genesis_utils import lookat_to_depth_euler
-            #   if lookat is not None:
-            #       euler_offset = lookat_to_depth_euler(camera_cfg["pos"], lookat)
-            #   else:
-            #       euler_offset = (0.0, 0.0, 0.0)
-            #   depth_camera_kwargs = dict(
-            #       pattern=gs.sensors.DepthCameraPattern(
-            #           res=(image_res[1], image_res[0]),
-            #           fov_horizontal=camera_cfg.get("fov", 80.0),
-            #       ),
-            #       entity_idx=self._camera_mount.idx,
-            #       pos_offset=tuple(camera_cfg["pos"]),
-            #       euler_offset=euler_offset,
-            #       min_range=camera_cfg.get("near", 0.01),
-            #       max_range=camera_cfg.get("far", 5.0),
-            #       return_world_frame=True,
-            #       env_idx=self._nominal_env_ids.cpu().tolist(),
-            #   )
-            #   self._camera = self._scene.add_sensor(
-            #       gs.sensors.DepthCamera(**depth_camera_kwargs)
-            #   )
-            #
-
-            self._camera = self._scene.add_sensor(
-                gs.sensors.BatchRendererCameraOptions(
-                    res=camera_cfg["res"],
-                    pos=camera_cfg["pos"],
-                    offset_T=offset_T,
-                    fov=camera_cfg["fov"],
-                    near=camera_cfg.get("near", 0.01),
-                    far=camera_cfg.get("far", 100.0),
-                    entity_idx=self._camera_mount.idx,
-                    lights=[camera_cfg["lights"]],
-                    env_idx=self._nominal_env_ids.cpu().tolist(),
-                    render_rgb=(self._camera_type == "rgb"),
-                    render_depth=(self._camera_type == "depth"),
-                )
-            )
-            if self._camera_type == "depth":
-                self._imgs_buf = torch.zeros(
-                    self.nominal_env_ids.shape[0],
-                    self._num_image_stack,
-                    image_res[0],
-                    image_res[1],
-                    device=self._device,
-                    dtype=torch.uint8,
-                )
+            if self._use_bvh_depth:
+                euler_offset = lookat_to_depth_euler(camera_cfg["pos"], lookat) if lookat else (0.0, 0.0, 0.0)
+                self._camera = self._scene.add_sensor(gs.sensors.DepthCamera(
+                    pattern=gs.sensors.DepthCameraPattern(res=(image_res[1], image_res[0]), fov_horizontal=camera_cfg.get("fov", 80.0)),
+                    entity_idx=self._camera_mount.idx, pos_offset=tuple(camera_cfg["pos"]), euler_offset=euler_offset,
+                    min_range=camera_cfg.get("near", 0.01), max_range=camera_cfg.get("far", 5.0),
+                    return_world_frame=True, env_idx=env_idx,
+                ))
             else:
-                self._imgs_buf = torch.zeros(
-                    self.nominal_env_ids.shape[0],
-                    self._num_image_stack,
-                    image_res[0],
-                    image_res[1],
-                    3,
-                    device=self._device,
-                    dtype=torch.uint8,
-                )
+                offset_T = camera_cfg.get("offset_T", None)
+                if offset_T is not None:
+                    offset_T = torch.tensor(offset_T, device=self._device)
+                elif lookat is not None:
+                    offset_T = pos_lookat_up_to_T(np.array(camera_cfg["pos"]), np.array(lookat), np.array((0.0, 0.0, 1.0)))
+                else:
+                    offset_T = np.eye(4)
+                self._camera = self._scene.add_sensor(gs.sensors.BatchRendererCameraOptions(
+                    res=camera_cfg["res"], pos=camera_cfg["pos"], offset_T=offset_T, fov=camera_cfg["fov"],
+                    near=camera_cfg.get("near", 0.01), far=camera_cfg.get("far", 100.0),
+                    entity_idx=self._camera_mount.idx, lights=[camera_cfg["lights"]], env_idx=env_idx,
+                    render_rgb=(self._camera_type == "rgb"), render_depth=(self._camera_type == "depth"),
+                ))
+
+            buf_shape = (self.nominal_env_ids.shape[0], self._num_image_stack, image_res[0], image_res[1])
+            if self._camera_type != "depth":
+                buf_shape += (3,)
+            self._imgs_buf = torch.zeros(*buf_shape, device=self._device, dtype=torch.uint8)
 
         self._observation_space = spaces.Dict(observation_space_dict)
 
@@ -413,50 +364,27 @@ class WalkerHurtle(GenesisEnv):
             self._imgs_buf[:, -1] = new_img
 
     def render(self, env_ids: Optional[Sequence[int]] = None) -> Optional[torch.Tensor]:
-        if self._vis_obs:
-            if env_ids is None:
-                env_ids = self.nominal_env_ids
-            # Attach the camera to the torso pose
-            pos = self._torso_link.get_pos()
-            self._camera_mount.set_pos(pos)
-
-            # TODO: genesis will refresh the image when the scene._dt is different from the last render time
-            # TODO: temporarily we hack by setting the last render time to 0 to force render the new image
-            self._camera._shared_metadata.last_render_timestep = 0
-            data = self._camera.read(envs_idx=env_ids)
-
-            if self._camera_type == "depth":
-                depth_image = data.depth
-                if depth_image.ndim == 2:
-                    depth_image = depth_image.unsqueeze(0)
-                img = self._depth_to_uint8(depth_image)
-            else:
-                img = data.rgb
-            return img
-
-            # NOTE: If using the BVH-based DepthCamera (raycaster) instead of
-            # Madrona BatchRenderer, the depth path would be:
-            #
-            #   if self._camera_type == "depth":
-            #       # BVH raycaster requires an explicit sensor manager step to
-            #       # re-render (it doesn't auto-render on read like BatchRenderer).
-            #       self._scene.sim._sensor_manager.step()
-            #       depth_image = self._camera.read_image(envs_idx=env_ids)
-            #       if depth_image.ndim == 2:
-            #           depth_image = depth_image.unsqueeze(0)
-            #       img = self._depth_to_uint8(depth_image)
-            #   else:
-            #       self._camera._shared_metadata.last_render_timestep = 0
-            #       data = self._camera.read(envs_idx=env_ids)
-            #       img = data.rgb
-        else:
+        if not self._vis_obs:
             return None
+        if env_ids is None:
+            env_ids = self.nominal_env_ids
+
+        self._camera_mount.set_pos(self._torso_link.get_pos())
+
+        if self._use_bvh_depth:
+            self._scene.sim._sensor_manager.step()
+            depth = self._camera.read_image(envs_idx=env_ids)
+            return self._depth_to_uint8(depth if depth.ndim > 2 else depth.unsqueeze(0))
+
+        self._camera._shared_metadata.last_render_timestep = 0
+        data = self._camera.read(envs_idx=env_ids)
+        if self._camera_type == "depth":
+            depth = data.depth
+            return self._depth_to_uint8(depth if depth.ndim > 2 else depth.unsqueeze(0))
+        return data.rgb
 
     def _depth_to_uint8(self, depth_image: torch.Tensor) -> torch.Tensor:
-        near = float(self._camera._options.near)
-        far = float(self._camera._options.far)
-
-        depth_norm = (depth_image - near) / max(far - near, 1e-6)
+        depth_norm = (depth_image - self._camera_near) / max(self._camera_far - self._camera_near, 1e-6)
         depth_norm = depth_norm.clamp(0.0, 1.0)
         return torch.round(depth_norm * 255.0).to(torch.uint8)
 

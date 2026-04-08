@@ -26,6 +26,7 @@ config:
       backward: 2.0 # distance to sample the heightfield backward in meters
     camera:
       type: rgb # options: rgb, depth
+      depth_backend: madrona # options: madrona, bvh (only used when type=depth)
       res: [84, 84]
       pos: [0.2, 0.0, -0.1]
       lookat: [0.8, 0.0, -0.3]
