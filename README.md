@@ -4,6 +4,8 @@ Official implmentation for Approximate First Order RL.
 
 ## 1. Installation
 
+### 1.1 Setup
+
 ```bash
 conda create -n AFRL python=3.11
 conda activate AFRL
@@ -23,13 +25,17 @@ pre-commit install        # enable hooks on git commit
 
 Run manually on all files: `pre-commit run --all-files`
 
-### Third-party packages
+### 1.2 Other dependencies
+
+<details>
 
 Vendored third-party packages (e.g., `rl_games`, `drqv2`) are included under `externals/` for running baselines. See [`externals/README.md`](externals/README.md) for pinned versions and local patches.
 
+</details>
+
 ## 2. Training
 
-### Quick Start
+### 2.1 Quick Start
 
 Training is launched via Hydra. Override `task` and `agent` to select the environment and algorithm. AFRL configs are provided for both state-based and vision-based observations.
 
@@ -47,9 +53,9 @@ python scripts/run.py task=genesis/hopper task.config.vis_obs=True agent=afrl/ge
 
 Logs are written to `logs/<backend>/<task>/<agent>/train/<timestamp>/`.
 
+### 2.2 Visualization during training
+
 <details>
-<summary><b>Visualization during training</b></summary>
-<br>
 
 To open the Genesis viewer during training, add `task.config.show_viewer=True`.
 
@@ -75,9 +81,40 @@ Use the same `task` and `agent` configs as training. For example, to evaluate a 
 python scripts/run.py task=genesis/hopper task.config.vis_obs=True agent=afrl/genesis_hopper_vis train=False checkpoint=<path_to_checkpoint>
 ```
 
+Control the number of evaluation environments with `task.play.num_envs=N` (more environments may slow down the visualizer and requires more GPU memories).
 
+### 3.2 Remote evaluation and local replay
 
+<details>
+
+To evaluate headlessly on a remote server, set `task.play.show_viewer=False`. Evaluation saves a `trajectory.pt` file under `logs/.../eval/`.
+
+To replay the saved trajectory locally with the Genesis viewer:
+
+```bash
+python scripts/replay.py task=genesis/hopper traj_path=<path_to_trajectory.pt>
+```
+
+Optional overrides:
+
+- `replay_num_envs=8` — override the number of environments to replay
+- `max_frames=500` — cap the number of timesteps
+
+</details>
 
 ## 4. Custom Environments
 
 See [`envs/genesis_env/README.md`](envs/genesis_env/README.md) for a step-by-step guide on adding new environments.
+
+## 5. Additional Simulation Backends
+
+Coming soon.
+
+
+## 6. Hardwares
+
+Coming soon.
+
+## 7. Citation
+
+Coming soon.
