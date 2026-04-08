@@ -58,9 +58,6 @@ config:
 
   actor_lr:  0.001
   critic_lr: 0.001
-  # Adam beta
-  betas: [0.7, 0.95]
-
 
   # Learning rate schedules
   actor_lr_schedule:
@@ -83,8 +80,7 @@ config:
   truncated_grads: True
   grad_norm: 1.0
 
-  # Whether to use running mean and std for the observations and reward
-  obs_rms: True
+  # Whether to use running mean and std for returns
   ret_rms: False
   normalize_delta_J: True
 

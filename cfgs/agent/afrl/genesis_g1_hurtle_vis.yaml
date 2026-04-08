@@ -65,7 +65,6 @@ config:
 
   actor_lr:  1e-3
   critic_lr: 2e-4
-  betas: [0.7, 0.95]
   
   actor_lr_schedule:
     name: cosine
@@ -87,7 +86,6 @@ config:
   truncated_grads: True
   grad_norm: 1.0
 
-  obs_rms: True
   ret_rms: False
   normalize_delta_J: True
 
