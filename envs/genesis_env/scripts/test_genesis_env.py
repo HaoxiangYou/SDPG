@@ -2,7 +2,7 @@ import importlib
 
 import genesis as gs
 import torch
-from genesis_env import GenesisEnv
+from envs.genesis_env.genesis_env import GenesisEnv
 
 from utils.common_utils import snakecase_to_pascalcase
 from utils.tensor_utils import all_dict_values_true, check_groups_same, dicts_equal, duplicate_entries, select_entries
