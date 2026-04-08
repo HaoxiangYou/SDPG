@@ -24,6 +24,7 @@ config:
       backward: 2.0 # distance to sample the heightfield backward in meters
     camera:
       type: depth # options: rgb, depth
+      depth_backend: madrona # options: madrona, bvh (only used when type=depth)
       res: [60, 106] # depth: [60, 106]
       # (H, W) after crop+resize, matching extreme-parkour 58×87 (height × width).
       obs_res: [58, 87] # depth: [58, 87]
