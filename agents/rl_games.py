@@ -1,3 +1,4 @@
+import os
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -7,10 +8,12 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from rl_games.common import env_configurations, vecenv
 from rl_games.common.algo_observer import IsaacAlgoObserver
-from rl_games.torch_runner import Runner
+from rl_games.torch_runner import Runner, _override_sigma, _restore
 
 from envs.base_env import BaseEnv
 from utils.common_utils import make_envs
+from utils.statistic_utils import AverageMeter
+from utils.tensor_utils import moveaxis_dict, stack_dict_list
 
 
 class RlGamesGpuEnv(vecenv.IVecEnv):
@@ -198,16 +201,72 @@ def _init_wandb(config: DictConfig) -> bool:
 
 
 class RlGamesRunnerWrapper:
-    def __init__(self, runner: Runner, own_wandb_run: bool = False):
+    def __init__(self, runner: Runner, own_wandb_run: bool = False, log_dir: str | None = None):
         self._runner = runner
         self._own_wandb_run = own_wandb_run
+        self._log_dir = log_dir
 
     def run(self, args: Dict[str, Any]):
         try:
-            return self._runner.run(args)
+            if args.get("play"):
+                self._run_play(args)
+            else:
+                return self._runner.run(args)
         finally:
             if self._own_wandb_run and wandb.run is not None:
                 wandb.finish()
+
+    @torch.no_grad()
+    def _run_play(self, args: Dict[str, Any]):
+        """Evaluate the policy and save trajectory (mirrors AFRLRunner.evaluate_policy)."""
+        print("Started to play")
+        player = self._runner.create_player()
+        _restore(player, args)
+        _override_sigma(player, args)
+
+        genesis_env: BaseEnv = player.env.env
+        device = player.device
+        num_envs = genesis_env.num_envs
+        max_steps = genesis_env.episode_length
+
+        ep_length = torch.zeros(num_envs, device=device)
+        ep_length_meter = AverageMeter(1, 100).to(device)
+        ep_reward = torch.zeros(num_envs, device=device)
+        ep_reward_meter = AverageMeter(1, 100).to(device)
+
+        states_history = []
+
+        obses = player.env_reset(player.env)
+        player.get_batch_size(obses, 1)
+        states_history.append(genesis_env.get_states())
+
+        for _ in range(max_steps):
+            action = player.get_action(obses, is_deterministic=True)
+            obses, r, done, info = player.env_step(player.env, action)
+            states_history.append(genesis_env.get_states())
+
+            ep_length += 1
+            ep_reward += r
+            done_ids = done.nonzero(as_tuple=False).squeeze(-1)
+            if len(done_ids) > 0:
+                ep_length_meter.update(ep_length[done_ids])
+                ep_reward_meter.update(ep_reward[done_ids])
+                ep_length[done_ids] = 0.0
+                ep_reward[done_ids] = 0.0
+
+        print(
+            f"Episode length: {ep_length_meter.get_mean().item():.1f}, "
+            f"Episode reward: {ep_reward_meter.get_mean().item():.2f}"
+        )
+
+        if self._log_dir:
+            eval_dir = os.path.join(self._log_dir, "eval")
+            os.makedirs(eval_dir, exist_ok=True)
+            save_path = os.path.join(eval_dir, "trajectory.pt")
+            states_history = stack_dict_list(states_history)
+            states_history = moveaxis_dict(states_history, source=0, destination=1)
+            torch.save(states_history, save_path)
+            print(f"Trajectory saved to {save_path}")
 
 
 def make_runner(
@@ -239,8 +298,6 @@ def make_runner(
     # Overwrite attributes based on parents config.
     agent_config["seed"] = config.seed
     agent_config["config"]["num_actors"] = config.agent.config.num_envs
-    agent_config["config"]["player"]["num_actors"] = config.agent.config.num_envs
-    agent_config["config"]["player"]["games_num"] = config.agent.config.num_envs
 
     # Output directory: use config.log_dir if set (e.g. teacher_student teacher subdir), else Hydra run dir
     output_dir = getattr(config, "log_dir", None)
@@ -260,4 +317,4 @@ def make_runner(
     runner.load({"params": agent_config})
     runner.reset()
 
-    return RlGamesRunnerWrapper(runner, own_wandb_run=own_wandb_run)
+    return RlGamesRunnerWrapper(runner, own_wandb_run=own_wandb_run, log_dir=output_dir)
