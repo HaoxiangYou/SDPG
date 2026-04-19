@@ -235,13 +235,6 @@ class AlohaInsertion(GenesisEnv):
         self._socket_entrance_site_link = self._socket.get_link("socket_entrance_site")
         self._socket_rear_site_link = self._socket.get_link("socket_rear_site")
 
-        # Finger link global indices (used by the `no_table_collision`
-        # reward). We need *global* indices because `entity.get_contacts`
-        # returns `link_a` / `link_b` in the global link-index space, not
-        # the entity-local one. Each finger link owns the two
-        # `*_finger_top` / `*_finger_bottom` collision capsules that the
-        # reference treats as the "hand" contact set (see
-        # aloha_constants.FINGER_GEOMS).
         self._finger_link_names = [
             "left/left_finger_link",
             "left/right_finger_link",
