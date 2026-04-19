@@ -1,0 +1,55 @@
+<mujoco model="socket">
+  <asset>
+    <material name="socket_blue"  rgba="0.22 0.34 0.85 1"/>
+    <material name="socket_red"   rgba="1 0 0 1"/>
+  </asset>
+
+  <default>
+    <default class="stiff">
+      <geom solref="0.01 1"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="socket">
+      <site name="socket_entrance" pos="0.048 0 0" group="4"/>
+      <site name="socket_rear"     pos="0     0 0" group="4"/>
+      <joint name="socket" type="free" stiffness="0" damping="0" frictionloss="0" armature="0"/>
+
+      <!-- Bottom wall -->
+      <geom class="stiff" name="socket-B"
+            type="box" size="0.048 0.022 0.002" pos="0 0 -0.02"
+            mass="0.016" condim="4" friction="1 0.05 0.001"
+            material="socket_blue"
+            contype="1" conaffinity="1"/>
+
+      <!-- Top wall (flipped normal via zaxis) -->
+      <geom class="stiff" name="socket-T"
+            type="box" size="0.048 0.022 0.002" pos="0 0 0.02" zaxis="0 0 -1"
+            mass="0.016" condim="4" friction="1 0.05 0.001"
+            material="socket_blue"
+            contype="1" conaffinity="1"/>
+
+      <!-- Left side wall -->
+      <geom class="stiff" name="socket-L"
+            type="box" size="0.048 0.018 0.002" pos="0 -0.02 0" zaxis="0 1 0"
+            mass="0.016" condim="4" friction="1 0.05 0.001"
+            material="socket_blue"
+            contype="1" conaffinity="1"/>
+
+      <!-- Right side wall -->
+      <geom class="stiff" name="socket-R"
+            type="box" size="0.048 0.018 0.002" pos="0 0.02 0" zaxis="0 -1 0"
+            mass="0.016" condim="4" friction="1 0.05 0.001"
+            material="socket_blue"
+            contype="1" conaffinity="1"/>
+
+      <!-- Back wall (the target for peg_end2 to reach) -->
+      <geom class="stiff" name="wall"
+            type="box" size="0.004 0.018 0.018" pos="-0.044 0 0"
+            mass="0.006" condim="4" friction="1 0.05 0.001"
+            material="socket_red"
+            contype="1" conaffinity="1"/>
+    </body>
+  </worldbody>
+</mujoco>
