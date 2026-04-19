@@ -654,6 +654,7 @@ class AlohaInsertion(GenesisEnv):
     def get_states(self, env_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
         if env_ids is None:
             env_ids = torch.arange(self._num_envs, device=self._device, dtype=torch.int32)
+        
         robot_pos = self._robot.get_dofs_position(self._robot_dofs_idx, envs_idx=env_ids)
         robot_vel = self._robot.get_dofs_velocity(self._robot_dofs_idx, envs_idx=env_ids)
         
