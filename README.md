@@ -97,7 +97,7 @@ python scripts/replay.py task=genesis/hopper traj_path=<path_to_trajectory.pt>
 
 Optional overrides:
 
-- `replay_num_envs=8` — override the number of environments to replay
+- `num_envs=8` — override the number of environments to replay (defaults to the trajectory's batch size)
 - `max_frames=500` — cap the number of timesteps
 
 </details>
