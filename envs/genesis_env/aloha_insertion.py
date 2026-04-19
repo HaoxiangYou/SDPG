@@ -1,3 +1,4 @@
+import math
 import os
 from typing import Any, Dict, Optional, Sequence
 
@@ -6,12 +7,47 @@ import numpy as np
 import torch
 from genesis.utils.geom import (
     inv_quat,
+    inv_transform_by_quat,
     pos_lookat_up_to_T,
     transform_quat_by_quat,
 )
 from gym import spaces
 
 from envs.genesis_env.genesis_env import GenesisEnv
+
+
+def _tolerance(
+    x: torch.Tensor,
+    bounds: tuple[float, float] = (0.0, 0.0),
+    margin: float = 0.0,
+    sigmoid: str = "gaussian",
+    value_at_margin: float = 0.1,
+) -> torch.Tensor:
+    """Torch port of `mujoco_playground._src.reward.tolerance`.
+
+    Returns 1.0 inside `bounds`, smoothly decays to `value_at_margin` at
+    distance `margin` from the nearest bound, then (for `"linear"`) keeps
+    decaying linearly to 0. Only the sigmoid kinds actually used by
+    SinglePegInsertion are implemented (`"linear"`, `"gaussian"`).
+    """
+    lower, upper = bounds
+    in_bounds = (x >= lower) & (x <= upper)
+
+    if margin == 0.0:
+        return in_bounds.to(x.dtype)
+
+    d = torch.where(x < lower, lower - x, x - upper) / margin
+
+    if sigmoid == "linear":
+        scale = 1.0 - value_at_margin
+        value = torch.clamp(1.0 - d * scale, min=0.0)
+    elif sigmoid == "gaussian":
+        scale = math.sqrt(-2.0 * math.log(value_at_margin))
+        value = torch.exp(-0.5 * (d * scale) ** 2)
+    else:
+        raise ValueError(f"Unsupported sigmoid: {sigmoid!r}")
+
+    return torch.where(in_bounds, torch.ones_like(x), value)
 
 
 class AlohaInsertion(GenesisEnv):
@@ -192,6 +228,32 @@ class AlohaInsertion(GenesisEnv):
 
         self._socket_dofs_idx = self._socket.get_joint("socket").dofs_idx_local
 
+        self._left_gripper_site_link = self._robot.get_link("left/gripper_site")
+        self._right_gripper_site_link = self._robot.get_link("right/gripper_site")
+        self._peg_end1_site_link = self._peg.get_link("peg_end1_site")
+        self._peg_end2_site_link = self._peg.get_link("peg_end2_site")
+        self._socket_entrance_site_link = self._socket.get_link("socket_entrance_site")
+        self._socket_rear_site_link = self._socket.get_link("socket_rear_site")
+
+        # Finger link global indices (used by the `no_table_collision`
+        # reward). We need *global* indices because `entity.get_contacts`
+        # returns `link_a` / `link_b` in the global link-index space, not
+        # the entity-local one. Each finger link owns the two
+        # `*_finger_top` / `*_finger_bottom` collision capsules that the
+        # reference treats as the "hand" contact set (see
+        # aloha_constants.FINGER_GEOMS).
+        self._finger_link_names = [
+            "left/left_finger_link",
+            "left/right_finger_link",
+            "right/left_finger_link",
+            "right/right_finger_link",
+        ]
+        self._finger_link_global_indices = torch.tensor(
+            [self._robot.get_link(n).idx for n in self._finger_link_names],
+            device=self._device,
+            dtype=torch.long,
+        )
+
         self._default_motor_dof_pos = torch.tensor(
             [
                 # left arm: waist, shoulder, elbow, forearm_roll, wrist_angle, wrist_rotate
@@ -224,12 +286,28 @@ class AlohaInsertion(GenesisEnv):
 
         self._action_scale = 0.005
 
+        self._out_of_bounds_threshold = 1.0
+
         self._socket_entrance_goal_pos = torch.tensor(
             [-0.05, 0.0, 0.15], device=self._device
         ).repeat(self._num_envs, 1)
         self._peg_end2_goal_pos = torch.tensor(
             [0.05, 0.0, 0.15], device=self._device
         ).repeat(self._num_envs, 1)
+
+        self._reward_scales = {
+            "left_reward": 1.0,
+            "right_reward": 1.0,
+            "left_target_qpos": 0.3,
+            "right_target_qpos": 0.3,
+            "no_table_collision": 0.3,
+            "socket_z_up": 0.5,
+            "peg_z_up": 0.5,
+            "socket_entrance_reward": 4.0,
+            "peg_end2_reward": 4.0,
+            "peg_insertion_reward": 8.0,
+        }
+        self._reward_scale_sum = float(sum(self._reward_scales.values()))
 
         # if self._vis_obs:
         #     # Initialize the sensors
@@ -284,71 +362,51 @@ class AlohaInsertion(GenesisEnv):
         )
 
     def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
-        pass
-        # observations = {}
+        robot_states = states["robot_states"]
+        batch = robot_states["robot_pos"].shape[0]
 
-        # # Privileged observations follow the IsaacLab's implementation
-        # robot_states = states["robot_states"]
-        # hand_dof_pos = robot_states["hand_dof_pos"]
-        # scaled_hand_dof_pos = (2.0 * hand_dof_pos - self._hand_motors_ctrl_lower - self._hand_motors_ctrl_upper) / (
-        #     self._hand_motors_ctrl_upper - self._hand_motors_ctrl_lower
-        # )
-        # hand_dof_vel = robot_states["hand_dof_vel"]
-        # scaled_hand_dof_vel = hand_dof_vel * self._vel_obs_scale
+        left_gripper_pos    = self._left_gripper_site_link.get_pos()
+        right_gripper_pos   = self._right_gripper_site_link.get_pos()
+        socket_entrance_pos = self._socket_entrance_site_link.get_pos()
+        peg_end2_pos        = self._peg_end2_site_link.get_pos()
 
-        # cube_pos = robot_states["cube_pos"]
-        # cube_quat = robot_states["cube_quat"]
-        # cube_vel = robot_states["cube_vel"]
-        # cube_linear_vel = cube_vel[:, :3]
-        # cube_angular_vel = cube_vel[:, 3:]
-        # scaled_cube_angular_vel = cube_angular_vel * self._vel_obs_scale
+        # TODO, duplicate information, but follow mujoco_playground implementation
+        peg_pos    = robot_states["peg_pos"]
+        socket_pos = robot_states["socket_pos"]
 
-        # target_quat = robot_states["target_quat"]
-        # rot_diff = transform_quat_by_quat(inv_quat(target_quat), cube_quat)
+        world_z = torch.tensor([0.0, 0.0, 1.0], device=self._device).expand(batch, 3)
+        peg_z    = inv_transform_by_quat(world_z, robot_states["peg_quat"])
+        socket_z = inv_transform_by_quat(world_z, robot_states["socket_quat"])
 
-        # prev_actions = robot_states["prev_actions"]
-        # # TODO, in IsaacLab, the observation contains figer tip pose and velocity;
-        # # Figer tip is not part of the state, but can be derived from the state
-        # # We currently obtain the finger tip pose directly from simulation, which may be problematic
-        # # However, since compute_observations is called after set_states, this implementation may be fine for now.
-        # finger_tip_pos = self._robot.get_links_pos(links_idx_local=self._finger_tip_link_idx).view(
-        #     self.num_envs, len(self._finger_tip_link_names) * 3
-        # )
-        # finger_tip_quat = self._robot.get_links_quat(links_idx_local=self._finger_tip_link_idx).view(
-        #     self.num_envs, len(self._finger_tip_link_names) * 4
-        # )
-        # finger_tip_vel = self._robot.get_links_vel(links_idx_local=self._finger_tip_link_idx).view(
-        #     self.num_envs, len(self._finger_tip_link_names) * 3
-        # )
-        # finger_tip_angular_vel = self._robot.get_links_ang(links_idx_local=self._finger_tip_link_idx).view(
-        #     self.num_envs, len(self._finger_tip_link_names) * 3
-        # )
+        privileged_observations = torch.cat(
+            [
+                robot_states["robot_pos"],          # (N, 16)
+                robot_states["peg_pos"],            # (N, 3)
+                robot_states["peg_quat"],           # (N, 4)
+                robot_states["socket_pos"],         # (N, 3)
+                robot_states["socket_quat"],        # (N, 4)
+                robot_states["robot_vel"],          # (N, 16)
+                robot_states["peg_vel"],            # (N, 6)
+                robot_states["socket_vel"],         # (N, 6)
+                left_gripper_pos,
+                socket_pos,
+                right_gripper_pos,
+                peg_pos,
+                socket_entrance_pos,
+                peg_end2_pos,
+                socket_z,
+                peg_z,
+            ],
+            dim=-1,
+        )  # (N, 82)
 
-        # privileged_observations = torch.cat(
-        #     [
-        #         # hand
-        #         scaled_hand_dof_pos,
-        #         scaled_hand_dof_vel,
-        #         # object
-        #         cube_pos,
-        #         cube_quat,
-        #         cube_linear_vel,
-        #         scaled_cube_angular_vel,
-        #         # goal
-        #         self._in_hand_pos,
-        #         target_quat,
-        #         rot_diff,
-        #         # finger_tip
-        #         finger_tip_pos,
-        #         finger_tip_quat,
-        #         finger_tip_vel,
-        #         finger_tip_angular_vel,
-        #         # actions
-        #         prev_actions,
-        #     ],
-        #     dim=-1,
-        # )
-        # observations["privileged_observations"] = privileged_observations
+        observations = {
+            "privileged_observations": privileged_observations,
+        }
+
+        # TODO: add RGB / wrist-cam observations here when self._vis_obs is
+        # enabled, to mirror the rest of the genesis_env codebase.
+        return observations
 
         # if self._vis_obs:
         #     proprioception_and_target = torch.cat(
@@ -382,33 +440,119 @@ class AlohaInsertion(GenesisEnv):
         # return observations
 
     def compute_reward(self, states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
-        # TODO
-        return torch.zeros(self._num_envs, device=self._device)
-        # robot_states = states["robot_states"]
-        # cube_pos = robot_states["cube_pos"]
-        # cube_quat = robot_states["cube_quat"]
-        # target_quat = robot_states["target_quat"]
-        # goal_dis = torch.norm(cube_pos - self._in_hand_pos, p=2, dim=-1)
-        # dist_reward = self._dist_reward_scale * goal_dis
+        robot_states = states["robot_states"]
+        n = robot_states["robot_pos"].shape[0]
 
-        # quat_diff = transform_quat_by_quat(inv_quat(target_quat), cube_quat)
-        # rot_dist = 2.0 * torch.asin(torch.clamp(torch.norm(quat_diff[:, 1:4], p=2, dim=-1), max=1.0))
+        # ---- world-frame positions (via dummy-body links) -------------
+        left_gripper_pos    = self._left_gripper_site_link.get_pos()
+        right_gripper_pos   = self._right_gripper_site_link.get_pos()
+        socket_entrance_pos = self._socket_entrance_site_link.get_pos()
+        socket_rear_pos     = self._socket_rear_site_link.get_pos()
+        peg_end2_pos        = self._peg_end2_site_link.get_pos()
 
-        # rot_rew = -(rot_dist**2) * self._rot_reward_scale
+        socket_pos = robot_states["socket_pos"]
+        peg_pos    = robot_states["peg_pos"]
 
-        # action_penalty = self._action_penalty * torch.sum(actions**2, dim=-1)
+        # ---- (1) / (2) grip rewards -----------------------------------
+        left_socket_dist = torch.norm(socket_pos - left_gripper_pos, dim=-1)
+        left_reward = _tolerance(
+            left_socket_dist, (0.0, 0.001), margin=0.3, sigmoid="linear"
+        )
 
-        # # restore the average angle difference between the cube and the target in degrees
-        # self._infos["angle_diff"] = torch.rad2deg(2 * torch.norm(quat_diff[:, 1:4], p=2, dim=-1)).mean().item()
+        right_peg_dist = torch.norm(peg_pos - right_gripper_pos, dim=-1)
+        right_reward = _tolerance(
+            right_peg_dist, (0.0, 0.001), margin=0.3, sigmoid="linear"
+        )
 
-        # return dist_reward + rot_rew + action_penalty + self._healthy_reward
+        # ---- (3) arm-qpos-close-to-init -------------------------------
+        # robot_pos order is [arm_12, gripper_active_2, gripper_passive_2];
+        # _default_motor_dof_pos order is [arm_12, gripper_active_2]. The
+        # first 12 slots line up, so we slice them directly.
+        arm_qpos = robot_states["robot_pos"][:, :12]
+        init_arm_qpos = self._default_motor_dof_pos[:, :12]
+        robot_qpos_diff = arm_qpos - init_arm_qpos
+        left_pose  = _tolerance(
+            torch.norm(robot_qpos_diff[:, :6],  dim=-1), (0.0, 0.01), margin=2.0
+        )  # default sigmoid is "gaussian", matching the reference
+        right_pose = _tolerance(
+            torch.norm(robot_qpos_diff[:, 6:12], dim=-1), (0.0, 0.01), margin=2.0
+        )
+
+        # ---- (4) lift rewards -----------------------------------------
+        socket_dist = torch.norm(self._socket_entrance_goal_pos - socket_pos, dim=-1)
+        socket_lift = _tolerance(
+            socket_dist, (0.0, 0.01), margin=0.15, sigmoid="linear"
+        )
+
+        peg_dist = torch.norm(self._peg_end2_goal_pos - peg_pos, dim=-1)
+        peg_lift = _tolerance(
+            peg_dist, (0.0, 0.01), margin=0.15, sigmoid="linear"
+        )
+
+        # ---- (5) no table collision -----------------------------------
+        # TODO: contact information may be stale without a physics step in between
+        contacts = self._robot.get_contacts(with_entity=self._table)
+        link_a = contacts["link_a"]        # (n_envs, n_contacts) int64
+        link_b = contacts["link_b"]
+        valid = contacts["valid_mask"]     # (n_envs, n_contacts) bool
+
+        finger_ids = self._finger_link_global_indices  # (4,)
+        a_is_finger = (link_a.unsqueeze(-1) == finger_ids).any(dim=-1)
+        b_is_finger = (link_b.unsqueeze(-1) == finger_ids).any(dim=-1)
+        finger_table_contact = (a_is_finger | b_is_finger) & valid
+        table_collision = finger_table_contact.any(dim=-1).float()
+        no_table_collision = 1.0 - table_collision
+
+        # ---- (6) z-up orientation -------------------------------------
+        world_z = torch.tensor([0.0, 0.0, 1.0], device=self._device).expand(n, 3)
+        peg_up_cos    = inv_transform_by_quat(world_z, robot_states["peg_quat"])[:, 2]
+        socket_up_cos = inv_transform_by_quat(world_z, robot_states["socket_quat"])[:, 2]
+        peg_orientation = _tolerance(
+            peg_up_cos, (0.99, 1.0), margin=0.03, sigmoid="linear"
+        )
+        socket_orientation = _tolerance(
+            socket_up_cos, (0.99, 1.0), margin=0.03, sigmoid="linear"
+        )
+
+        # ---- (7) peg insertion reward ---------------------------------
+        socket_ab = socket_entrance_pos - socket_rear_pos
+        socket_t = torch.sum((peg_end2_pos - socket_rear_pos) * socket_ab, dim=-1)
+        socket_t = socket_t / (torch.sum(socket_ab * socket_ab, dim=-1) + 1e-6)
+        nearest_pt = socket_rear_pos + socket_t.unsqueeze(-1) * socket_ab
+        peg_end2_dist_to_line = torch.norm(peg_end2_pos - nearest_pt, dim=-1)
+        use_peg_insertion_reward = (peg_end2_dist_to_line < 0.005).to(peg_end2_pos.dtype)
+
+        peg_insertion_dist = torch.norm(peg_end2_pos - socket_rear_pos, dim=-1)
+        peg_insertion_reward = _tolerance(
+            peg_insertion_dist, (0.0, 0.001), margin=0.1, sigmoid="linear"
+        ) * use_peg_insertion_reward
+
+        raw = {
+            "left_reward": left_reward,
+            "right_reward": right_reward,
+            # Soft AND logic, the target qpos reward is given when left and right reward are both high
+            "left_target_qpos":  left_pose  * left_reward * right_reward,
+            "right_target_qpos": right_pose * left_reward * right_reward,
+            "no_table_collision": no_table_collision,
+            "socket_entrance_reward": socket_lift,
+            "peg_end2_reward": peg_lift,
+            # Same soft AND logic for socket_z_up and peg_z_up
+            "socket_z_up": socket_orientation * socket_lift,
+            "peg_z_up":    peg_orientation    * peg_lift,
+            "peg_insertion_reward": peg_insertion_reward,
+        }
+        total = sum(self._reward_scales[k] * v for k, v in raw.items())
+        return total / self._reward_scale_sum
 
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
         robot_states = states["robot_states"]
         termination = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+
         if self._early_termination:
-            # TODO
-            pass
+            peg_oob = (robot_states["peg_pos"].abs() > self._out_of_bounds_threshold).any(dim=-1)
+            socket_oob = (robot_states["socket_pos"].abs() > self._out_of_bounds_threshold).any(dim=-1)
+            termination |= peg_oob | socket_oob
+
         return termination
 
     def _reset_idx(self, env_ids: torch.Tensor) -> None:
