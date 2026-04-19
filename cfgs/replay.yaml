@@ -3,8 +3,11 @@ defaults:
   - _self_
 
 device: cuda
-num_envs: 1  # placeholder; actual value is inferred from trajectory
+
+# Number of envs to replay. If null, defaults to the trajectory's batch size
+# (and is always capped at it). Set this to an int to replay only the first
+# N trajectories.
+num_envs: null
 
 traj_path: null  # Path to the .pt trajectory file (required)
 max_frames: null  # Cap the number of timesteps to replay (optional)
-replay_num_envs: null  # Override number of envs (optional, default: trajectory batch size)

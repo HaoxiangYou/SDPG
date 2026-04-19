@@ -2,7 +2,7 @@
 
 Usage:
     python scripts/replay.py task=genesis/walker_hurtle traj_path=path/to/trajectory.pt
-    python scripts/replay.py task=genesis/walker_hurtle traj_path=traj.pt replay_num_envs=8
+    python scripts/replay.py task=genesis/walker_hurtle traj_path=traj.pt num_envs=8
     python scripts/replay.py task=genesis/walker_hurtle traj_path=traj.pt max_frames=500
 """
 
@@ -67,9 +67,12 @@ def main() -> None:
     env_name = cfg.task.name
     env_kwargs = OmegaConf.to_container(cfg.task.config, resolve=True)
 
-    # num_envs: replay_num_envs override or trajectory batch_size, capped at batch_size
+    # num_envs: user override or trajectory batch_size, capped at batch_size.
+    # `num_envs` may also live inside the task config (the standard Hydra
+    # pattern); the top-level `cfg.num_envs` takes precedence here because
+    # the replay count is semantically tied to the trajectory, not the task.
     env_kwargs.pop("num_envs", None)
-    num_envs = min(int(cfg.replay_num_envs) if cfg.replay_num_envs is not None else batch_size, batch_size)
+    num_envs = min(int(cfg.num_envs) if cfg.num_envs is not None else batch_size, batch_size)
 
     sim_kwargs = env_kwargs.pop("sim_options", None)
     sim_options = gs.options.SimOptions(**sim_kwargs) if sim_kwargs else None
