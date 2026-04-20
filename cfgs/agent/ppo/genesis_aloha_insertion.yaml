@@ -2,7 +2,7 @@ name: ppo
 
 config:
 
-  num_envs: 4096
+  num_envs: 1024
 
   input_keys:
     actor:
@@ -36,9 +36,7 @@ config:
             val: 0
           fixed_sigma: True
       mlp:
-        # brax: policy_hidden_layer_sizes = (256, 256, 256, 256)
         units: [256, 256, 256, 256]
-        # brax default activation is silu (== swish)
         activation: swish
         d2rl: False
 
@@ -60,20 +58,20 @@ config:
       normalize_advantage: True
       gamma: 0.97
       tau: 0.95
-      learning_rate: 5e-4
+      learning_rate: 3e-4
 
-      lr_schedule: adaptive
+      lr_schedule: null
       kl_threshold: 0.016
       score_to_win: 100000
-      max_epochs: 2000
+      max_epochs: 4000
       save_best_after: 100
       save_frequency: 200
       grad_norm: 1.0
       entropy_coef: 0.01
       truncate_grads: True
-      e_clip: 0.2
-      horizon_length: 32
-      minibatch_size: 8192
+      e_clip: 0.3
+      horizon_length: 40
+      minibatch_size: 1024
       mini_epochs: 8
       critic_coef: 2
       clip_value: True

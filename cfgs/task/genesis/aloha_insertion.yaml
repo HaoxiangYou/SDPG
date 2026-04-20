@@ -10,7 +10,7 @@ config:
   
   randomize_init: True
   sim_options:
-    dt: 1e-2
+    dt: 5e-3
     substeps: 2
   viewer_options:
     max_FPS: 60

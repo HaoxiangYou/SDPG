@@ -72,7 +72,7 @@ class AlohaInsertion(GenesisEnv):
         show_FPS: bool = False,
     ) -> None:
         dt = sim_options.dt
-        episode_length = int(5.0 / dt)
+        episode_length = int(2.5 / dt)
 
         early_termination = True
 
