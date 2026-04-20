@@ -666,11 +666,6 @@ class AlohaInsertion(GenesisEnv):
         socket_quat = self._socket.get_quat(envs_idx=env_ids)
         socket_vel = self._socket.get_dofs_velocity(self._socket_dofs_idx, envs_idx=env_ids)
 
-        # self._ctrl is the stateful delta-position command buffer used by
-        # `_set_actions` (ctrl += action * scale each step). It lives in
-        # Python and is NOT reflected in Genesis' internal state, so it
-        # must be round-tripped explicitly or two envs starting from the
-        # same DOF state but different accumulated ctrls will diverge.
         ctrl = self._ctrl if env_ids is None else self._ctrl[env_ids]
 
         robot_states = {
@@ -718,10 +713,6 @@ class AlohaInsertion(GenesisEnv):
         self._socket.set_quat(robot_states["socket_quat"], envs_idx=env_ids)
         self._socket.set_dofs_velocity(robot_states["socket_vel"], envs_idx=env_ids, dofs_idx_local=self._socket_dofs_idx)
 
-        # Restore the stateful delta-position ctrl buffer (see note in
-        # get_states). Without this, two envs with identical DOF state
-        # but different accumulated ctrls will command different targets
-        # on the next step and diverge.
         self._ctrl[env_ids] = robot_states["ctrl"].clone()
 
         # TODO: shall we update the image buffer here?
