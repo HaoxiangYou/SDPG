@@ -699,6 +699,7 @@ class Franka(GenesisEnv):
             position=robot_states["arm_dof_pos"],
             dofs_idx_local=self._arm_dof_idx,
             envs_idx=env_ids,
+            zero_velocity=False,
         )
         self._robot.set_dofs_velocity(
             velocity=robot_states["arm_dof_vel"],
@@ -709,6 +710,7 @@ class Franka(GenesisEnv):
             position=robot_states["finger_dof_pos"],
             dofs_idx_local=self._finger_dof_idx,
             envs_idx=env_ids,
+            zero_velocity=False,
         )
         self._robot.set_dofs_velocity(
             velocity=robot_states["finger_dof_vel"],
@@ -730,6 +732,11 @@ class Franka(GenesisEnv):
         self._target.set_quat(robot_states["target_quat"], envs_idx=env_ids)
 
         self._ctrl[env_ids] = robot_states["ctrl"].clone()
+        self._robot.control_dofs_position(
+            position=self._ctrl[env_ids],
+            dofs_idx_local=self._motor_dof_idx,
+            envs_idx=env_ids,
+        )
         self._prev_actions[env_ids] = robot_states["prev_actions"].clone()
         self._reached_box[env_ids] = robot_states["reached_box"].clone()
 
