@@ -254,7 +254,7 @@ class Franka(GenesisEnv):
         self._reward_scale_box_target_fine = 5.0
 
         # Termination thresholds. The cube spawns with its bottom flush with
-        self._reached_box_threshold = 0.015
+        self._reached_box_threshold = 0.02
         # Use the collision-body AABB directly for floor-contact termination.
         # A tiny non-negative margin helps catch shallow penetrations robustly.
         self._hand_floor_height = 0.001
