@@ -213,8 +213,10 @@ class AlohaInsertion(GenesisEnv):
 
         _kp_per_arm = [43.0, 265.0, 227.0, 78.0, 37.0, 10.4]
         _kd_per_arm = [5.76, 20.0, 18.49, 6.78, 6.28, 1.2]
+        _force_upper_per_arm = [35.0, 144.0, 59.0, 22.0, 35.0, 35.0]
         _kp_gripper = 365.0
         _kd_gripper = 40.0
+        _force_upper_gripper = 35.0
         self._kp = torch.tensor(
             _kp_per_arm + _kp_per_arm + [_kp_gripper, _kp_gripper],
             device=self._device,
@@ -223,6 +225,13 @@ class AlohaInsertion(GenesisEnv):
             _kd_per_arm + _kd_per_arm + [_kd_gripper, _kd_gripper],
             device=self._device,
         )
+        self._force_upper = torch.tensor(
+            _force_upper_per_arm
+            + _force_upper_per_arm
+            + [_force_upper_gripper, _force_upper_gripper],
+            device=self._device,
+        )
+        self._force_lower = -self._force_upper
         
         self._peg_dofs_idx = self._peg.get_joint("peg").dofs_idx_local
 
@@ -346,6 +355,11 @@ class AlohaInsertion(GenesisEnv):
 
         self._robot.set_dofs_kp(self._kp, self._motors_dof_idx)
         self._robot.set_dofs_kv(self._kd, self._motors_dof_idx)
+        self._robot.set_dofs_force_range(
+            lower=self._force_lower,
+            upper=self._force_upper,
+            dofs_idx_local=self._motors_dof_idx,
+        )
         self._robot.set_dofs_damping(
             torch.zeros_like(self._kd), self._motors_dof_idx
         )
@@ -353,6 +367,8 @@ class AlohaInsertion(GenesisEnv):
         self._ctrl_lower, self._ctrl_upper = self._robot.get_dofs_limit(
             dofs_idx_local=self._motors_dof_idx
         )
+        self._ctrl_lower[..., -2:] = 0.002
+        self._ctrl_upper[..., -2:] = 0.037
 
     def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         robot_states = states["robot_states"]
@@ -535,7 +551,23 @@ class AlohaInsertion(GenesisEnv):
             "peg_insertion_reward": peg_insertion_reward,
         }
         total = sum(self._reward_scales[k] * v for k, v in raw.items())
-        return total / self._reward_scale_sum
+        reward = total / self._reward_scale_sum
+
+        reward_terms = {k: self._reward_scales[k] * v.detach().clone() for k, v in raw.items()}
+        reward_terms["peg_end2_dist_to_line"] = peg_end2_dist_to_line.detach().clone()
+        reward_terms["reward"] = reward.detach().clone()
+        self._infos["reward_terms"] = reward_terms
+
+        if getattr(self, "_print_reward_terms", False):
+            env_id = int(getattr(self, "_print_reward_env_id", 0))
+            step = int(self._progress_buf[env_id].item()) if hasattr(self, "_progress_buf") else -1
+            print(f"\n[Genesis ALOHA reward terms | step={step} env={env_id}]")
+            for name in self._reward_scales:
+                print(f"  {name:24s}: {reward_terms[name][env_id].item(): .6f}")
+            print(f"  {'peg_end2_dist_to_line':24s}: {peg_end2_dist_to_line[env_id].item(): .6f}")
+            print(f"  {'reward':24s}: {reward[env_id].item(): .6f}")
+
+        return reward
 
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
         robot_states = states["robot_states"]
