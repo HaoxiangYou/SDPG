@@ -551,23 +551,7 @@ class AlohaInsertion(GenesisEnv):
             "peg_insertion_reward": peg_insertion_reward,
         }
         total = sum(self._reward_scales[k] * v for k, v in raw.items())
-        reward = total / self._reward_scale_sum
-
-        reward_terms = {k: self._reward_scales[k] * v.detach().clone() for k, v in raw.items()}
-        reward_terms["peg_end2_dist_to_line"] = peg_end2_dist_to_line.detach().clone()
-        reward_terms["reward"] = reward.detach().clone()
-        self._infos["reward_terms"] = reward_terms
-
-        if getattr(self, "_print_reward_terms", False):
-            env_id = int(getattr(self, "_print_reward_env_id", 0))
-            step = int(self._progress_buf[env_id].item()) if hasattr(self, "_progress_buf") else -1
-            print(f"\n[Genesis ALOHA reward terms | step={step} env={env_id}]")
-            for name in self._reward_scales:
-                print(f"  {name:24s}: {reward_terms[name][env_id].item(): .6f}")
-            print(f"  {'peg_end2_dist_to_line':24s}: {peg_end2_dist_to_line[env_id].item(): .6f}")
-            print(f"  {'reward':24s}: {reward[env_id].item(): .6f}")
-
-        return reward
+        return total / self._reward_scale_sum
 
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
         robot_states = states["robot_states"]
