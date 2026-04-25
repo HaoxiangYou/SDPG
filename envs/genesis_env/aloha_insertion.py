@@ -212,17 +212,18 @@ class AlohaInsertion(GenesisEnv):
         )
 
         _kp_per_arm = [43.0, 265.0, 227.0, 78.0, 37.0, 10.4]
-        _kd_per_arm = [5.76, 20.0, 18.49, 6.78, 6.28, 1.2]
+        _damping_per_arm = [5.76, 20.0, 18.49, 6.78, 6.28, 1.2]
         _force_upper_per_arm = [35.0, 144.0, 59.0, 22.0, 35.0, 35.0]
         _kp_gripper = 365.0
-        _kd_gripper = 40.0
+        _damping_gripper = 40.0
         _force_upper_gripper = 35.0
         self._kp = torch.tensor(
             _kp_per_arm + _kp_per_arm + [_kp_gripper, _kp_gripper],
             device=self._device,
         )
-        self._kd = torch.tensor(
-            _kd_per_arm + _kd_per_arm + [_kd_gripper, _kd_gripper],
+        self._kv = torch.zeros_like(self._kp)
+        self._damping = torch.tensor(
+            _damping_per_arm + _damping_per_arm + [_damping_gripper, _damping_gripper],
             device=self._device,
         )
         self._force_upper = torch.tensor(
@@ -354,14 +355,14 @@ class AlohaInsertion(GenesisEnv):
         self._scene.build(n_envs=self._num_envs, env_spacing=(1.5, 1.5))
 
         self._robot.set_dofs_kp(self._kp, self._motors_dof_idx)
-        self._robot.set_dofs_kv(self._kd, self._motors_dof_idx)
+        self._robot.set_dofs_kv(self._kv, self._motors_dof_idx)
         self._robot.set_dofs_force_range(
             lower=self._force_lower,
             upper=self._force_upper,
             dofs_idx_local=self._motors_dof_idx,
         )
         self._robot.set_dofs_damping(
-            torch.zeros_like(self._kd), self._motors_dof_idx
+            self._damping, self._motors_dof_idx
         )
 
         self._ctrl_lower, self._ctrl_upper = self._robot.get_dofs_limit(
