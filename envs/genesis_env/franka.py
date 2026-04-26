@@ -55,9 +55,15 @@ class Franka(GenesisEnv):
             sensors_args = {
                 "camera": {
                     "res": [256, 256],
-                    "pos": [1.2, 0.0, 0.8],
-                    "lookat": [0.5, 0.0, 0.2],
+                    # Hand-link camera transform, matching
+                    # scripts/test_genesis_camera.py. The camera rotates with
+                    # the hand because this offset is attached to the hand link.
+                    "pos": [-0.2, 0.0, -0.1],
+                    "lookat": [0.0, 0.0, 0.0],
+                    "up": [1.0, 0.0, 0.0],
                     "fov": 60.0,
+                    "near": 0.01,
+                    "far": 5.0,
                     "lights": {
                         "pos": [0.0, 0.0, 2.0],
                         "dir": [0.0, 0.0, -1.0],
@@ -263,26 +269,29 @@ class Franka(GenesisEnv):
             offset_T = self._sensors_args["camera"].get("offset_T", None)
             lookat = self._sensors_args["camera"].get("lookat", None)
             if offset_T is not None:
-                offset_T = torch.tensor(offset_T, device=self._device)
+                if torch.is_tensor(offset_T):
+                    offset_T = offset_T.detach().cpu().numpy()
+                else:
+                    offset_T = np.asarray(offset_T, dtype=np.float32)
             else:
                 if lookat is not None:
                     offset_T = pos_lookat_up_to_T(
                         np.array(self._sensors_args["camera"]["pos"]),
                         np.array(lookat),
-                        np.array((0.0, 0.0, 1.0)),
-                    )
+                        np.array(self._sensors_args["camera"].get("up", (0.0, 0.0, 1.0))),
+                    ).astype(np.float32)
                 else:
-                    offset_T = np.eye(4)
-            self._camera_mount = self._scene.add_entity(
-                gs.morphs.Sphere(radius=0.01, collision=False, fixed=True)
-            )
+                    offset_T = np.eye(4, dtype=np.float32)
             self._camera = self._scene.add_sensor(
                 gs.sensors.BatchRendererCameraOptions(
                     res=self._sensors_args["camera"]["res"],
                     pos=self._sensors_args["camera"]["pos"],
                     offset_T=offset_T,
                     fov=self._sensors_args["camera"]["fov"],
-                    entity_idx=self._camera_mount.idx,
+                    near=self._sensors_args["camera"].get("near", 0.01),
+                    far=self._sensors_args["camera"].get("far", 5.0),
+                    entity_idx=self._robot.idx,
+                    link_idx_local=self._hand_link.idx_local,
                     lights=[self._sensors_args["camera"]["lights"]],
                     env_idx=self._nominal_env_ids.cpu().tolist(),
                 )
