@@ -22,11 +22,11 @@ config:
   sensors_args:
     camera:
       type: rgb
-      res: [256, 256]
+      res: [84, 84]
       # Hand-link camera transform, matching
       # envs/genesis_env/scripts/test_genesis_camera.py.
-      pos: [-0.2, 0.0, -0.1]
-      lookat: [0.0, 0.0, 0.0]
+      pos: [-0.2, 0.0, -0.05]
+      lookat: [0.0, 0.0, 0.1]
       up: [1.0, 0.0, 0.0]
       fov: 60.0
       near: 0.01

@@ -14,7 +14,7 @@ config:
       policy_head:
         type: mlp
         network:
-          units: [256, 128, 64]
+          units: [512, 256, 128]
           activation: elu
         fixed_std: false
         state_dependent_std: false
@@ -30,7 +30,7 @@ config:
       value_head:
         type: mlp
         network:
-          units: [256, 128, 64]
+          units: [512, 256, 128]
           activation: elu
 
   # Number of base environments for rollout
@@ -43,7 +43,7 @@ config:
   num_envs: ${compute_num_envs:${.num_base_envs},${.num_action_perturbations}}
 
   max_epochs: 5000
-  horizon_length: 24
+  horizon_length: 32
   # Discount factor
   gamma: 0.99
   # TD(lambda)
@@ -56,26 +56,26 @@ config:
   reward_scale: 1.0
   target_critic_alpha: 0.2
 
-  actor_lr:  1e-4
-  critic_lr: 1e-4
+  actor_lr:  0.002
+  critic_lr: 0.0005
 
   # Learning rate schedules
   actor_lr_schedule:
-    name: null  # Options: null, linear, cosine (cosine includes warmup)
+    name: cosine  # Options: null, linear, cosine (cosine includes warmup)
     # CosineAnnealingLR with warmup parameters
-    # T_max: 5000
-    # eta_min: 1e-5
-    # warmup_epochs: 100  # Number of epochs for warmup (linear increase from warmup_start_lr to actor_lr)
-    # warmup_start_lr: 0  # Starting learning rate for warmup (default: 0.0)
+    T_max: 5000
+    eta_min: 1e-5
+    warmup_epochs: 100  # Number of epochs for warmup (linear increase from warmup_start_lr to actor_lr)
+    warmup_start_lr: 0  # Starting learning rate for warmup (default: 0.0)
   
   critic_lr_schedule:
     name: linear  # Options: null, linear, cosine
     start_factor: 1.0
     end_factor: 0.1
 
-  # bounds:
-  #   mean_bounds: [-2, 2]
-  #   log_std_bounds: [-5, 2]
+  bounds:
+    mean_bounds: [-2, 2]
+    log_std_bounds: [-5, 2]
 
   # entropy_parameters:
   #   initial_temperature: 1e-2
