@@ -40,6 +40,7 @@ class Franka(GenesisEnv):
         show_viewer: bool = False,
         show_FPS: bool = False,
         debug_viz: bool = True,
+        show_target: bool = True,
     ) -> None:
         dt = sim_options.dt
         # Match reference episode length of 150 ctrl steps at 0.02s = 3s rollout.
@@ -47,6 +48,7 @@ class Franka(GenesisEnv):
         early_termination = True
 
         self._vis_obs = vis_obs
+        self._show_target = show_target
         # Debug spheres for the reward target vs. actual gripper midpoint.
         # Requires a viewer to be visible.
         self._debug_viz = debug_viz and show_viewer
@@ -142,7 +144,6 @@ class Franka(GenesisEnv):
         self._cube = self._scene.add_entity(
             gs.morphs.Box(
                 size=(0.08, 0.08, 0.08),
-                # size=(0.04, 0.04, 0.06),
                 pos=(0.6, 0.0, 0.03),
                 collision=True,
                 batch_fixed_verts=True,
@@ -152,16 +153,17 @@ class Franka(GenesisEnv):
         )
 
         # Visual-only target cube (matches mjx_single_cube.xml mocap_target).
-        self._target = self._scene.add_entity(
-            gs.morphs.Box(
-                size=(0.08, 0.08, 0.08),
-                # size=(0.04, 0.04, 0.06),
-                pos=(0.6, 0.0, 0.33),
-                collision=False,
-            ),
-            surface=gs.surfaces.Rough(color=(1.0, 0.0, 0.0, 0.2)),
-            material=gs.materials.Rigid(gravity_compensation=1),
-        )
+        self._target = None
+        if self._show_target:
+            self._target = self._scene.add_entity(
+                gs.morphs.Box(
+                    size=(0.08, 0.08, 0.08),
+                    pos=(0.6, 0.0, 0.33),
+                    collision=False,
+                ),
+                surface=gs.surfaces.Rough(color=(1.0, 0.0, 0.0), opacity=0.0),
+                material=gs.materials.Rigid(gravity_compensation=1),
+            )
 
         # Joints and actuators.
         self._arm_joint_names = [
@@ -569,8 +571,9 @@ class Franka(GenesisEnv):
         self._cube.set_quat(cube_quat, envs_idx=env_ids, zero_velocity=True)
 
         # Target visualization.
-        self._target.set_pos(target_pos, envs_idx=env_ids, zero_velocity=True)
-        self._target.set_quat(target_quat, envs_idx=env_ids, zero_velocity=True)
+        if self._target is not None:
+            self._target.set_pos(target_pos, envs_idx=env_ids, zero_velocity=True)
+            self._target.set_quat(target_quat, envs_idx=env_ids, zero_velocity=True)
 
         # Buffers.
         self._target_pos[env_ids] = target_pos
@@ -737,8 +740,9 @@ class Franka(GenesisEnv):
 
         self._target_pos[env_ids] = robot_states["target_pos"]
         self._target_quat[env_ids] = robot_states["target_quat"]
-        self._target.set_pos(robot_states["target_pos"], envs_idx=env_ids)
-        self._target.set_quat(robot_states["target_quat"], envs_idx=env_ids)
+        if self._target is not None:
+            self._target.set_pos(robot_states["target_pos"], envs_idx=env_ids)
+            self._target.set_quat(robot_states["target_quat"], envs_idx=env_ids)
 
         self._ctrl[env_ids] = robot_states["ctrl"].clone()
         self._robot.control_dofs_position(

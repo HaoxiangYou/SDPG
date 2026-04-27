@@ -19,6 +19,7 @@ config:
 
   # state or rgb based observation
   vis_obs: True
+  show_target: False
   sensors_args:
     camera:
       type: rgb
