@@ -5,7 +5,9 @@ Keyboard controls:
     Up / Down      Move active EE -x / +x.
     Left / Right   Move active EE -y / +y.
     n / m          Move active EE +z / -z.
-    j / k          Yaw rotate active EE +z / -z about world z.
+    j / k          Yaw rotate active EE +z / -z about local z.
+    t / g          Pitch rotate active EE +y / -y about local y.
+    r / f          Roll  rotate active EE +x / -x about local x.
     space          Toggle gripper close/open for active arm (press to toggle).
     u              Reset env.
     esc            Quit.
@@ -28,6 +30,7 @@ from envs.genesis_env.aloha_insertion import AlohaInsertion
 
 GRIP_OPEN = 0.037
 GRIP_CLOSED = 0.002
+STEPS_PER_LOOP = 4
 
 TASK_CFG_PATH = (
     Path(__file__).resolve().parents[3] / "cfgs" / "task" / "genesis" / "aloha_insertion.yaml"
@@ -162,6 +165,10 @@ def main():
     K_M = keyboard.KeyCode.from_char("m")
     K_J = keyboard.KeyCode.from_char("j")
     K_K = keyboard.KeyCode.from_char("k")
+    K_T = keyboard.KeyCode.from_char("t")
+    K_G = keyboard.KeyCode.from_char("g")
+    K_R = keyboard.KeyCode.from_char("r")
+    K_F = keyboard.KeyCode.from_char("f")
 
     try:
         while True:
@@ -202,9 +209,17 @@ def main():
                 elif k == K_M:
                     tp[2] -= dpos
                 elif k == K_J:
-                    tR = R.from_euler("z", drot) * tR
+                    tR = tR * R.from_euler("z", drot)
                 elif k == K_K:
-                    tR = R.from_euler("z", -drot) * tR
+                    tR = tR * R.from_euler("z", -drot)
+                elif k == K_T:
+                    tR = tR * R.from_euler("y", drot)
+                elif k == K_G:
+                    tR = tR * R.from_euler("y", -drot)
+                elif k == K_R:
+                    tR = tR * R.from_euler("x", drot)
+                elif k == K_F:
+                    tR = tR * R.from_euler("x", -drot)
 
             if keyboard.Key.space in new_pressed:
                 key = f"{arm}_grip_closed"
@@ -241,7 +256,8 @@ def main():
             actions[13] = (target_right_grip - ctrl[13].item()) / action_scale
 
             actions = actions.clamp(-1.0, 1.0).unsqueeze(0)
-            env.step(actions, auto_reset=False)
+            for _ in range(STEPS_PER_LOOP):
+                env.step(actions, auto_reset=False)
 
             # Visualize active arm's target as a small RGB axis frame.
             T = np.eye(4, dtype=np.float32)
