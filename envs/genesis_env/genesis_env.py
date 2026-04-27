@@ -154,6 +154,7 @@ class GenesisEnv(BaseEnv):
         # Reset the done environment if auto_reset is True.
         if auto_reset and len(reset_env_ids) > 0:
             observations, _ = self.reset(reset_env_ids)
+            states = self.get_states()
 
         # Compute the observations.
         observations = self.compute_observations(states)
