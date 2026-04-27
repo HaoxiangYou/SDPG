@@ -53,6 +53,7 @@ config:
       mixed_precision: False
       normalize_input: True
       normalize_value: True
+      value_bootstrap: True
       reward_shaper:
         scale_value: 1.0
       normalize_advantage: True
