@@ -156,7 +156,7 @@ class AlohaInsertion(GenesisEnv):
         else:
             self._observation_space = spaces.Dict(
                 {
-                    "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(82,)),
+                    "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(90,)),
                 }
             )
 
@@ -380,10 +380,6 @@ class AlohaInsertion(GenesisEnv):
         socket_entrance_pos = self._socket_entrance_site_link.get_pos()
         peg_end2_pos        = self._peg_end2_site_link.get_pos()
 
-        # TODO, duplicate information, but follow mujoco_playground implementation
-        peg_pos    = robot_states["peg_pos"]
-        socket_pos = robot_states["socket_pos"]
-
         world_z = torch.tensor([0.0, 0.0, 1.0], device=self._device).expand(batch, 3)
         peg_z    = inv_transform_by_quat(world_z, robot_states["peg_quat"])
         socket_z = inv_transform_by_quat(world_z, robot_states["socket_quat"])
@@ -398,17 +394,16 @@ class AlohaInsertion(GenesisEnv):
                 robot_states["robot_vel"],          # (N, 16)
                 robot_states["peg_vel"],            # (N, 6)
                 robot_states["socket_vel"],         # (N, 6)
+                robot_states["ctrl"],               # (N, 14)
                 left_gripper_pos,
-                socket_pos,
                 right_gripper_pos,
-                peg_pos,
                 socket_entrance_pos,
                 peg_end2_pos,
                 socket_z,
                 peg_z,
             ],
             dim=-1,
-        )  # (N, 82)
+        )  # (N, 90)
 
         observations = {
             "privileged_observations": privileged_observations,
@@ -416,7 +411,6 @@ class AlohaInsertion(GenesisEnv):
 
         # TODO: add RGB / wrist-cam observations here when self._vis_obs is
         # enabled, to mirror the rest of the genesis_env codebase.
-        return observations
 
         # if self._vis_obs:
         #     proprioception_and_target = torch.cat(
@@ -447,7 +441,7 @@ class AlohaInsertion(GenesisEnv):
         #         batch_size, num_stack * rgb, img_height, img_width
         #     )
 
-        # return observations
+        return observations
 
     def compute_reward(self, states: Dict[str, Any], actions: torch.Tensor) -> torch.Tensor:
         robot_states = states["robot_states"]
@@ -551,6 +545,16 @@ class AlohaInsertion(GenesisEnv):
             "peg_z_up":    peg_orientation    * peg_lift,
             "peg_insertion_reward": peg_insertion_reward,
         }
+        
+        self._infos.update(
+            {
+                "left_socket_dist": left_socket_dist.detach().mean().item(),
+                "right_peg_dist": right_peg_dist.detach().mean().item(),
+                "socket_dist": socket_dist.detach().mean().item(),
+                "peg_dist": peg_dist.detach().mean().item(),
+            }
+        )
+
         total = sum(self._reward_scales[k] * v for k, v in raw.items())
         return total / self._reward_scale_sum
 
