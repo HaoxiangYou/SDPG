@@ -13,8 +13,23 @@ config:
     dt: 2.5e-3
     substeps: 1
   rigid_options:
+    # See aloha_insertion.py:build_scene for the full rationale. Briefly:
+    # MuJoCo's torsional friction + impratio that grip the peg firmly are
+    # not honored by Genesis, so we
+    #   1) tighten the contact response (smaller timeconst, ~ MJ solref="0.005 1"),
+    #   2) enable a few iterations of post-solver no-slip projection
+    #      (Genesis docs explicitly recommend this for manipulation), and
+    #   3) cap max_collision_pairs. The constraint-solver `efc_AR` buffer
+    #      scales as ~max_collision_pairs * 13 * n_dofs * n_envs * 4 bytes
+    #      and balloons once noslip is on. Genesis itself warns
+    #      "efc_AR shape ... is too large. Consider manually setting a
+    #      smaller 'max_collision_pairs'". The default (150) is far more
+    #      than this scene ever needs (~20 simultaneous pairs at full
+    #      grasp), so we cap it to keep 1024-env training within GPU
+    #      memory on a 8 GB laptop card.
     constraint_timeconst: 0.005
     noslip_iterations: 5
+    max_collision_pairs: 32
   viewer_options:
     max_FPS: 60
   vis_options:
