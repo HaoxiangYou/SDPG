@@ -87,10 +87,18 @@ class Franka(GenesisEnv):
         # + (ctrl - qpos[robot_qposadr[:-1]]) (8) = 66
         obs_dim = 66
 
+        # Actor observation layout (no cube state — matches real-world access):
+        #   arm_qpos (7) + finger_qpos (2)
+        # + arm_qvel (7) + finger_qvel (2)
+        # + gripper_pos (3) + gripper_mat[3:] (6)
+        # + (ctrl - qpos[robot_qposadr[:-1]]) (8) = 35
+        actor_obs_dim = 35
+
         if vis_obs:
-            self._num_image_stack = 3
+            self._num_image_stack = 1
             self._observation_space = spaces.Dict(
                 {
+                    "actor_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(actor_obs_dim,)),
                     "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,)),
                     "RGB": spaces.Box(
                         low=0,
@@ -412,6 +420,25 @@ class Franka(GenesisEnv):
         observations["privileged_observations"] = privileged_observations
 
         if self._vis_obs:
+            # Actor obs excludes cube state (unavailable in the real world).
+            # Critic uses privileged_observations (full state, computed above).
+            actor_observations = torch.cat(
+                [
+                    arm_qpos,         # 7
+                    finger_qpos,      # 2
+                    arm_qvel,         # 7
+                    finger_qvel,      # 2
+                    gripper_pos,      # 3
+                    gripper_mat[:, 3:],  # 6
+                    ctrl_minus_qpos,  # 8
+                ],
+                dim=-1,
+            )
+            actor_observations = torch.nan_to_num(
+                actor_observations, nan=0.0, posinf=0.0, neginf=0.0
+            )
+            observations["actor_observations"] = actor_observations
+
             batch_size, num_stack, img_height, img_width, rgb = self._imgs_buf.shape
             observations["RGB"] = self._imgs_buf.permute(0, 1, 4, 2, 3).reshape(
                 batch_size, num_stack * rgb, img_height, img_width
