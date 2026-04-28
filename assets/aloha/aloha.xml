@@ -174,7 +174,7 @@
                            actually opposes twist. The box envelope (~3.6 cm wide x
                            5.6 cm long x 6 mm thick) sits inside the original capsule
                            envelope so kinematic clearance is preserved. -->
-                      <geom pos="0.0125 -0.052 0.019" type="box" name="left/left_finger_pad" size="0.018 0.028 0.003" class="primitive_collision"/>
+                      <geom pos="0.0125 -0.052 0.020" type="box" name="left/left_finger_pad" size="0.018 0.028 0.006" class="primitive_collision"/>
                       <site name="left/left_finger" pos="0.015 -0.06 0.02"/>
                     </body>
                     <body name="left/right_finger_link" pos="-0.0191 -0.0141637 0.0211727" quat="1 1 1 1">
