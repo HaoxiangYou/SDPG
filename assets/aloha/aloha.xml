@@ -166,8 +166,15 @@
                       <joint name="left/left_finger" class="left_finger"/>
                       <geom pos="0.0141637 0.0211727 0.06" class="visual" quat="1 1 1 -1" type="mesh"
                         mesh="vx300s_8_custom_finger_left"/>
-                      <geom pos="0 0 0" type="capsule" name="left/left_finger_top" size="0.005" fromto="-0.01  -0.0192 0.015 0.015  -0.0852 0.0228" class="primitive_collision"/>
-                      <geom pos="0 0 0" type="capsule" name="left/left_finger_bottom" size="0.005" fromto="0.035  -0.0192 0.015 0.02  -0.0852 0.0228" class="primitive_collision"/>
+                      <!-- Flat box pad replacing the two thin capsules. Genesis has no
+                           torsional/rolling friction and no condim=4, so capsule line
+                           contacts give the gripper essentially zero resistance to peg
+                           rotation. A thin box gives a 2D contact patch (multiple
+                           contact points with non-zero moment arm), which is what
+                           actually opposes twist. The box envelope (~3.6 cm wide x
+                           5.6 cm long x 6 mm thick) sits inside the original capsule
+                           envelope so kinematic clearance is preserved. -->
+                      <geom pos="0.0125 -0.052 0.019" type="box" name="left/left_finger_pad" size="0.018 0.028 0.003" class="primitive_collision"/>
                       <site name="left/left_finger" pos="0.015 -0.06 0.02"/>
                     </body>
                     <body name="left/right_finger_link" pos="-0.0191 -0.0141637 0.0211727" quat="1 1 1 1">
@@ -176,8 +183,7 @@
                       <joint name="left/right_finger" class="right_finger"/>
                       <geom pos="0.0141637 -0.0211727 0.0597067" class="visual" quat="1 -1 -1 -1" type="mesh"
                         mesh="vx300s_8_custom_finger_right"/>
-                      <geom pos="0 0 0" type="capsule" name="left/right_finger_top" size="0.005" fromto="-0.01  0.0192 0.015 0.015  0.0852 0.0228" class="primitive_collision"/>
-                      <geom pos="0 0 0" type="capsule" name="left/right_finger_bottom" size="0.005" fromto="0.035  -0.0192 0.015 0.02  0.0852 0.0228" class="primitive_collision"/>
+                      <geom pos="0.0125 0.052 0.020" type="box" name="left/right_finger_pad" size="0.018 0.028 0.006" class="primitive_collision"/>
                       <site name="left/right_finger" pos="0.015 0.06 0.02"/>
                     </body>
                   </body>
@@ -245,8 +251,7 @@
                       <joint name="right/left_finger" class="left_finger"/>
                       <geom pos="0.0141637 0.0211727 0.06" class="visual" quat="1 1 1 -1" type="mesh"
                         mesh="vx300s_8_custom_finger_left"/>
-                      <geom pos="0 0 0" type="capsule" name="right/left_finger_top" size="0.005" fromto="-0.01  -0.0192 0.015 0.015  -0.0852 0.0228" class="primitive_collision"/>
-                      <geom pos="0 0 0" type="capsule" name="right/left_finger_bottom" size="0.005" fromto="0.035  -0.0192 0.015 0.02  -0.0852 0.0228" class="primitive_collision"/>
+                      <geom pos="0.0125 -0.052 0.020" type="box" name="right/left_finger_pad" size="0.018 0.028 0.006" class="primitive_collision"/>
                       <site name="right/left_finger" pos="0.015 -0.06 0.02"/>
                     </body>
                     <body name="right/right_finger_link" pos="-0.0191 -0.0141637 0.0211727" quat="1 1 1 1">
@@ -255,8 +260,7 @@
                       <joint name="right/right_finger" class="right_finger"/>
                       <geom pos="0.0141637 -0.0211727 0.0597067" class="visual" quat="1 -1 -1 -1" type="mesh"
                         mesh="vx300s_8_custom_finger_right"/>
-                      <geom pos="0 0 0" type="capsule" name="right/right_finger_top" size="0.005" fromto="-0.01  0.0192 0.015 0.015  0.0852 0.0228" class="primitive_collision"/>
-                      <geom pos="0 0 0" type="capsule" name="right/right_finger_bottom" size="0.005" fromto="0.035  -0.0192 0.015 0.02  0.0852 0.0228" class="primitive_collision"/>
+                      <geom pos="0.0125 0.052 0.020" type="box" name="right/right_finger_pad" size="0.018 0.028 0.006" class="primitive_collision"/>
                       <site name="right/right_finger" pos="0.015 0.06 0.02"/>
                     </body>
                   </body>

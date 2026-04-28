@@ -80,6 +80,10 @@ def main() -> None:
     viewer_options = gs.options.ViewerOptions(**viewer_kwargs) if viewer_kwargs else None
     vis_kwargs = env_kwargs.pop("vis_options", None)
     vis_options = gs.options.VisOptions(**vis_kwargs) if vis_kwargs else None
+    rigid_kwargs = env_kwargs.pop("rigid_options", None)
+    rigid_options = (
+        gs.options.RigidOptions(**rigid_kwargs) if rigid_kwargs else None
+    )
 
     env_kwargs.setdefault("show_viewer", True)
     env_kwargs.setdefault("show_FPS", True)
@@ -95,6 +99,7 @@ def main() -> None:
         sim_options=sim_options,
         viewer_options=viewer_options,
         vis_options=vis_options,
+        rigid_options=rigid_options,
         **env_kwargs,
     )
     env.reset()

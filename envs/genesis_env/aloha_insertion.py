@@ -367,22 +367,9 @@ class AlohaInsertion(GenesisEnv):
             self._damping, self._motors_dof_idx
         )
 
-        # ----------------------------------------------------------------
-        # Compensate for MJCF -> Genesis attribute loss on contact friction.
-        # Genesis's MJCF parser only keeps `friction[0]` (the SLIDE coeff)
-        # and silently drops:
-        #   - torsional/rolling friction (friction[1], friction[2])
-        #   - <option impratio="..."/>  (anisotropic constraint stiffness)
-        # MuJoCo's grasp on the ALOHA peg relies heavily on torsional
-        # friction at the (near point-) finger/peg contact; without it the
-        # peg slips and rotates between the fingertips. As a one-knob
-        # workaround we boost the SLIDE friction coefficient on the four
-        # finger links and on the peg/socket entities (Genesis takes the
-        # MAX of the pair, so both sides set the same target). 2.0 is a
-        # solid grippy value within Genesis's [1e-2, 5.0] safe range.
-        # ----------------------------------------------------------------
-        finger_friction = 2.0
-        peg_friction = 2.0
+        # Genesis has no torsional friction, increasing the sliding friction instead to prevent slipping and rotating.
+        finger_friction = 4.0
+        peg_friction = 4.0
         for fname in self._finger_link_names:
             self._robot.get_link(fname).set_friction(finger_friction)
         self._peg.set_friction(peg_friction)
