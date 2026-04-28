@@ -68,6 +68,7 @@ class AlohaInsertion(GenesisEnv):
         sim_options: gs.options.SimOptions | None = None,
         viewer_options: gs.options.ViewerOptions | None = None,
         vis_options: gs.options.VisOptions | None = None,
+        rigid_options: gs.options.RigidOptions | None = None,
         show_viewer: bool = False,
         show_FPS: bool = False,
     ) -> None:
@@ -91,6 +92,7 @@ class AlohaInsertion(GenesisEnv):
             sim_options=sim_options,
             viewer_options=viewer_options,
             vis_options=vis_options,
+            rigid_options=rigid_options,
             show_FPS=show_FPS,
         )
 
@@ -364,6 +366,27 @@ class AlohaInsertion(GenesisEnv):
         self._robot.set_dofs_damping(
             self._damping, self._motors_dof_idx
         )
+
+        # ----------------------------------------------------------------
+        # Compensate for MJCF -> Genesis attribute loss on contact friction.
+        # Genesis's MJCF parser only keeps `friction[0]` (the SLIDE coeff)
+        # and silently drops:
+        #   - torsional/rolling friction (friction[1], friction[2])
+        #   - <option impratio="..."/>  (anisotropic constraint stiffness)
+        # MuJoCo's grasp on the ALOHA peg relies heavily on torsional
+        # friction at the (near point-) finger/peg contact; without it the
+        # peg slips and rotates between the fingertips. As a one-knob
+        # workaround we boost the SLIDE friction coefficient on the four
+        # finger links and on the peg/socket entities (Genesis takes the
+        # MAX of the pair, so both sides set the same target). 2.0 is a
+        # solid grippy value within Genesis's [1e-2, 5.0] safe range.
+        # ----------------------------------------------------------------
+        finger_friction = 2.0
+        peg_friction = 2.0
+        for fname in self._finger_link_names:
+            self._robot.get_link(fname).set_friction(finger_friction)
+        self._peg.set_friction(peg_friction)
+        self._socket.set_friction(peg_friction)
 
         self._ctrl_lower, self._ctrl_upper = self._robot.get_dofs_limit(
             dofs_idx_local=self._motors_dof_idx

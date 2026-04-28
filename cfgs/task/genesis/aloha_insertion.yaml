@@ -12,6 +12,9 @@ config:
   sim_options:
     dt: 2.5e-3
     substeps: 1
+  rigid_options:
+    constraint_timeconst: 0.005
+    noslip_iterations: 5
   viewer_options:
     max_FPS: 60
   vis_options:
