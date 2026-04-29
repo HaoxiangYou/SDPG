@@ -65,7 +65,6 @@ def _build_env(cfg_path: Path, device: str = "cuda", seed: int = 0) -> AlohaInse
         sim_options=sim_options,
         viewer_options=viewer_options,
         vis_options=vis_options,
-        rigid_options=rigid_options,
         **env_kwargs,
     )
 
