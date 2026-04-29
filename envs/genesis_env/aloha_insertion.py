@@ -287,7 +287,7 @@ class AlohaInsertion(GenesisEnv):
 
         self._reset_xy_noise = 0.1
 
-        self._action_scale = 0.05
+        self._action_scale = 0.005
 
         self._out_of_bounds_threshold = 1.0
 
