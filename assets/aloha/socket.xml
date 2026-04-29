@@ -6,7 +6,7 @@
 
   <default>
     <default class="stiff">
-      <geom solref="0.01 1"/>
+      <geom solref="0.005 1"/>
     </default>
   </default>
 

@@ -3,7 +3,7 @@
   <default>
     <default class="stiff">
       <!-- Original MJX setting: stiff contact response for insertion fidelity. -->
-      <geom solref="0.01 1"/>
+      <geom solref="0.005 1"/>
     </default>
   </default>
 

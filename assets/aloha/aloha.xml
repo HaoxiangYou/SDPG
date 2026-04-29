@@ -98,7 +98,7 @@
         </default>
         <default class="primitive_collision">
           <geom contype="1" conaffinity="2" rgba="1 0 0 0.5" group="3"
-           condim="3" solref="0.01 1" friction="1 0.005 0.0001"/>
+           condim="3" solref="0.005 1" friction="1 0.005 0.0001"/>
         </default>
       </default>
     </default>
