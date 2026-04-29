@@ -68,7 +68,6 @@ class AlohaInsertion(GenesisEnv):
         sim_options: gs.options.SimOptions | None = None,
         viewer_options: gs.options.ViewerOptions | None = None,
         vis_options: gs.options.VisOptions | None = None,
-        rigid_options: gs.options.RigidOptions | None = None,
         show_viewer: bool = False,
         show_FPS: bool = False,
     ) -> None:
@@ -92,7 +91,6 @@ class AlohaInsertion(GenesisEnv):
             sim_options=sim_options,
             viewer_options=viewer_options,
             vis_options=vis_options,
-            rigid_options=rigid_options,
             show_FPS=show_FPS,
         )
 
@@ -101,6 +99,7 @@ class AlohaInsertion(GenesisEnv):
 
         self._robot = self._scene.add_entity(
             gs.morphs.MJCF(file=os.path.join(os.path.dirname(__file__), "../../assets/aloha/aloha.xml"),),
+            vis_mode="collision",
         )
 
         self._table = self._scene.add_entity(
@@ -565,8 +564,7 @@ class AlohaInsertion(GenesisEnv):
             }
         )
 
-        total = sum(self._reward_scales[k] * v for k, v in raw.items())
-        return total / self._reward_scale_sum
+        return left_reward + right_reward
 
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
         robot_states = states["robot_states"]

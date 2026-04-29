@@ -57,16 +57,12 @@ def _build_env(cfg_path: Path, device: str = "cuda", seed: int = 0) -> AlohaInse
     sim_kwargs = env_kwargs.pop("sim_options", None) or {}
     viewer_kwargs = env_kwargs.pop("viewer_options", None) or {}
     vis_kwargs = env_kwargs.pop("vis_options", None) or {}
-    rigid_kwargs = env_kwargs.pop("rigid_options", None) or {}
 
     sim_options = gs.options.SimOptions(**sim_kwargs) if sim_kwargs else None
     viewer_options = (
         gs.options.ViewerOptions(**viewer_kwargs) if viewer_kwargs else None
     )
     vis_options = gs.options.VisOptions(**vis_kwargs) if vis_kwargs else None
-    rigid_options = (
-        gs.options.RigidOptions(**rigid_kwargs) if rigid_kwargs else None
-    )
 
     return AlohaInsertion(
         num_envs=1,
@@ -75,7 +71,6 @@ def _build_env(cfg_path: Path, device: str = "cuda", seed: int = 0) -> AlohaInse
         sim_options=sim_options,
         viewer_options=viewer_options,
         vis_options=vis_options,
-        rigid_options=rigid_options,
         **env_kwargs,
     )
 
@@ -105,7 +100,6 @@ def _solve_arm_ik(
     target_quat: np.ndarray,
     arm_dofs,
     device,
-    rot_mask_z_only: bool = False,
 ) -> Tuple[torch.Tensor, float, float]:
     """Solve IK for one arm at (target_pos, target_quat). Returns the
     qpos for just the 6 active arm dofs (arm_dofs), and the residual
@@ -118,14 +112,9 @@ def _solve_arm_ik(
       * `damping=0.05` stabilises the DLS pseudo-inverse near singularities.
       * `max_samples=1` keeps us on the IK branch closest to the live qpos
         (no random restarts -> no jumpy targets).
-
-    If `rot_mask_z_only=True`, only the gripper Z-axis is constrained to
-    align with the target quat's Z-axis, which is the standard relaxation
-    for top-down picking and avoids unreachable-orientation rejections.
     """
     pos_t = torch.from_numpy(np.asarray(target_pos, dtype=np.float32)).unsqueeze(0).to(device)
     quat_t = torch.from_numpy(np.asarray(target_quat, dtype=np.float32)).unsqueeze(0).to(device)
-    rot_mask = [False, False, True] if rot_mask_z_only else [True, True, True]
     q, err = robot.inverse_kinematics(
         link=link,
         pos=pos_t,
@@ -135,7 +124,6 @@ def _solve_arm_ik(
         max_solver_iters=20,
         max_step_size=0.1,
         damping=0.05,
-        rot_mask=rot_mask,
         respect_joint_limit=True,
         return_error=True,
     )
@@ -195,10 +183,9 @@ class DiffIKPlanner:
     def __init__(
         self,
         env: AlohaInsertion,
-        step_size: float = 0.005,           # 0.5 cm/frame EE advance
+        step_speed: float = 0.5,          # 0.5 m/s EE advance
         ik_pos_tol_accept: float = 0.05,   # accept IK unless residual >> 5 cm
         ik_rot_tol_accept: float = 0.30,   # ~17 deg
-        rot_mask_z_only: bool = False,
     ):
         self.env = env
         self.device = env.device
@@ -207,12 +194,9 @@ class DiffIKPlanner:
         self.right_link = env._right_gripper_site_link
         self.left_arm_dofs = env._arm_dofs_idx[:6]
         self.right_arm_dofs = env._arm_dofs_idx[6:12]
-        self.step_size = step_size
+        self.step_size = step_speed * env._scene.dt
         self.ik_pos_tol = ik_pos_tol_accept
         self.ik_rot_tol = ik_rot_tol_accept
-        self.rot_mask_z_only = rot_mask_z_only
-        # Lock orientation: hold whatever quat each gripper site has at
-        # construction time (the down-facing default pose).
         self.left_quat0 = _link_quat(self.left_link)
         self.right_quat0 = _link_quat(self.right_link)
         # Internal micro-targets in EE space; reset at the start of each
@@ -242,12 +226,10 @@ class DiffIKPlanner:
         ql, e_lp, e_lr = _solve_arm_ik(
             self.robot, self.left_link, self._l_micro, self.left_quat0,
             self.left_arm_dofs, self.device,
-            rot_mask_z_only=self.rot_mask_z_only,
         )
         qr, e_rp, e_rr = _solve_arm_ik(
             self.robot, self.right_link, self._r_micro, self.right_quat0,
             self.right_arm_dofs, self.device,
-            rot_mask_z_only=self.rot_mask_z_only,
         )
 
         l_ok = (e_lp < self.ik_pos_tol) and (e_lr < self.ik_rot_tol)
@@ -462,16 +444,10 @@ def main():
     socket_goal = env._socket_entrance_goal_pos[0].detach().cpu().numpy().astype(np.float64)
     peg_goal = env._peg_end2_goal_pos[0].detach().cpu().numpy().astype(np.float64)
 
-    # Phase target poses. Reward layout:
-    #   left_socket_dist  -> left arm grasps the socket
-    #   right_peg_dist    -> right arm grasps the peg
-    grasp_offset_z = 0.0  # gripper site height above object COM at grasp
-    lift_offset_z  = grasp_offset_z
-
-    left_grasp  = socket_pos + np.array([0.0, 0.0, grasp_offset_z])
-    right_grasp = peg_pos    + np.array([0.0, 0.0, grasp_offset_z])
-    left_lift  = socket_goal + np.array([0.0, 0.0, lift_offset_z])
-    right_lift = peg_goal    + np.array([0.0, 0.0, lift_offset_z])
+    left_grasp  = socket_pos + np.array([0.0, 0.0, 0.0])
+    right_grasp = peg_pos    + np.array([0.0, 0.0, 0.0])
+    left_lift  = socket_goal + np.array([0.0, 0.0, 0.0])
+    right_lift = peg_goal    + np.array([0.0, 0.0, 0.0])
 
     print(
         f"[plan] socket pos={socket_pos.round(4).tolist()} -> goal={socket_goal.round(4).tolist()}\n"
