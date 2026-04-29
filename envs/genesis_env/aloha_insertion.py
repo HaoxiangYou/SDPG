@@ -99,7 +99,6 @@ class AlohaInsertion(GenesisEnv):
 
         self._robot = self._scene.add_entity(
             gs.morphs.MJCF(file=os.path.join(os.path.dirname(__file__), "../../assets/aloha/aloha.xml"),),
-            vis_mode="collision",
         )
 
         self._table = self._scene.add_entity(
@@ -564,7 +563,8 @@ class AlohaInsertion(GenesisEnv):
             }
         )
 
-        return left_reward + right_reward
+        total = sum(self._reward_scales[k] * v for k, v in raw.items())
+        return total / self._reward_scale_sum
 
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
         robot_states = states["robot_states"]
