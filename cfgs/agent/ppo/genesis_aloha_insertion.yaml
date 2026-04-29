@@ -2,7 +2,7 @@ name: ppo
 
 config:
 
-  num_envs: 1024
+  num_envs: 4096
 
   input_keys:
     actor:
@@ -57,24 +57,24 @@ config:
       reward_shaper:
         scale_value: 1.0
       normalize_advantage: True
-      gamma: 0.97
+      gamma: 0.99
       tau: 0.95
-      learning_rate: 3e-4
+      learning_rate: 1e-4
 
-      lr_schedule: null
+      lr_schedule: adaptive
       kl_threshold: 0.016
       score_to_win: 100000
       max_epochs: 4000
       save_best_after: 100
       save_frequency: 200
       grad_norm: 1.0
-      entropy_coef: 0.01
+      entropy_coef: 0.001
       truncate_grads: True
-      e_clip: 0.3
+      e_clip: 0.2
       horizon_length: 40
-      minibatch_size: 1024
+      minibatch_size: 20480
       mini_epochs: 8
-      critic_coef: 2
+      critic_coef: 4
       clip_value: True
       seq_length: 4
       bounds_loss_coef: 0.0001
