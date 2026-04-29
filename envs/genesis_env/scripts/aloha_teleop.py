@@ -30,7 +30,6 @@ from envs.genesis_env.aloha_insertion import AlohaInsertion
 
 GRIP_OPEN = 0.037
 GRIP_CLOSED = 0.002
-STEPS_PER_LOOP = 4
 
 TASK_CFG_PATH = (
     Path(__file__).resolve().parents[3] / "cfgs" / "task" / "genesis" / "aloha_insertion.yaml"
@@ -163,6 +162,7 @@ def main():
     dpos = 0.005   # m per frame when a translation key is held
     drot = 0.05    # rad per frame when a rotation key is held
     sleep_dt = 0.02
+    STEPS_PER_LOOP = max(1, int(round(sleep_dt / env._scene.dt)))
     target_marker = None
 
     K_U = keyboard.KeyCode.from_char("u")

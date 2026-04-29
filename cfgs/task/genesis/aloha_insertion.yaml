@@ -10,8 +10,8 @@ config:
   
   randomize_init: True
   sim_options:
-    dt: 2.5e-3
-    substeps: 1
+    dt: 1e-2
+    substeps: 2
   rigid_options:
     constraint_timeconst: 0.005
     noslip_iterations: 5
