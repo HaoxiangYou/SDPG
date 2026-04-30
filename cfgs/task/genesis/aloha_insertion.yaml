@@ -12,6 +12,9 @@ config:
   sim_options:
     dt: 2.5e-3
     substeps: 1
+  rigid_options:
+    noslip_iterations: 5
+    max_collision_pairs: 32
   viewer_options:
     max_FPS: 60
   vis_options:

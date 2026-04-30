@@ -56,11 +56,15 @@ def _build_env(cfg_path: Path, device: str = "cuda", seed: int = 0) -> AlohaInse
 
     sim_kwargs = env_kwargs.pop("sim_options", None) or {}
     viewer_kwargs = env_kwargs.pop("viewer_options", None) or {}
+    rigid_kwargs = env_kwargs.pop("rigid_options", None) or {}
     vis_kwargs = env_kwargs.pop("vis_options", None) or {}
 
     sim_options = gs.options.SimOptions(**sim_kwargs) if sim_kwargs else None
     viewer_options = (
         gs.options.ViewerOptions(**viewer_kwargs) if viewer_kwargs else None
+    )
+    rigid_options = (
+        gs.options.RigidOptions(**rigid_kwargs) if rigid_kwargs else None
     )
     vis_options = gs.options.VisOptions(**vis_kwargs) if vis_kwargs else None
 
@@ -70,6 +74,7 @@ def _build_env(cfg_path: Path, device: str = "cuda", seed: int = 0) -> AlohaInse
         seed=seed,
         sim_options=sim_options,
         viewer_options=viewer_options,
+        rigid_options=rigid_options,
         vis_options=vis_options,
         **env_kwargs,
     )
