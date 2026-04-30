@@ -312,7 +312,6 @@ class AlohaInsertion(GenesisEnv):
             "peg_end2_reward": 4.0,
             "peg_insertion_reward": 8.0,
         }
-        self._reward_scale_sum = float(sum(self._reward_scales.values()))
 
         # if self._vis_obs:
         #     # Initialize the sensors
@@ -544,13 +543,12 @@ class AlohaInsertion(GenesisEnv):
         raw = {
             "left_reward": left_reward,
             "right_reward": right_reward,
-            # Soft AND logic, the target qpos reward is given when left and right reward are both high
-            "left_target_qpos":  left_pose  * left_reward * right_reward,
-            "right_target_qpos": right_pose * left_reward * right_reward,
+            "left_target_qpos":  left_pose,
+            "right_target_qpos": right_pose,
             "no_table_collision": no_table_collision,
             "socket_entrance_reward": socket_lift,
             "peg_end2_reward": peg_lift,
-            # Same soft AND logic for socket_z_up and peg_z_up
+            # Soft AND logic for socket_z_up and peg_z_up, reward is high when object is lifted
             "socket_z_up": socket_orientation * socket_lift,
             "peg_z_up":    peg_orientation    * peg_lift,
             "peg_insertion_reward": peg_insertion_reward,
@@ -566,7 +564,7 @@ class AlohaInsertion(GenesisEnv):
         )
 
         total = sum(self._reward_scales[k] * v for k, v in raw.items())
-        return total / self._reward_scale_sum
+        return total
 
     def compute_termination(self, states: Dict[str, Any]) -> torch.Tensor:
         robot_states = states["robot_states"]
