@@ -126,6 +126,7 @@ def main(traj_path: str | None = None, config_path: str | None = None):
         for key, cls in (
             ("sim_options", gs.options.SimOptions),
             ("viewer_options", gs.options.ViewerOptions),
+            ("rigid_options", gs.options.RigidOptions),
             ("vis_options", gs.options.VisOptions),
         ):
             kw = env_kwargs.pop(key, None)

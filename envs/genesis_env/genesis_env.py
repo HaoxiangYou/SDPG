@@ -31,6 +31,7 @@ class GenesisEnv(BaseEnv):
         sensors_args: Dict[str, Any] | None = None,
         sim_options: gs.options.SimOptions | None = None,
         viewer_options: gs.options.ViewerOptions | None = None,
+        rigid_options: gs.options.RigidOptions | None = None,
         vis_options: gs.options.VisOptions | None = None,
         show_viewer: bool = False,
         show_FPS: bool = False,
@@ -79,6 +80,7 @@ class GenesisEnv(BaseEnv):
             sim_options=sim_options,
             show_viewer=show_viewer,
             viewer_options=viewer_options,
+            rigid_options=rigid_options,
             vis_options=vis_options,
             show_FPS=show_FPS,
             renderer=self._renderer,
@@ -395,6 +397,8 @@ def make_envs(config: DictConfig) -> GenesisEnv:
     sim_options = gs.options.SimOptions(**sim_kwargs) if sim_kwargs is not None else None
     viewer_kwargs = env_kwargs.pop("viewer_options", None)
     viewer_options = gs.options.ViewerOptions(**viewer_kwargs) if viewer_kwargs is not None else None
+    rigid_kwargs = env_kwargs.pop("rigid_options", None)
+    rigid_options = gs.options.RigidOptions(**rigid_kwargs) if rigid_kwargs is not None else None
     vis_kwargs = env_kwargs.pop("vis_options", None)
     vis_options = gs.options.VisOptions(**vis_kwargs) if vis_kwargs is not None else None
 
@@ -410,6 +414,7 @@ def make_envs(config: DictConfig) -> GenesisEnv:
         seed=config.seed,
         sim_options=sim_options,
         viewer_options=viewer_options,
+        rigid_options=rigid_options,
         vis_options=vis_options,
         **env_kwargs,
     )

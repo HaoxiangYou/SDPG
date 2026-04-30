@@ -30,6 +30,7 @@ class WalkerHurtle(GenesisEnv):
         terrain_args: Dict[str, Any] | None = None,
         sim_options: gs.options.SimOptions | None = None,
         viewer_options: gs.options.ViewerOptions | None = None,
+        rigid_options: gs.options.RigidOptions | None = None,
         vis_options: gs.options.VisOptions | None = None,
         debug: bool = False,
         show_viewer: bool = False,
@@ -54,6 +55,7 @@ class WalkerHurtle(GenesisEnv):
             show_viewer=show_viewer,
             sim_options=sim_options,
             viewer_options=viewer_options,
+            rigid_options=rigid_options,
             vis_options=vis_options,
             show_FPS=show_FPS,
         )
