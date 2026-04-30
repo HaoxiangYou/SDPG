@@ -65,7 +65,8 @@
         gripper (contype=1 conaffinity=2) vs table (1,1):
           (1 & 1) | (1 & 2) = 1  -> collide
     -->
-    <geom name="table" pos="0 0 0.0008" size="0.61 0.37 0.1" type="plane" class="collision" contype="1" conaffinity="1"/>
+    <geom name="table" pos="0 0 0.0008" size="0.61 0.37 0.1" type="plane" class="collision" contype="1" conaffinity="1"
+          solref="0.005 1"/>
 
     <!-- Fixed cameras mounted on the frame -->
     <camera name="overhead_cam" focal="1.93e-3 1.93e-3" resolution="1280 720" sensorsize="3896e-6 2140e-6"
