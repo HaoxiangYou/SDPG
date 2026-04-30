@@ -28,6 +28,7 @@ class Walker(GenesisEnv):
         sensors_args: Dict[str, Any] | None = None,
         sim_options: gs.options.SimOptions | None = None,
         viewer_options: gs.options.ViewerOptions | None = None,
+        rigid_options: gs.options.RigidOptions | None = None,
         vis_options: gs.options.VisOptions | None = None,
         show_viewer: bool = False,
         show_FPS: bool = False,
@@ -92,6 +93,7 @@ class Walker(GenesisEnv):
             show_viewer=show_viewer,
             sim_options=sim_options,
             viewer_options=viewer_options,
+            rigid_options=rigid_options,
             vis_options=vis_options,
             show_FPS=show_FPS,
         )
