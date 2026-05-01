@@ -119,8 +119,8 @@ class AlohaInsertion(GenesisEnv):
 
         if self._vis_obs:
 
-            if sensors_args is None:
-                sensors_args = {
+            if self._sensors_args is None:
+                self._sensors_args = {
                     "camera": {
                         "res": [256, 256],
                         "pos": [0.40, 0.05, 0.425],
@@ -148,8 +148,8 @@ class AlohaInsertion(GenesisEnv):
                         dtype=np.uint8,
                         shape=(
                             self._num_image_stack * 3,
-                            sensors_args["camera"]["res"][0],
-                            sensors_args["camera"]["res"][1],
+                            self._sensors_args["camera"]["res"][0],
+                            self._sensors_args["camera"]["res"][1],
                         ),
                     ),
                 }
