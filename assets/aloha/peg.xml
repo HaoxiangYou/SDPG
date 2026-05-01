@@ -13,8 +13,8 @@
       <site name="peg_end2" pos="-0.048 0 0" group="4"/>
       <joint name="peg" type="free" stiffness="0" damping="0" frictionloss="0" armature="0"/>
       <geom class="stiff" name="red_peg"
-            type="box" size="0.048 0.01 0.01" pos="0 0 0"
-            mass="0.044" condim="4" friction="1 0.05 0.001"
+            type="box" size="0.048 0.015 0.015" pos="0 0 0"
+            mass="0.1" condim="4" friction="1 0.05 0.001"
             rgba="1 0 0 1"
             contype="1" conaffinity="1"/>
 
