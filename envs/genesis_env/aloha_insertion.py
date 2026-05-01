@@ -266,7 +266,7 @@ class AlohaInsertion(GenesisEnv):
                 # right arm
                 -0.0862348, -0.109522,  0.949474, -0.113041, -0.887378,  0.0754333,
                 # grippers (finger opening, meters). 0.0305 ~ open, 0.002 closed.
-                0.0305,  0.0186,
+                0.0305,  0.0305,
             ],
             device=self._device,
         ).repeat(self._num_envs, 1)
@@ -274,7 +274,7 @@ class AlohaInsertion(GenesisEnv):
         self._ctrl = self._default_motor_dof_pos.clone()
 
         self._default_peg_pos = torch.tensor(
-            [0.136459, 0.0, 0.0107945], device=self._device
+            [0.136459, 0.0, 0.0157945], device=self._device
         ).repeat(self._num_envs, 1)
         self._default_peg_quat = torch.tensor(
             [1.0, 0.0, 0.0, 0.0], device=self._device
