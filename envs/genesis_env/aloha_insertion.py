@@ -556,10 +556,10 @@ class AlohaInsertion(GenesisEnv):
         
         self._infos.update(
             {
-                "left_socket_dist": left_socket_dist.detach().mean().item(),
-                "right_peg_dist": right_peg_dist.detach().mean().item(),
-                "socket_dist": socket_dist.detach().mean().item(),
-                "peg_dist": peg_dist.detach().mean().item(),
+                "left_gripper_socket_dist": left_socket_dist.detach().mean().item(),
+                "right_gripper_peg_dist": right_peg_dist.detach().mean().item(),
+                "socket_target_dist": socket_dist.detach().mean().item(),
+                "peg_target_dist": peg_dist.detach().mean().item(),
             }
         )
 
