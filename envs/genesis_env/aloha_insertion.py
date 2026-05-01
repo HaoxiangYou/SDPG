@@ -119,42 +119,41 @@ class AlohaInsertion(GenesisEnv):
 
         if self._vis_obs:
 
-            # if sensors_args is None:
-            #     sensors_args = {
-            #         "camera": {
-            #             "res": [256, 256],
-            #             "pos": [0.40, 0.05, 0.425],
-            #             "lookat": [0.25, -0.10, 0.275],
-            #             "fov": 80.0,
-            #             "lights": {
-            #                 "pos": [0.0, 0.0, 2.0],
-            #                 "dir": [0.0, 0.0, -1.0],
-            #                 "intensity": 0.8,
-            #                 "color": [1.0, 1.0, 1.0],
-            #             },
-            #             "directional": True,
-            #             "castshadow": False,
-            #         }
-            #     }
-            # self._num_image_stack = 3
-            # self._observation_space = spaces.Dict(
-            #     {
-            #         "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(124,)),
-            #         # observation that ignores cube information (infer from images)
-            #         "proprioception_and_target": spaces.Box(low=-np.inf, high=np.inf, shape=(107,)),
-            #         "RGB": spaces.Box(
-            #             low=0,
-            #             high=255,
-            #             dtype=np.uint8,
-            #             shape=(
-            #                 self._num_image_stack * 3,
-            #                 sensors_args["camera"]["res"][0],
-            #                 sensors_args["camera"]["res"][1],
-            #             ),
-            #         ),
-            #     }
-            # )
-            pass
+            if sensors_args is None:
+                sensors_args = {
+                    "camera": {
+                        "res": [256, 256],
+                        "pos": [0.40, 0.05, 0.425],
+                        "lookat": [0.25, -0.10, 0.275],
+                        "fov": 80.0,
+                        "lights": {
+                            "pos": [0.0, 0.0, 2.0],
+                            "dir": [0.0, 0.0, -1.0],
+                            "intensity": 0.8,
+                            "color": [1.0, 1.0, 1.0],
+                        },
+                        "directional": True,
+                        "castshadow": False,
+                    }
+                }
+            self._num_image_stack = 3
+            self._observation_space = spaces.Dict(
+                {
+                    "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(124,)),
+                    # observation that ignores object information (infer from images)
+                    "proprioception": spaces.Box(low=-np.inf, high=np.inf, shape=(90,)),
+                    "RGB": spaces.Box(
+                        low=0,
+                        high=255,
+                        dtype=np.uint8,
+                        shape=(
+                            self._num_image_stack * 3,
+                            sensors_args["camera"]["res"][0],
+                            sensors_args["camera"]["res"][1],
+                        ),
+                    ),
+                }
+            )
         else:
             self._observation_space = spaces.Dict(
                 {
@@ -340,8 +339,6 @@ class AlohaInsertion(GenesisEnv):
                     env_idx=self._nominal_env_ids.cpu().tolist(),
                 )
             )
-
-            self._num_image_stack = 3
             
             self._imgs_buf = torch.zeros(
                 self.nominal_env_ids.shape[0],
