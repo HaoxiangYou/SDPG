@@ -124,7 +124,7 @@ class AlohaInsertion(GenesisEnv):
                 {
                     "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(90,)),
                     # observation that ignores object information (infer from images)
-                    "proprioception": spaces.Box(low=-np.inf, high=np.inf, shape=(46,)),
+                    "proprioception": spaces.Box(low=-np.inf, high=np.inf, shape=(52,)),
                     "RGB": spaces.Box(
                         low=0,
                         high=255,
