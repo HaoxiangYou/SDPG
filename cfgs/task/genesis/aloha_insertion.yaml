@@ -21,7 +21,7 @@ config:
   sensors_args:
     camera:
       type: rgb
-      res: [128, 128]
+      res: [84, 84]
       pos: [0.0, 0.6, 0.3]
       lookat: [0.0, 0.0, 0.3]
       fov: 80.0
