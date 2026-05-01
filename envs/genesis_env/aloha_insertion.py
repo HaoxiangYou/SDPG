@@ -216,9 +216,9 @@ class AlohaInsertion(GenesisEnv):
         _kp_per_arm = [43.0, 265.0, 227.0, 78.0, 37.0, 10.4]
         _damping_per_arm = [5.76, 20.0, 18.49, 6.78, 6.28, 1.2]
         _force_upper_per_arm = [35.0, 144.0, 59.0, 22.0, 35.0, 35.0]
-        _kp_gripper = 365.0
-        _damping_gripper = 40.0
-        _force_upper_gripper = 35.0
+        _kp_gripper = 1200.0
+        _damping_gripper = 60.0
+        _force_upper_gripper = 80.0
         self._kp = torch.tensor(
             _kp_per_arm + _kp_per_arm + [_kp_gripper, _kp_gripper],
             device=self._device,
