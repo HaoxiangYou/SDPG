@@ -216,9 +216,9 @@ class AlohaInsertion(GenesisEnv):
         _kp_per_arm = [43.0, 265.0, 227.0, 78.0, 37.0, 10.4]
         _damping_per_arm = [5.76, 20.0, 18.49, 6.78, 6.28, 1.2]
         _force_upper_per_arm = [35.0, 144.0, 59.0, 22.0, 35.0, 35.0]
-        _kp_gripper = 1200.0
-        _damping_gripper = 60.0
-        _force_upper_gripper = 80.0
+        _kp_gripper = 365.0
+        _damping_gripper = 40.0
+        _force_upper_gripper = 35.0
         self._kp = torch.tensor(
             _kp_per_arm + _kp_per_arm + [_kp_gripper, _kp_gripper],
             device=self._device,
@@ -266,7 +266,7 @@ class AlohaInsertion(GenesisEnv):
                 # right arm
                 -0.0862348, -0.109522,  0.949474, -0.113041, -0.887378,  0.0754333,
                 # grippers (finger opening, meters). 0.0305 ~ open, 0.002 closed.
-                0.0305,  0.0305,
+                0.0305,  0.0186,
             ],
             device=self._device,
         ).repeat(self._num_envs, 1)
@@ -274,7 +274,7 @@ class AlohaInsertion(GenesisEnv):
         self._ctrl = self._default_motor_dof_pos.clone()
 
         self._default_peg_pos = torch.tensor(
-            [0.136459, 0.0, 0.0157945], device=self._device
+            [0.136459, 0.0, 0.0107945], device=self._device
         ).repeat(self._num_envs, 1)
         self._default_peg_quat = torch.tensor(
             [1.0, 0.0, 0.0, 0.0], device=self._device
