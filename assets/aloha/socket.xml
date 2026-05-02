@@ -1,0 +1,89 @@
+<mujoco model="socket">
+  <asset>
+    <material name="socket_blue"  rgba="0.22 0.34 0.85 1"/>
+    <material name="socket_red"   rgba="1 0 0 1"/>
+  </asset>
+
+  <default>
+    <default class="stiff">
+      <geom solref="0.005 1"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="socket">
+      <site name="socket_entrance" pos="0.048 0 0" group="4"/>
+      <site name="socket_rear"     pos="0     0 0" group="4"/>
+      <joint name="socket" type="free" stiffness="0" damping="0" frictionloss="0" armature="0"/>
+
+      <!-- Collision geoms are placed in group=3 to suppress Genesis's
+           MJCF parser from duplicating them as uncolored white visual
+           meshes (see mjcf.py:691). Each collision wall is paired with a
+           visual-only counterpart below that carries the material/rgba. -->
+
+      <!-- Bottom wall -->
+      <geom class="stiff" name="socket-B"
+            type="box" size="0.048 0.022 0.002" pos="0 0 -0.02"
+            mass="0.016" condim="4" friction="1 0.05 0.001"
+            contype="1" conaffinity="1" group="3"/>
+      <geom name="socket-B-vis"
+            type="box" size="0.048 0.022 0.002" pos="0 0 -0.02"
+            material="socket_blue"
+            contype="0" conaffinity="0" group="0"/>
+
+      <!-- Top wall (flipped normal via zaxis) -->
+      <geom class="stiff" name="socket-T"
+            type="box" size="0.048 0.022 0.002" pos="0 0 0.02" zaxis="0 0 -1"
+            mass="0.016" condim="4" friction="1 0.05 0.001"
+            contype="1" conaffinity="1" group="3"/>
+      <geom name="socket-T-vis"
+            type="box" size="0.048 0.022 0.002" pos="0 0 0.02" zaxis="0 0 -1"
+            material="socket_blue"
+            contype="0" conaffinity="0" group="0"/>
+
+      <!-- Left side wall -->
+      <geom class="stiff" name="socket-L"
+            type="box" size="0.048 0.018 0.002" pos="0 -0.02 0" zaxis="0 1 0"
+            mass="0.016" condim="4" friction="1 0.05 0.001"
+            contype="1" conaffinity="1" group="3"/>
+      <geom name="socket-L-vis"
+            type="box" size="0.048 0.018 0.002" pos="0 -0.02 0" zaxis="0 1 0"
+            material="socket_blue"
+            contype="0" conaffinity="0" group="0"/>
+
+      <!-- Right side wall -->
+      <geom class="stiff" name="socket-R"
+            type="box" size="0.048 0.018 0.002" pos="0 0.02 0" zaxis="0 -1 0"
+            mass="0.016" condim="4" friction="1 0.05 0.001"
+            contype="1" conaffinity="1" group="3"/>
+      <geom name="socket-R-vis"
+            type="box" size="0.048 0.018 0.002" pos="0 0.02 0" zaxis="0 -1 0"
+            material="socket_blue"
+            contype="0" conaffinity="0" group="0"/>
+
+      <!-- Back wall (the target for peg_end2 to reach) -->
+      <geom class="stiff" name="wall"
+            type="box" size="0.004 0.018 0.018" pos="-0.044 0 0"
+            mass="0.006" condim="4" friction="1 0.05 0.001"
+            contype="1" conaffinity="1" group="3"/>
+      <geom name="wall-vis"
+            type="box" size="0.004 0.018 0.018" pos="-0.044 0 0"
+            material="socket_red"
+            contype="0" conaffinity="0" group="0"/>
+
+      <!-- Dummy bodies acting as "site" proxies for Genesis, which has no
+           site-position API. They are rigidly welded to the socket body
+           (no <joint>) and have effectively zero mass/inertia and no collision. -->
+      <body name="socket_entrance_site" pos="0.048 0 0">
+        <inertial pos="0 0 0" mass="1e-6" diaginertia="1e-9 1e-9 1e-9"/>
+        <geom type="sphere" size="0.005" rgba="0 1 0 0.3"
+              contype="0" conaffinity="0" group="4"/>
+      </body>
+      <body name="socket_rear_site" pos="0 0 0">
+        <inertial pos="0 0 0" mass="1e-6" diaginertia="1e-9 1e-9 1e-9"/>
+        <geom type="sphere" size="0.005" rgba="0 1 0 0.3"
+              contype="0" conaffinity="0" group="4"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

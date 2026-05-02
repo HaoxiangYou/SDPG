@@ -1,0 +1,42 @@
+<mujoco model="peg">
+
+  <default>
+    <default class="stiff">
+      <!-- Original MJX setting: stiff contact response for insertion fidelity. -->
+      <geom solref="0.005 1"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="peg">
+      <site name="peg_end1" pos="0.048 0 0"  group="4"/>
+      <site name="peg_end2" pos="-0.048 0 0" group="4"/>
+      <joint name="peg" type="free" stiffness="0" damping="0" frictionloss="0" armature="0"/>
+      <!-- Collision-only (group=3 keeps Genesis's MJCF parser from
+           duplicating it as a white visual vmesh; see mjcf.py:691). -->
+      <geom class="stiff" name="red_peg"
+            type="box" size="0.048 0.015 0.015" pos="0 0 0"
+            mass="0.1" condim="4" friction="1 0.05 0.001"
+            contype="1" conaffinity="1" group="3"/>
+      <!-- Visual-only counterpart carrying the rgba. -->
+      <geom name="red_peg_vis"
+            type="box" size="0.048 0.015 0.015" pos="0 0 0"
+            rgba="1 0 0 1"
+            contype="0" conaffinity="0" group="0"/>
+
+      <!-- Dummy bodies acting as "site" proxies for Genesis, which has no
+           site-position API. They are rigidly welded to the peg body (no
+           <joint>) and have effectively zero mass/inertia and no collision. -->
+      <body name="peg_end1_site" pos="0.048 0 0">
+        <inertial pos="0 0 0" mass="1e-6" diaginertia="1e-9 1e-9 1e-9"/>
+        <geom type="sphere" size="0.005" rgba="0 1 0 0.3"
+              contype="0" conaffinity="0" group="4"/>
+      </body>
+      <body name="peg_end2_site" pos="-0.048 0 0">
+        <inertial pos="0 0 0" mass="1e-6" diaginertia="1e-9 1e-9 1e-9"/>
+        <geom type="sphere" size="0.005" rgba="0 1 0 0.3"
+              contype="0" conaffinity="0" group="4"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
