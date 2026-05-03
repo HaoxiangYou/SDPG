@@ -147,8 +147,6 @@
                   <!-- Dummy body acting as a "site" proxy for Genesis -->
                   <body name="left/gripper_site" pos="0.13 0 -.003">
                     <inertial pos="0 0 0" mass="1e-6" diaginertia="1e-9 1e-9 1e-9"/>
-                    <geom type="sphere" size="0.005" rgba="0 1 0 0.3"
-                          contype="0" conaffinity="0" group="4"/>
                   </body>
                   <body name="left/gripper_base" euler="0 1.57 -1.57" pos="0.035 0 0">
                     <inertial pos="0.000182154 -0.0341589 -0.0106026" quat="0.435286 0.557074 -0.551539 0.442718"
@@ -232,8 +230,6 @@
                   <!-- Dummy body acting as a "site" proxy for Genesis. -->
                   <body name="right/gripper_site" pos="0.13 0 -.003">
                     <inertial pos="0 0 0" mass="1e-6" diaginertia="1e-9 1e-9 1e-9"/>
-                    <geom type="sphere" size="0.005" rgba="0 1 0 0.3"
-                          contype="0" conaffinity="0" group="4"/>
                   </body>
                   <body name="right/gripper_base" euler="0 1.57 -1.57" pos="0.035 0 0">
                     <inertial pos="0.000182154 -0.0341589 -0.0106026" quat="0.435286 0.557074 -0.551539 0.442718"

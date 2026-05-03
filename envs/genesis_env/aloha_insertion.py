@@ -319,7 +319,13 @@ class AlohaInsertion(GenesisEnv):
             # without entity_idx the batch renderer uses a single world pose,
             # only env 0 is in view and other envs render black.
             self._table_camera_mount = self._scene.add_entity(
-                gs.morphs.Sphere(radius=0.001, collision=False, fixed=True)
+                gs.morphs.Sphere(
+                    radius=0.001,
+                    collision=False,
+                    fixed=True,
+                    pos=(0.0, -0.377167, 0.0316055),
+                    quat=(0.672659, 0.739953, 0.0, 0.0),
+                )
             )
 
             # Mount spec per camera: (entity_idx, link_idx_local).

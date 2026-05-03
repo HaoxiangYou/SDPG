@@ -23,7 +23,7 @@ config:
       # Shared across all batch-renderer cameras. `res` MUST be the same for
       # every camera (Madrona batch-renderer constraint, see batch_renderer.py:302).
       type: rgb
-      res: [84, 84]
+      res: [64, 64]
       lights:
         pos: [0.0, 0.0, 0.0]
         dir: [0.0, 0.0, -1.0]
@@ -35,20 +35,20 @@ config:
       # Per-camera overrides. Each entry specifies its own pose/FOV/near/far.
       cameras:
         table:
-          pos: [0.0, 0.6, 0.3]
-          lookat: [0.0, 0.0, 0.3]
+          pos: [0.0, 0.0, 0.0]
+          lookat: [0.0, 0.0, -1.0]
           fov: 80.0
           near: 0.01
           far: 5.0
         wrist_left:
-          pos: [0.0, -0.08, -0.01]
-          lookat: [0.13, 0.0, -0.003]
+          pos: [0.02540, 0.0, 0.08247]
+          lookat: [0.93171, 0.0, -0.34014]
           fov: 60.0
           near: 0.01
           far: 5.0
         wrist_right:
-          pos: [0.0, -0.08, -0.01]
-          lookat: [0.13, 0.0, -0.003]
+          pos: [0.02540, 0.0, 0.08247]
+          lookat: [0.93171, 0.0, -0.34014]
           fov: 60.0
           near: 0.01
           far: 5.0
