@@ -329,19 +329,19 @@ class AlohaInsertion(GenesisEnv):
             )
 
             # Mount spec per camera: (entity_idx, link_idx_local).
-            #   - `table`       -> dummy world-frame sphere (static)
-            #   - `wrist_left`  -> robot's left gripper_link  (tracks the hand)
-            #   - `wrist_right` -> robot's right gripper_link (tracks the hand)
+            #   - `table_cam`       -> dummy world-frame sphere (static)
+            #   - `wrist_left_cam`  -> robot's left gripper_link  (tracks the hand)
+            #   - `wrist_right_cam` -> robot's right gripper_link (tracks the hand)
             camera_mounts = {
-                "table": (
+                "table_cam": (
                     self._table_camera_mount.idx,
                     0,
                 ),
-                "wrist_left": (
+                "wrist_left_cam": (
                     self._robot.idx,
                     self._robot.get_link("left/gripper_link").idx_local,
                 ),
-                "wrist_right": (
+                "wrist_right_cam": (
                     self._robot.idx,
                     self._robot.get_link("right/gripper_link").idx_local,
                 ),
