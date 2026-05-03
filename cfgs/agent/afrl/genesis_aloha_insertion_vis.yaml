@@ -56,7 +56,7 @@ config:
           activation: elu
 
   # Number of base environments for rollout
-  num_base_envs: 64
+  num_base_envs: 48
   # Number of auxiliary environments for estimating the descent direction
   num_action_perturbations: 63
   # Number of top k perturbations to use for the ascent direction computation
@@ -65,7 +65,7 @@ config:
   num_envs: ${compute_num_envs:${.num_base_envs},${.num_action_perturbations}}
 
   max_epochs: 40000
-  horizon_length: 48
+  horizon_length: 64
   # Discount factor
   gamma: 0.99
   # TD(lambda)
