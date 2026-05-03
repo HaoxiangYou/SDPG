@@ -34,19 +34,19 @@ config:
         castshadow: False
       # Per-camera overrides. Each entry specifies its own pose/FOV/near/far.
       cameras:
-        table:
+        table_cam:
           pos: [0.0, 0.0, 0.0]
           lookat: [0.0, 0.0, -1.0]
           fov: 80.0
           near: 0.01
           far: 5.0
-        wrist_left:
+        wrist_left_cam:
           pos: [0.02540, 0.0, 0.08247]
           lookat: [0.93171, 0.0, -0.34014]
           fov: 60.0
           near: 0.01
           far: 5.0
-        wrist_right:
+        wrist_right_cam:
           pos: [0.02540, 0.0, 0.08247]
           lookat: [0.93171, 0.0, -0.34014]
           fov: 60.0
