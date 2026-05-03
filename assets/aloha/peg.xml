@@ -24,9 +24,7 @@
             rgba="1 0 0 1"
             contype="0" conaffinity="0" group="0"/>
 
-      <!-- Dummy bodies acting as "site" proxies for Genesis, which has no
-           site-position API. They are rigidly welded to the peg body (no
-           <joint>) and have effectively zero mass/inertia and no collision. -->
+      <!-- Dummy bodies acting as "site" proxies for Genesis. -->
       <body name="peg_end1_site" pos="0.048 0 0">
         <inertial pos="0 0 0" mass="1e-6" diaginertia="1e-9 1e-9 1e-9"/>
       </body>
