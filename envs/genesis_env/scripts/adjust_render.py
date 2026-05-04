@@ -148,52 +148,98 @@ def main(traj_path: str | None = None, config_path: str | None = None):
     if traj_path is not None:
         states = torch.load(traj_path, weights_only=False)
 
-        frames = []
+        # frames_per_cam[name] -> list of (H, W, 3) numpy frames for env 0
+        frames_per_cam: dict[str, list] = {}
+        cam_names: list[str] = []
+
         for batch_idx, _time_idx, state in enumerate_states(states):
             if batch_idx != 0:
                 continue  # only render the first batch
             env.set_states(state)
             env._scene.step()
-            img = env.render().cpu().numpy()[0]
-            frames.append(img)
+            pairs = _render_as_named_batches(env)
+            if not cam_names:
+                cam_names = [n for n, _ in pairs]
+                frames_per_cam = {n: [] for n in cam_names}
+            for name, img_batch in pairs:
+                frames_per_cam[name].append(img_batch.cpu().numpy()[0])
 
-        fig, ax = plt.subplots(figsize=(6, 6))
-        ax.axis("off")
-        im = ax.imshow(frames[0])
-        title = ax.set_title(f"Frame 0/{len(frames)}")
+        # One animation window per camera. Keep refs alive so FuncAnimation
+        # doesn't get garbage-collected before plt.show() returns.
+        anims = []
+        for name in cam_names:
+            frames = frames_per_cam[name]
+            fig, ax = plt.subplots(figsize=(6, 6))
+            ax.axis("off")
+            im = ax.imshow(frames[0])
+            title = ax.set_title(f"[{name}] Frame 0/{len(frames)}")
 
-        def update(frame_idx):
-            im.set_array(frames[frame_idx])
-            title.set_text(f"Frame {frame_idx}/{len(frames)}")
-            return [im, title]
+            # Factory to avoid Python's late-binding closure bug in loops.
+            def _make_update(im, title, name, frames):
+                def update(frame_idx):
+                    im.set_array(frames[frame_idx])
+                    title.set_text(f"[{name}] Frame {frame_idx}/{len(frames)}")
+                    return [im, title]
+                return update
 
-        anim = FuncAnimation(
-            fig, update, frames=len(frames), interval=1000 / 30, blit=False, repeat=True
-        )
-        plt.tight_layout()
+            anim = FuncAnimation(
+                fig,
+                _make_update(im, title, name, frames),
+                frames=len(frames),
+                interval=1000 / 30,
+                blit=False,
+                repeat=True,
+            )
+            fig.tight_layout()
+            anims.append(anim)
+
         plt.show()
-        return anim
+        return anims
 
-    # No trajectory: reset and snapshot.
+    # No trajectory: reset and snapshot. One grid-figure per camera.
     env.reset()
-    imgs = env.render().cpu().numpy()
+    pairs = _render_as_named_batches(env)
 
-    n_images = imgs.shape[0]
-    n_cols = int(np.ceil(np.sqrt(n_images)))
-    n_rows = int(np.ceil(n_images / n_cols))
+    for name, img_batch in pairs:
+        imgs = img_batch.cpu().numpy()
+        n_images = imgs.shape[0]
+        n_cols = int(np.ceil(np.sqrt(n_images)))
+        n_rows = int(np.ceil(n_images / n_cols))
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 3, n_rows * 3))
-    axes = np.atleast_1d(axes).flatten()
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 3, n_rows * 3))
+        fig.suptitle(f"Camera: {name}")
+        axes = np.atleast_1d(axes).flatten()
 
-    for i in range(n_images):
-        axes[i].imshow(imgs[i])
-        axes[i].axis("off")
-        axes[i].set_title(f"Env {i}", fontsize=10)
-    for i in range(n_images, len(axes)):
-        axes[i].axis("off")
+        for i in range(n_images):
+            axes[i].imshow(imgs[i])
+            axes[i].axis("off")
+            axes[i].set_title(f"Env {i}", fontsize=10)
+        for i in range(n_images, len(axes)):
+            axes[i].axis("off")
 
-    plt.tight_layout()
+        fig.tight_layout()
+
     plt.show()
+
+
+def _render_as_named_batches(env):
+    """Normalize `env.render()` into a list of (camera_name, (N, H, W, 3)) pairs.
+
+    Some envs (e.g. `aloha_insertion`) return a tuple of per-camera image
+    batches now that we support multiple cameras; others still return a
+    single tensor. This helper smooths over both shapes.
+    """
+    out = env.render()
+    if out is None:
+        return []
+    if isinstance(out, (tuple, list)):
+        # Prefer the env's own camera ordering when available.
+        if hasattr(env, "_cameras") and isinstance(env._cameras, dict):
+            names = list(env._cameras.keys())
+        else:
+            names = [f"cam{i}" for i in range(len(out))]
+        return list(zip(names, out))
+    return [("cam0", out)]
 
 
 if __name__ == "__main__":

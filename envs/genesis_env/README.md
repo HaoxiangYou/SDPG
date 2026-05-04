@@ -18,6 +18,7 @@ Once the environment is working, create the corresponding configs under `cfgs/ta
 | `allegro_hand.py` | Goal-conditioned reward, mixed observation keys (proprioception + ego-centric camera) |
 | `walker_hurtle.py` | Terrain generation, heightfield observations, RGB/depth camera switching |
 | `go2_terrain.py` | User commands, curriculum learning, domain randomization |
+|`aloha_insertion.py`|Multiple cameras|
 
 ### 1.3 Abstract methods
 

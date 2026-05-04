@@ -1,6 +1,6 @@
 import math
 import os
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import genesis as gs
 import numpy as np
@@ -119,22 +119,20 @@ class AlohaInsertion(GenesisEnv):
 
         if self._vis_obs:
 
-            self._num_image_stack = 3
+            res = self._sensors_args["camera"]["res"]
+            rgb_spaces = {
+                cam_name: spaces.Box(
+                    low=0, high=255, dtype=np.uint8,
+                    shape=(3, res[0], res[1]),
+                )
+                for cam_name in self._sensors_args["camera"]["cameras"].keys()
+            }
             self._observation_space = spaces.Dict(
                 {
                     "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(90,)),
                     # observation that ignores object information (infer from images)
                     "proprioception": spaces.Box(low=-np.inf, high=np.inf, shape=(52,)),
-                    "RGB": spaces.Box(
-                        low=0,
-                        high=255,
-                        dtype=np.uint8,
-                        shape=(
-                            self._num_image_stack * 3,
-                            self._sensors_args["camera"]["res"][0],
-                            self._sensors_args["camera"]["res"][1],
-                        ),
-                    ),
+                    **rgb_spaces,
                 }
             )
         else:
@@ -296,42 +294,101 @@ class AlohaInsertion(GenesisEnv):
         }
 
         if self._vis_obs:
-            # Initialize the sensors
-            offset_T = self._sensors_args["camera"].get("offset_T", None)
-            lookat = self._sensors_args["camera"].get("lookat", None)
-            if offset_T is not None:
-                offset_T = torch.tensor(offset_T, device=self._device)
-            else:
-                if lookat is not None:
-                    offset_T = pos_lookat_up_to_T(
-                        np.array(self._sensors_args["camera"]["pos"]), np.array(lookat), np.array((0.0, 0.0, 1.0))
-                    )
+            # Compute the offset_T for each configured camera. Result is a
+            # dict keyed by camera name; consumed by the per-camera
+            # `scene.add_sensor(...)` calls below.
+            self._camera_cfgs = self._sensors_args["camera"]["cameras"]
+            self._camera_offset_Ts: Dict[str, torch.Tensor] = {}
+            for cam_name, cam_cfg in self._camera_cfgs.items():
+                offset_T = cam_cfg.get("offset_T", None)
+                if offset_T is not None:
+                    offset_T = torch.tensor(offset_T, device=self._device)
                 else:
-                    offset_T = np.eye(4)
-            # NOTE: A dummy link for the camera to attach to; without entity_idx the batch renderer
-            # uses a single world pose, only env 0 is in view and other envs render black.
-            self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.001, collision=False, fixed=True))
-            self._camera = self._scene.add_sensor(
-                gs.sensors.BatchRendererCameraOptions(
-                    res=self._sensors_args["camera"]["res"],
-                    pos=self._sensors_args["camera"]["pos"],
-                    offset_T=offset_T,
-                    fov=self._sensors_args["camera"]["fov"],
-                    entity_idx=self._camera_mount.idx,
-                    lights=[self._sensors_args["camera"]["lights"]],
-                    env_idx=self._nominal_env_ids.cpu().tolist(),
+                    lookat = cam_cfg.get("lookat", None)
+                    if lookat is not None:
+                        offset_T = pos_lookat_up_to_T(
+                            np.array(cam_cfg["pos"]),
+                            np.array(lookat),
+                            np.array((0.0, 0.0, 1.0)),
+                        )
+                    else:
+                        offset_T = np.eye(4)
+                self._camera_offset_Ts[cam_name] = offset_T
+
+            # NOTE: A dummy link for static (world-frame) cameras to attach to;
+            # without entity_idx the batch renderer uses a single world pose,
+            # only env 0 is in view and other envs render black.
+            self._table_camera_mount = self._scene.add_entity(
+                gs.morphs.Sphere(
+                    radius=0.001,
+                    collision=False,
+                    fixed=True,
+                    pos=(0.0, -0.377167, 0.0316055),
+                    quat=(0.672659, 0.739953, 0.0, 0.0),
                 )
             )
-            
-            self._imgs_buf = torch.zeros(
-                self.nominal_env_ids.shape[0],
-                self._num_image_stack,
-                self._sensors_args["camera"]["res"][0],
-                self._sensors_args["camera"]["res"][1],
-                3,
-                device=self._device,
-                dtype=torch.uint8,
-            )
+
+            # Mount spec per camera: (entity_idx, link_idx_local).
+            #   - `table_cam`       -> dummy world-frame sphere (static)
+            #   - `wrist_left_cam`  -> robot's left gripper_link  (tracks the hand)
+            #   - `wrist_right_cam` -> robot's right gripper_link (tracks the hand)
+            camera_mounts = {
+                "table_cam": (
+                    self._table_camera_mount.idx,
+                    0,
+                ),
+                "wrist_left_cam": (
+                    self._robot.idx,
+                    self._robot.get_link("left/gripper_link").idx_local,
+                ),
+                "wrist_right_cam": (
+                    self._robot.idx,
+                    self._robot.get_link("right/gripper_link").idx_local,
+                ),
+            }
+
+            shared_res = self._sensors_args["camera"]["res"]
+            shared_lights = self._sensors_args["camera"]["lights"]
+            shared_env_idx = self._nominal_env_ids.cpu().tolist()
+
+            self._cameras: Dict[str, Any] = {}
+            for i, (cam_name, cam_cfg) in enumerate(self._camera_cfgs.items()):
+                if cam_name not in camera_mounts:
+                    gs.raise_exception(
+                        f"Unknown camera '{cam_name}' in sensors_args.camera.cameras. "
+                        f"Supported: {list(camera_mounts.keys())}"
+                    )
+                entity_idx, link_idx_local = camera_mounts[cam_name]
+                # Lights are scene-global in the Madrona batch renderer; attach
+                # them once (first camera only) to avoid duplicates.
+                cam_lights = [shared_lights] if i == 0 else []
+
+                self._cameras[cam_name] = self._scene.add_sensor(
+                    gs.sensors.BatchRendererCameraOptions(
+                        res=shared_res,
+                        pos=cam_cfg["pos"],
+                        offset_T=self._camera_offset_Ts[cam_name],
+                        fov=cam_cfg["fov"],
+                        near=cam_cfg["near"],
+                        far=cam_cfg["far"],
+                        entity_idx=entity_idx,
+                        link_idx_local=link_idx_local,
+                        lights=cam_lights,
+                        env_idx=shared_env_idx,
+                    )
+                )
+
+            # One HWC buffer per camera (no history / stacking).
+            res = self._sensors_args["camera"]["res"]
+            self._imgs_buf: Dict[str, torch.Tensor] = {
+                cam_name: torch.zeros(
+                    self.nominal_env_ids.shape[0],
+                    res[0], res[1], 3,
+                    device=self._device,
+                    dtype=torch.uint8,
+                )
+                for cam_name in self._cameras.keys()
+            }
 
     def build_scene(self) -> None:
         self._scene.build(n_envs=self._num_envs, env_spacing=(1.5, 1.5))
@@ -413,10 +470,10 @@ class AlohaInsertion(GenesisEnv):
 
             observations["proprioception"] = proprioception
 
-            batch_size, num_stack, img_height, img_width, rgb = self._imgs_buf.shape
-            observations["RGB"] = self._imgs_buf.permute(0, 1, 4, 2, 3).reshape(
-                batch_size, num_stack * rgb, img_height, img_width
-            )
+            # Expose each camera as its own observation key in channels-first
+            # (N, 3, H, W) layout expected by CNN encoders.
+            for cam_name, img_buf in self._imgs_buf.items():
+                observations[cam_name] = img_buf.permute(0, 3, 1, 2)
 
         return observations
 
@@ -605,10 +662,11 @@ class AlohaInsertion(GenesisEnv):
             if len(nominal_idx_to_reset) > 0:
                 # Render fresh images for the reset nominal environments
                 reset_nominal_env_ids = self.nominal_env_ids[nominal_idx_to_reset]
-                new_img = self.render(env_ids=reset_nominal_env_ids)
+                new_imgs = self.render(env_ids=reset_nominal_env_ids)
 
-                # Initialize the image buffer for these environments
-                self._imgs_buf[nominal_idx_to_reset] = new_img.unsqueeze(1)
+                # Write the fresh frame into each camera's buffer slice.
+                for cam_name, new_img in zip(self._imgs_buf.keys(), new_imgs):
+                    self._imgs_buf[cam_name][nominal_idx_to_reset] = new_img
 
     def _set_actions(self, actions: torch.Tensor) -> None:
         actions = actions.view(self._num_envs, self._num_actions)
@@ -625,26 +683,30 @@ class AlohaInsertion(GenesisEnv):
         )
 
     def _post_physics_step(self) -> None:
-        # TODO:
         if self._vis_obs:
-            new_img = self.render(env_ids=self.nominal_env_ids)
-            # Roll the buffer to shift old frames: [t-2, t-1, t-0] -> [t-1, t-0, None]
-            # This moves older frames "to the left" and makes room for the new frame
-            self._imgs_buf = torch.roll(self._imgs_buf, shifts=-1, dims=1)
-            self._imgs_buf[:, -1] = new_img
+            # No history / stacking — overwrite each camera's buffer with the
+            # freshly rendered frame for the current step.
+            new_imgs = self.render(env_ids=self.nominal_env_ids)
+            for cam_name, new_img in zip(self._imgs_buf.keys(), new_imgs):
+                self._imgs_buf[cam_name].copy_(new_img)
 
-    def render(self, env_ids: Optional[Sequence[int]] = None) -> Optional[torch.Tensor]:
-        if self._vis_obs:
-            if env_ids is None:
-                env_ids = self.nominal_env_ids
-
-            # TODO: genesis will refresh the image when the scene._dt is different from the last render time
-            # TODO: temporarily we hack by setting the last render time to 0 to force render the new image
-            self._camera._shared_metadata.last_render_timestep = 0
-            data = self._camera.read(envs_idx=env_ids)
-            return data.rgb
-        else:
+    def render(
+        self, env_ids: Optional[Sequence[int]] = None
+    ) -> Optional[Tuple[torch.Tensor, ...]]:
+        if not self._vis_obs:
             return None
+
+        if env_ids is None:
+            env_ids = self.nominal_env_ids
+
+        # TODO: genesis will refresh the image when the scene._dt is different
+        # from the last render time; force a re-render by invalidating the
+        # timestamp on the shared metadata (which is shared across all batch-
+        # renderer cameras, so setting it on any one camera is enough).
+        first_cam = next(iter(self._cameras.values()))
+        first_cam._shared_metadata.last_render_timestep = 0
+
+        return tuple(cam.read(envs_idx=env_ids).rgb for cam in self._cameras.values())
 
     def get_states(self, env_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
         if env_ids is None:
