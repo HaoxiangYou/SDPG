@@ -16,13 +16,13 @@ config:
           encoder:
             type: drqv2
             network:
-              output_dim: 256
+              output_dim: 32
           apply_rms: false
         - name: wrist_right_cam
           encoder:
             type: drqv2
             network:
-              output_dim: 256
+              output_dim: 32
           apply_rms: false
         - name: proprioception
           encoder:
