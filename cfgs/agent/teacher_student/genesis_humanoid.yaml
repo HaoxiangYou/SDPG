@@ -25,7 +25,7 @@ config:
 
     # DAgger
     max_epochs: 120000
-    steps_per_epoch: 32  # steps_num
+    steps_per_epoch: 256
     batch_size: 128
     learning_starts: 32000
     num_update_per_epoch: 2000
