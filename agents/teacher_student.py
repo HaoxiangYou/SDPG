@@ -24,6 +24,7 @@ from tensorboardX import SummaryWriter
 import models
 from utils.common_utils import TimeReport, make_envs, print_info
 from utils.statistic_utils import AverageMeter
+from utils.tensor_utils import moveaxis_dict, stack_dict_list
 
 # Reuse PPO training from rl_games when train_teacher is True
 from agents import rl_games as rl_games_agent
@@ -593,27 +594,51 @@ class TeacherStudentRunner:
             wandb.finish()
 
     @torch.no_grad()
-    def evaluate_policy(self, maximum_trajectory_length=None, save_trajectory=False):
+    def evaluate_policy(self, maximum_trajectory_length=None, save_trajectory=True):
+        """Eval the student policy. If save_trajectory=True, dumps per-step env
+        states (from env.get_states()) to {log_dir}/eval/trajectory.pt as a dict
+        of tensors with shape (num_envs, T+1, ...). Mirrors agents/afrl.py."""
+        episode_length = torch.zeros(self.num_envs, device=self.device)
+        episode_length_meter = AverageMeter(1, 100).to(self.device)
+        episode_reward = torch.zeros(self.num_envs, device=self.device)
+        episode_reward_meter = AverageMeter(1, 100).to(self.device)
+        if save_trajectory:
+            states_history = []
         if maximum_trajectory_length is None:
             maximum_trajectory_length = getattr(self.env, "episode_length", 1000)
-        episode_length = torch.zeros(self.num_envs, device=self.device)
-        episode_reward = torch.zeros(self.num_envs, device=self.device)
+
         obs, _ = self.env.reset()
+        if save_trajectory:
+            states_history.append(self.env.get_states())
         for _ in range(maximum_trajectory_length):
             student_obs = {key: obs[key] for key in self.student_input_keys}
             actions = self.student(student_obs)["mean"]
             obs, rewards, terminated, truncated, _ = self.env.step(actions, auto_reset=True)
             dones = terminated | truncated
+            done_env_ids = dones.nonzero(as_tuple=False).squeeze(-1).to(torch.int32)
             episode_length += 1
             episode_reward += rewards
-            episode_length[dones] = 0
-            episode_reward[dones] = 0
-        mean_len = episode_length.float().mean().item()
-        mean_rew = episode_reward.mean().item()
-        if hasattr(self, "episode_length_meter") and self.episode_length_meter.current_size > 0:
-            mean_len = self.episode_length_meter.get_mean().item()
-            mean_rew = self.episode_reward_meter.get_mean().item()
-        print_info("Eval episode length: {:.1f}, reward: {:.2f}".format(mean_len, mean_rew))
+            if save_trajectory:
+                states_history.append(self.env.get_states())
+            if len(done_env_ids) > 0:
+                episode_length_meter.update(episode_length[done_env_ids])
+                episode_reward_meter.update(episode_reward[done_env_ids])
+                episode_length[done_env_ids] = 0.0
+                episode_reward[done_env_ids] = 0.0
+
+        print_info(
+            f"Episode length: {episode_length_meter.get_mean().item()}, "
+            f"Episode reward: {episode_reward_meter.get_mean().item()}"
+        )
+
+        if save_trajectory:
+            eval_dir = os.path.join(self.log_dir, "eval")
+            os.makedirs(eval_dir, exist_ok=True)
+            save_path = os.path.join(eval_dir, "trajectory.pt")
+            states_history = stack_dict_list(states_history)
+            states_history = moveaxis_dict(states_history, source=0, destination=1)
+            torch.save(states_history, save_path)
+            print_info(f"Saved evaluation trajectory to {save_path}")
 
     def play(self):
         self.evaluate_policy()
