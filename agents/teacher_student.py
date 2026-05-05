@@ -52,27 +52,46 @@ class TeacherPolicy(torch.nn.Module):
 
 
 class ExpertReplayBuffer:
-    """Simple replay buffer for (vis_obs, expert_action) with max_size."""
+    """Replay buffer for (student_obs_dict, expert_action) with max_size.
 
-    def __init__(self, vis_obs_shape, action_shape, max_size, device="cuda:0"):
+    Each student-input key is stored as its own contiguous numpy array on CPU,
+    using the dtype/shape coming from the env's observation_space. This lets
+    visual keys stay uint8 (memory-friendly) while proprioceptive keys stay
+    float32, and lets the student have any combination of input keys (e.g.
+    {RGB}, {proprioception, ego_centric_camera}, ...).
+    """
+
+    def __init__(self, obs_specs, action_shape, max_size, device="cuda:0"):
+        """obs_specs: dict[key, {"shape": tuple, "dtype": np.dtype-like}].
+
+        Order of keys is preserved.
+        """
         self.max_size = int(max_size)
-        self.vis_obs = np.zeros((self.max_size,) + tuple(vis_obs_shape), dtype=np.uint8)
+        self.obs_keys = list(obs_specs.keys())
+        self.obs = {
+            key: np.zeros((self.max_size,) + tuple(spec["shape"]), dtype=np.dtype(spec["dtype"]))
+            for key, spec in obs_specs.items()
+        }
         self.actions = np.zeros((self.max_size,) + tuple(action_shape), dtype=np.float32)
         self.ptr = 0
         self.size = 0
         self.device = device
 
-    def append(self, vis_obs, actions):
-        """vis_obs: (N, ...), actions: (N, num_actions)."""
-        n = vis_obs.shape[0]
+    def append(self, obs_dict, actions):
+        """obs_dict: {key: np.ndarray of shape (N, ...)} for each student input key.
+        actions: np.ndarray of shape (N, num_actions)."""
+        any_obs = next(iter(obs_dict.values()))
+        n = any_obs.shape[0]
         if self.ptr + n <= self.max_size:
-            self.vis_obs[self.ptr : self.ptr + n] = vis_obs
+            for key in self.obs_keys:
+                self.obs[key][self.ptr : self.ptr + n] = obs_dict[key]
             self.actions[self.ptr : self.ptr + n] = actions
             self.ptr = (self.ptr + n) % self.max_size
             self.size = min(self.size + n, self.max_size)
         else:
             for i in range(n):
-                self.vis_obs[self.ptr] = vis_obs[i]
+                for key in self.obs_keys:
+                    self.obs[key][self.ptr] = obs_dict[key][i]
                 self.actions[self.ptr] = actions[i]
                 self.ptr = (self.ptr + 1) % self.max_size
             self.size = self.max_size
@@ -82,10 +101,12 @@ class ExpertReplayBuffer:
 
     def sample(self, batch_size):
         indices = np.random.randint(0, self.size, size=min(batch_size, self.size))
-        return (
-            torch.from_numpy(self.vis_obs[indices]).to(self.device),
-            torch.from_numpy(self.actions[indices]).to(self.device),
-        )
+        obs_batch = {
+            key: torch.from_numpy(self.obs[key][indices]).to(self.device)
+            for key in self.obs_keys
+        }
+        actions_batch = torch.from_numpy(self.actions[indices]).to(self.device)
+        return obs_batch, actions_batch
 
 
 class TeacherStudentRunner:
@@ -183,9 +204,6 @@ class TeacherStudentRunner:
 
     def make_envs(self):
         self.env = make_envs(self.config)
-        obs_spaces = getattr(self.env.observation_space, "spaces", {})
-        if "RGB" not in obs_spaces:
-            raise ValueError("Teacher-student requires task with vis_obs=True (observation_space must contain 'RGB').")
 
     def _load_ppo_agent_config(self):
         """Load PPO agent config from cfgs/agent/{teacher_ppo_agent}.yaml (used for training and loading teacher)."""
@@ -356,10 +374,21 @@ class TeacherStudentRunner:
         self.actor_lr = float(self._student_cfg.actor_lr)
         self.lr_schedule = self._student_cfg.get("lr_schedule", "constant")
 
-        vis_shape = self.env.observation_space["RGB"].shape
+        # Build replay buffer specs from observation_space and student_input_keys
+        # so the buffer mirrors the student's input layout (keys + dtypes + shapes).
+        obs_specs = {}
+        for key in self.student_input_keys:
+            if key not in self.env.observation_space.spaces:
+                raise KeyError(
+                    f"Student input key '{key}' is not in env.observation_space "
+                    f"(available keys: {list(self.env.observation_space.spaces.keys())}). "
+                    "Make sure the task config exposes this key (e.g. vis_obs=True for image keys)."
+                )
+            space = self.env.observation_space.spaces[key]
+            obs_specs[key] = {"shape": space.shape, "dtype": space.dtype}
         action_shape = (self.num_actions,)
         self.replay_buffer = ExpertReplayBuffer(
-            vis_obs_shape=vis_shape,
+            obs_specs=obs_specs,
             action_shape=action_shape,
             max_size=self._student_cfg.get("max_replay_buffer_size", 500_000),
             device=self.device,
@@ -389,18 +418,22 @@ class TeacherStudentRunner:
 
     @torch.no_grad()
     def _sample_trajectories(self):
-        """Short-horizon parallel rollout with student (vis_obs -> action); collect state_obs and vis_obs for expert labeling.
-        Uses runner.initialize_trajectory() (get_states + compute_observations), then steps_per_epoch steps with auto_reset=True."""
+        """Short-horizon parallel rollout with student (student_input_keys -> action);
+        collect (a) numpy buffers per student-input key for the replay buffer and
+        (b) torch state observations for expert labeling.
+        Uses runner.initialize_trajectory() (get_states + compute_observations),
+        then steps_per_epoch steps with auto_reset=True."""
         obs = self.initialize_trajectory()
-        vis_list, state_list = [], []
+        student_obs_lists = {key: [] for key in self.student_input_keys}
+        state_list = []
 
         for _ in range(self.steps_per_epoch):
-            vis = obs["RGB"]
-            state = obs["privileged_observations"]
-            vis_list.append(vis.cpu().numpy() if vis.is_cuda else vis.numpy())
-            state_list.append(state)
+            for key in self.student_input_keys:
+                t = obs[key]
+                student_obs_lists[key].append(t.detach().cpu().numpy())
+            state_list.append(obs["privileged_observations"])
 
-            student_obs = {"RGB": vis}
+            student_obs = {key: obs[key] for key in self.student_input_keys}
             actions = self.student(student_obs)["mean"]
             obs, rewards, terminated, truncated, _ = self.env.step(actions, auto_reset=True)
             dones = terminated | truncated
@@ -414,9 +447,11 @@ class TeacherStudentRunner:
                 self.episode_reward[done_ids] = 0.0
 
         self.step_count += self.steps_per_epoch * self.num_envs
-        vis_arr = np.concatenate(vis_list, axis=0)
+        student_obs_arr = {
+            key: np.concatenate(lst, axis=0) for key, lst in student_obs_lists.items()
+        }
         state_tensors = {"privileged_observations": torch.cat(state_list, dim=0)}
-        return vis_arr, state_tensors
+        return student_obs_arr, state_tensors
 
     def _set_teacher_checkpoint_config(self, value: str) -> None:
         OmegaConf.set_struct(self.config, False)
@@ -464,7 +499,7 @@ class TeacherStudentRunner:
         for epoch in range(self.max_epochs):
             time_start_epoch = time.time()
             self.time_report.start_timer("rollout")
-            vis_obs_np, state_obs = self._sample_trajectories()
+            student_obs_np, state_obs = self._sample_trajectories()
             self.time_report.end_timer("rollout")
 
             self.time_report.start_timer("expert_correction")
@@ -473,7 +508,7 @@ class TeacherStudentRunner:
                 expert_actions = expert_actions.cpu().numpy()
             self.time_report.end_timer("expert_correction")
 
-            self.replay_buffer.append(vis_obs_np, expert_actions)
+            self.replay_buffer.append(student_obs_np, expert_actions)
 
             if self.lr_schedule == "linear":
                 t = epoch / max(1, self.max_epochs)
@@ -485,8 +520,8 @@ class TeacherStudentRunner:
             if len(self.replay_buffer) >= self.learning_starts:
                 self.time_report.start_timer("supervised_learning")
                 for _ in range(self.num_update_per_epoch):
-                    b_vis, b_act = self.replay_buffer.sample(self.batch_size)
-                    student_out = self.student({"RGB": b_vis})
+                    b_obs, b_act = self.replay_buffer.sample(self.batch_size)
+                    student_out = self.student(b_obs)
                     loss = torch.nn.functional.mse_loss(student_out["mean"], b_act)
                     self.student_optimizer.zero_grad()
                     loss.backward()
@@ -565,7 +600,8 @@ class TeacherStudentRunner:
         episode_reward = torch.zeros(self.num_envs, device=self.device)
         obs, _ = self.env.reset()
         for _ in range(maximum_trajectory_length):
-            actions = self.student({"RGB": obs["RGB"]})["mean"]
+            student_obs = {key: obs[key] for key in self.student_input_keys}
+            actions = self.student(student_obs)["mean"]
             obs, rewards, terminated, truncated, _ = self.env.step(actions, auto_reset=True)
             dones = terminated | truncated
             episode_length += 1
