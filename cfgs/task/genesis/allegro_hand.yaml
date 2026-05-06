@@ -9,6 +9,14 @@ config:
   nominal_env_ids: null
   
   randomize_init: True
+
+  # Goal orientation on reset (when randomize_init): single rotation about world +Y (pitch) or +X (roll),
+  # angle uniform in [angle_deg_min, angle_deg_max]. Cube stays at default orientation; policy infers axis from state.
+  init_goal_rotation:
+    enable: true
+    angle_deg_min: 60.0
+    angle_deg_max: 90.0
+
   sim_options:
     dt: 3e-2
     substeps: 4
