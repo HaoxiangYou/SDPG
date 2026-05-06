@@ -5,6 +5,7 @@ import genesis as gs
 import numpy as np
 import torch
 from genesis.utils.geom import (
+    axis_angle_to_quat,
     inv_quat,
     pos_lookat_up_to_T,
     transform_quat_by_quat,
@@ -35,6 +36,7 @@ class AllegroHand(GenesisEnv):
         vis_options: gs.options.VisOptions | None = None,
         show_viewer: bool = False,
         show_FPS: bool = False,
+        init_goal_rotation: Optional[Dict[str, Any]] = None,
     ) -> None:
         dt = sim_options.dt
         episode_length = int(10.0 / dt)
@@ -103,6 +105,11 @@ class AllegroHand(GenesisEnv):
             vis_options=vis_options,
             show_FPS=show_FPS,
         )
+
+        igr = init_goal_rotation or {}
+        self._init_goal_rotation_enabled = bool(igr.get("enable", True))
+        self._init_goal_angle_min_deg = float(igr.get("angle_deg_min", 60.0))
+        self._init_goal_angle_max_deg = float(igr.get("angle_deg_max", 90.0))
 
     def init_scene(self) -> None:
         """Initialize the scene."""
@@ -395,25 +402,20 @@ class AllegroHand(GenesisEnv):
 
         if self._randomize_init:
             cube_pos = cube_pos + (torch.rand_like(cube_pos) - 0.5) * 0.02
-            # cube_random_angle_1 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
-            # cube_random_quat_1 = axis_angle_to_quat(
-            #     cube_random_angle_1, torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat(len(env_ids), 1)
-            # )
-            # cube_random_angle_2 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
-            # cube_random_quat_2 = axis_angle_to_quat(
-            #     cube_random_angle_2, torch.tensor([0.0, 1.0, 0.0], device=self.device).repeat(len(env_ids), 1)
-            # )
-            # cube_quat = transform_quat_by_quat(cube_random_quat_2, cube_random_quat_1)
-
-            # target_random_angle_1 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
-            # target_random_quat_1 = axis_angle_to_quat(
-            #     target_random_angle_1, torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat((len(env_ids), 1))
-            # )
-            # target_random_angle_2 = (torch.rand(len(env_ids), device=self.device) - 0.5) * np.pi * 2.0
-            # target_random_quat_2 = axis_angle_to_quat(
-            #     target_random_angle_2, torch.tensor([0.0, 1.0, 0.0], device=self.device).repeat((len(env_ids), 1))
-            # )
-            # target_quat = transform_quat_by_quat(target_random_quat_2, target_random_quat_1)
+            if self._init_goal_rotation_enabled:
+                # One world-axis rotation per env: pitch (+Y) or roll (+X), angle uniform in [min, max] degrees.
+                n = env_ids.shape[0]
+                dev = self.device
+                span = max(self._init_goal_angle_max_deg - self._init_goal_angle_min_deg, 0.0)
+                angles_deg = self._init_goal_angle_min_deg + torch.rand(n, device=dev) * span
+                angles = torch.deg2rad(angles_deg)
+                pick_pitch = torch.rand(n, device=dev) >= 0.5
+                x_axis = torch.tensor([1.0, 0.0, 0.0], device=dev).unsqueeze(0).expand(n, 3)
+                y_axis = torch.tensor([0.0, 1.0, 0.0], device=dev).unsqueeze(0).expand(n, 3)
+                axes = torch.where(pick_pitch.unsqueeze(-1), y_axis, x_axis)
+                target_quat = axis_angle_to_quat(angles, axes)
+                self._infos["init_goal_angle_deg_mean"] = float(angles_deg.mean().item())
+                self._infos["init_goal_pitch_frac"] = float(pick_pitch.float().mean().item())
 
             ctrl_range = self._hand_motors_ctrl_upper - self._hand_motors_ctrl_lower
             hand_dof_pos = hand_dof_pos + (torch.rand_like(hand_dof_pos) - 0.5) * ctrl_range * 0.2
