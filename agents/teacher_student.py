@@ -285,6 +285,18 @@ class TeacherStudentRunner:
         if not path.exists():
             raise FileNotFoundError(f"Teacher checkpoint path does not exist: {path}")
         ppo_agent_cfg = self._load_ppo_agent_config()
+        # Apply the same `teacher.overrides` that _run_train_teacher uses, so the
+        # network we instantiate here matches the one that produced the checkpoint
+        # (e.g. mlp.units must agree).
+        overrides = self._teacher_cfg.get("overrides")
+        if overrides is not None:
+            teacher_overrides = OmegaConf.to_container(overrides, resolve=True)
+            if teacher_overrides:
+                OmegaConf.set_struct(ppo_agent_cfg, False)
+                ppo_agent_cfg.config = OmegaConf.merge(
+                    ppo_agent_cfg.config, OmegaConf.create(teacher_overrides)
+                )
+                OmegaConf.set_struct(ppo_agent_cfg, True)
         rl_games_name = ppo_agent_cfg.config.rl_games.config.get("name", "policy")
         if path.is_file():
             ckpt_path = str(path)
