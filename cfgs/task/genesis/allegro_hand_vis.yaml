@@ -1,0 +1,52 @@
+# Vision preset for Allegro hand: same task as genesis/allegro_hand but renders RGB for the actor.
+# Env class name must stay allegro_hand (see envs/genesis_env/allegro_hand.py).
+
+backend: genesis
+
+name: allegro_hand
+
+config:
+  num_envs: ${...num_envs}
+  nominal_env_ids: null
+
+  randomize_init: True
+
+  init_goal_rotation:
+    enable: true
+    angle_deg_min: 60.0
+    angle_deg_max: 90.0
+
+  sim_options:
+    dt: 3e-2
+    substeps: 4
+  viewer_options:
+    max_FPS: 60
+  vis_options:
+    rendered_envs_idx: null
+
+  vis_obs: True
+
+  sensors_args:
+    camera:
+      res: [84, 84]
+      pos: [0.40, 0.05, 0.425]
+      lookat: [0.25, -0.10, 0.275]
+      fov: 80.0
+      lights:
+        pos: [0.0, 0.0, 2.0]
+        intensity: 0.8
+        color: [1.0, 1.0, 1.0]
+        dir: [0.0, 0.0, -1.0]
+        cutoff: 100
+        directional: True
+        castshadow: False
+
+  show_viewer: False
+  show_FPS: False
+
+
+play:
+  num_envs: 64
+  randomize_init: True
+  show_viewer: True
+  show_FPS: True
