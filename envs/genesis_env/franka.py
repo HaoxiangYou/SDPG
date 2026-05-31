@@ -1,3 +1,4 @@
+import os
 import warnings
 from typing import Any, Dict, Optional, Sequence
 
@@ -151,15 +152,33 @@ class Franka(GenesisEnv):
 
         # Pickable cube (matches mjx_single_cube.xml keyframe: half-size
         # 0.02 0.02 0.03, free joint, green, friction 1 .03 .003).
+        # Visual is hidden — the peach mesh below overlays it.
         self._cube = self._scene.add_entity(
             gs.morphs.Box(
                 size=(0.08, 0.08, 0.08),
                 pos=(0.6, 0.0, 0.03),
                 collision=True,
+                visualization=False,
                 batch_fixed_verts=True,
             ),
-            surface=gs.surfaces.Rough(color=(0.0, 1.0, 0.0, 1.0)),
             material=gs.materials.Rigid(friction=1.0),
+        )
+
+        # Visual-only peach mesh teleported onto the cube each step.
+        # Mesh extent in peach.obj is ~5.9 cm; scale up so it roughly
+        # envelopes the 8 cm cube. The diffuse texture is wired in via
+        # the sibling material.mtl exported with the OBJ.
+        self._peach_visual = self._scene.add_entity(
+            gs.morphs.Mesh(
+                file=os.path.join(
+                    os.path.dirname(__file__), "../../assets/peach/peach.obj"
+                ),
+                pos=(0.6, 0.0, 0.03),
+                scale=1.36,
+                collision=False,
+            ),
+            material=gs.materials.Rigid(gravity_compensation=1),
+            surface=gs.surfaces.Rough(),
         )
 
         # Visual-only target cube (matches mjx_single_cube.xml mocap_target).
@@ -319,7 +338,7 @@ class Franka(GenesisEnv):
             )
 
     def build_scene(self) -> None:
-        self._scene.build(n_envs=self._num_envs, env_spacing=(1.0, 1.0))
+        self._scene.build(n_envs=self._num_envs, env_spacing=(1.0/self._num_envs, 1.0/self._num_envs))
         self._arm_ctrl_lower, self._arm_ctrl_upper = self._robot.get_dofs_limit(
             dofs_idx_local=self._arm_dof_idx
         )
@@ -599,6 +618,10 @@ class Franka(GenesisEnv):
         self._cube.set_pos(cube_pos, envs_idx=env_ids, zero_velocity=True)
         self._cube.set_quat(cube_quat, envs_idx=env_ids, zero_velocity=True)
 
+        # Visual peach follows the cube.
+        self._peach_visual.set_pos(cube_pos, envs_idx=env_ids, zero_velocity=True)
+        self._peach_visual.set_quat(cube_quat, envs_idx=env_ids, zero_velocity=True)
+
         # Target visualization.
         if self._target is not None:
             self._target.set_pos(target_pos, envs_idx=env_ids, zero_velocity=True)
@@ -648,6 +671,10 @@ class Franka(GenesisEnv):
         )
 
     def _post_physics_step(self) -> None:
+        # Keep the visual peach overlay aligned with the cube each step.
+        self._peach_visual.set_pos(self._cube.get_pos())
+        self._peach_visual.set_quat(self._cube.get_quat())
+
         if self._debug_viz:
             self._draw_fingertip_debug_spheres()
 
@@ -766,6 +793,9 @@ class Franka(GenesisEnv):
             envs_idx=env_ids,
             dofs_idx_local=self._cube_dof_idx,
         )
+
+        self._peach_visual.set_pos(robot_states["cube_pos"], envs_idx=env_ids)
+        self._peach_visual.set_quat(robot_states["cube_quat"], envs_idx=env_ids)
 
         self._target_pos[env_ids] = robot_states["target_pos"]
         self._target_quat[env_ids] = robot_states["target_quat"]
