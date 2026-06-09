@@ -79,6 +79,7 @@ class ShadowHand(GenesisEnv):
         vis_options: gs.options.VisOptions | None = None,
         show_viewer: bool = False,
         show_FPS: bool = False,
+        init_goal_rotation: Optional[Dict[str, Any]] = None,
     ) -> None:
         dt = sim_options.dt
         # Match IsaacLab ShadowHandEnvCfg.episode_length_s = 10.0.
@@ -169,6 +170,16 @@ class ShadowHand(GenesisEnv):
             show_FPS=show_FPS,
         )
 
+        # Goal-orientation sampling. When enabled, every episode targets a single
+        # achievable rotation (one world axis, bounded angle) that stays fixed for
+        # the episode -- this keeps the reward a smooth function of the trajectory,
+        # which AFRL's first-order gradient estimate relies on. When disabled, the
+        # env falls back to the IsaacLab-style full-SO(3) random target.
+        igr = init_goal_rotation or {}
+        self._init_goal_rotation_enabled = bool(igr.get("enable", True))
+        self._init_goal_angle_min_deg = float(igr.get("angle_deg_min", 60.0))
+        self._init_goal_angle_max_deg = float(igr.get("angle_deg_max", 90.0))
+
     def init_scene(self) -> None:
         """Initialize the scene."""
 
@@ -256,16 +267,17 @@ class ShadowHand(GenesisEnv):
             self._num_envs, self._num_actions, device=self._device
         )
 
-        # Reward / termination scales (mirror ShadowHandEnvCfg full preset).
+        # Reward / termination scales. Smooth quadratic-orientation preset
+        # (mirrors AllegroHand) so the return is differentiable for AFRL:
+        #   reward = -dist - rot_dist^2 - action_penalty + healthy
+        # No success bonus / target resampling -- those discontinuities bias
+        # first-order gradients and let the policy settle on just holding the cube.
         self._vel_obs_scale = 0.2
         self._fall_distance = 0.24
         self._dist_reward_scale = -10.0
         self._rot_reward_scale = 1.0
-        self._rot_eps = 0.1
         self._action_penalty_scale = -0.0002
-        self._reach_goal_bonus = 250.0
-        self._fall_penalty = 0.0
-        self._success_tolerance = 0.1
+        self._healthy_reward = 3.0
 
         if self._vis_obs:
             offset_T = self._sensors_args["camera"].get("offset_T", None)
@@ -281,7 +293,7 @@ class ShadowHand(GenesisEnv):
                     )
                 else:
                     offset_T = np.eye(4)
-            self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.01, collision=False, fixed=True))
+            self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.0001, collision=False, fixed=True))
             self._camera = self._scene.add_sensor(
                 gs.sensors.BatchRendererCameraOptions(
                     res=self._sensors_args["camera"]["res"],
@@ -315,7 +327,7 @@ class ShadowHand(GenesisEnv):
         return transform_quat_by_quat(qy, qx)
 
     def build_scene(self) -> None:
-        self._scene.build(n_envs=self._num_envs, env_spacing=(1.0 / self._num_envs, 1.0/self._num_envs))
+        self._scene.build(n_envs=self._num_envs, env_spacing=(1.0, 1.0))
         self._hand_motors_ctrl_lower, self._hand_motors_ctrl_upper = self._robot.get_dofs_limit(
             dofs_idx_local=self._hand_motors_dof_idx
         )
@@ -412,37 +424,20 @@ class ShadowHand(GenesisEnv):
         goal_dist = torch.norm(cube_pos - self._in_hand_pos, p=2, dim=-1)
         dist_rew = self._dist_reward_scale * goal_dist
 
-        # Orientation term: 1 / (|rot_dist| + eps), matching IsaacLab.
+        # Orientation term: smooth quadratic penalty on the rotation distance,
+        # giving a clean gradient toward the goal everywhere (unlike 1/(d+eps),
+        # which is nearly flat far from the goal).
         quat_diff = transform_quat_by_quat(inv_quat(target_quat), cube_quat)
         rot_dist = 2.0 * torch.asin(torch.clamp(torch.norm(quat_diff[:, 1:4], p=2, dim=-1), max=1.0))
-        rot_rew = self._rot_reward_scale / (torch.abs(rot_dist) + self._rot_eps)
+        rot_rew = -(rot_dist ** 2) * self._rot_reward_scale
 
         # Action penalty.
         action_penalty = self._action_penalty_scale * torch.sum(actions ** 2, dim=-1)
 
-        # Bonus for hitting the orientation target.
-        reach_goal_mask = torch.abs(rot_dist) <= self._success_tolerance
-        reach_goal = reach_goal_mask.float()
-        goal_bonus = reach_goal * self._reach_goal_bonus
-
-        # Penalty when the cube has fallen out of hand. fall_penalty is the
-        # signed amount added to the reward (0 in the Direct-v0 preset).
-        fell = (goal_dist >= self._fall_distance).float()
-        fall_pen = fell * self._fall_penalty
-
-        reward = dist_rew + rot_rew + action_penalty + goal_bonus + fall_pen
-
-        # Resample target on success so the bonus can fire repeatedly within
-        # an episode (mirrors IsaacLab's _reset_target_pose).
-        goal_env_ids = torch.nonzero(reach_goal_mask, as_tuple=False).squeeze(-1)
-        if goal_env_ids.numel() > 0:
-            new_quat = self._sample_target_quat(goal_env_ids.numel())
-            self._target_quat[goal_env_ids] = new_quat
-            self._target.set_quat(new_quat, envs_idx=goal_env_ids, zero_velocity=True)
+        reward = dist_rew + rot_rew + action_penalty + self._healthy_reward
 
         self._infos["angle_diff"] = torch.rad2deg(torch.abs(rot_dist)).mean().item()
         self._infos["goal_dist"] = goal_dist.mean().item()
-        self._infos["reach_goal"] = reach_goal.mean().item()
 
         return reward
 
@@ -466,6 +461,23 @@ class ShadowHand(GenesisEnv):
 
         if self._randomize_init:
             cube_pos = cube_pos + (torch.rand_like(cube_pos) - 0.5) * 0.02
+
+            if self._init_goal_rotation_enabled:
+                # One world-axis rotation per env: pitch (+Y) or roll (+X), angle
+                # uniform in [min, max] degrees. The cube starts at its default
+                # orientation, so this is a single achievable, smooth reorientation.
+                n = env_ids.shape[0]
+                dev = self.device
+                span = max(self._init_goal_angle_max_deg - self._init_goal_angle_min_deg, 0.0)
+                angles_deg = self._init_goal_angle_min_deg + torch.rand(n, device=dev) * span
+                angles = torch.deg2rad(angles_deg)
+                pick_pitch = torch.rand(n, device=dev) >= 0.5
+                x_axis = self._x_unit.unsqueeze(0).expand(n, 3)
+                y_axis = self._y_unit.unsqueeze(0).expand(n, 3)
+                axes = torch.where(pick_pitch.unsqueeze(-1), y_axis, x_axis)
+                target_quat = axis_angle_to_quat(angles, axes)
+                self._infos["init_goal_angle_deg_mean"] = float(angles_deg.mean().item())
+                self._infos["init_goal_pitch_frac"] = float(pick_pitch.float().mean().item())
 
             ctrl_range = self._hand_motors_ctrl_upper - self._hand_motors_ctrl_lower
             hand_dof_pos = hand_dof_pos + (torch.rand_like(hand_dof_pos) - 0.5) * ctrl_range * 0.2
