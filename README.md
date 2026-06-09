@@ -1,14 +1,16 @@
-# ApproximateFoRL
+# SDPG
 
-Official implmentation for Approximate First Order RL.
+Official implementation for **[Efficient On-policy Visual-RL via Stochastic Decoupled Policy Gradient](https://haoxiangyou.github.io/sdpg-website/)**.
+
+🌐 [Project Website](https://haoxiangyou.github.io/sdpg-website/) &nbsp;·&nbsp; 📄 [arXiv](https://arxiv.org/abs/2605.26478)
 
 ## 1. Installation
 
 ### 1.1 Setup
 
 ```bash
-conda create -n AFRL python=3.11
-conda activate AFRL
+conda create -n SDPG python=3.11
+conda activate SDPG
 
 pip install -e ".[dev]"
 
@@ -117,4 +119,16 @@ Coming soon.
 
 ## 7. Citation
 
-Coming soon.
+If you find this work useful, please cite:
+
+```bibtex
+@misc{you2026efficientonpolicyvisualrlstochastic,
+      title={Efficient On-policy Visual-RL via Stochastic Decoupled Policy Gradient}, 
+      author={Haoxiang You and Yilang Liu and Davis Zong and Qian Wang and Teeratham Vitchutripop and Qi Wang and Daniel Rakita and Ian Abraham},
+      year={2026},
+      eprint={2605.26478},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2605.26478}, 
+}
+```

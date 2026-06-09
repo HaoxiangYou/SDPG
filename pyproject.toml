@@ -32,7 +32,7 @@ dynamic = ["version", "readme"]
 dev = ["ruff", "pre-commit"]
 
 [project.urls]
-GitHub = "https://github.com/yourusername/ApproximateFoRL"
+GitHub = "https://github.com/HaoxiangYou/SDPG"
 
 [tool.setuptools.packages.find]
 include = ["approximate_forl*", "envs*", "utils*", "scripts*", "agents*", "models*"]
