@@ -9,7 +9,7 @@ import torch
 class BaseEnv(ABC):
     """Abstract base class for wrapping other environments.
 
-    This class provides a common interface for wrapping different types of physical simulators (e.g., rewarped, mujoco-warp, etc.) with unified and augmented function
+    This class provides a common interface for wrapping different types of physical simulators (e.g., genesis, mujoco-warp, etc.) with unified and augmented function
     """
 
     @abstractmethod
