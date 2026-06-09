@@ -9,6 +9,16 @@ config:
   nominal_env_ids: null
 
   randomize_init: True
+
+  # Goal orientation on reset (when randomize_init): single rotation about world +Y (pitch)
+  # or +X (roll), angle uniform in [angle_deg_min, angle_deg_max]. The cube starts at its
+  # default orientation, giving AFRL a smooth, achievable reorientation target each episode.
+  # Set enable: false to fall back to the IsaacLab-style full-SO(3) random target.
+  init_goal_rotation:
+    enable: true
+    angle_deg_min: 60.0
+    angle_deg_max: 90.0
+
   # IsaacLab ShadowHandEnvCfg uses sim.dt=1/120 with decimation=2, i.e. a
   # 60 Hz policy decision rate over 120 Hz physics. Genesis's `dt` is the
   # outer (policy) step time and `substeps` are physics substeps per step.
