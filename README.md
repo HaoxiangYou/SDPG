@@ -12,8 +12,7 @@
   <img src="media/sdpg_preview.gif" alt="SDPG task suite" width="45%">
 </p>
 
-**SDPG** is a lightweight visual reinforcement learning method that trains diverse visuomotor control policies end-to-end within a few hours on a single NVIDIA RTX 4080 GPU. It estimates policy gradients from random perturbations of trajectory rollouts, requiring orders of magnitude fewer batch-rendered environments and substantially reducing compute and memory overhead. On visual MuJoCo benchmarks, SDPG matches state-based performance while training faster and using less memory than prior end-to-end methods, and transfers to physical hardware.
-
+**SDPG** is a lightweight visual reinforcement learning method that trains diverse visuomotor control policies end-to-end within a few hours on a single NVIDIA RTX 4080 GPU.
 This repository is the official implementation of [*Efficient On-policy Visual-RL via Stochastic Decoupled Policy Gradient*](https://haoxiangyou.github.io/sdpg-website/).
 
 ## 1. Installation
