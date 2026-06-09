@@ -181,7 +181,7 @@ class Walker(GenesisEnv):
 
         if self._vis_obs:
             batch_size, num_stack, img_height, img_width, rgb = self._imgs_buf.shape
-            # NOTE: for AFRL agent, RGB observation and privileged observations may has different shapes
+            # NOTE: for SDPG agent, RGB observation and privileged observations may has different shapes
             # Reshape: (batch, num_stack, H, W, 3) -> (batch, num_stack * 3, H, W)
             observations["RGB"] = self._imgs_buf.permute(0, 1, 4, 2, 3).reshape(
                 batch_size, num_stack * rgb, img_height, img_width

@@ -48,8 +48,8 @@ def _buffer_name(key: str, prefix: str) -> str:
     return prefix + key.replace("/", "_")
 
 
-class AFRLPolicyWrapper(nn.Module):
-    """Wraps AFRL actor + obs normalization for all actor input keys.
+class SDPGPolicyWrapper(nn.Module):
+    """Wraps SDPG actor + obs normalization for all actor input keys.
     Accepts a dict of tensors keyed by actor_input_keys; normalizes each with its obs_rms; returns actor(obs)['mean']."""
 
     def __init__(self, actor, obs_rms, actor_input_keys, mean_bounds=None):
@@ -64,7 +64,7 @@ class AFRLPolicyWrapper(nn.Module):
             else:
                 self.register_buffer(_buffer_name(key, "mean_"), torch.zeros(1))
                 self.register_buffer(_buffer_name(key, "var_"), torch.ones(1))
-        # Action mean bounds (as in afrl.py); clamp then tanh for env.step
+        # Action mean bounds (as in sdpg.py); clamp then tanh for env.step
         if mean_bounds is not None:
             low, high = mean_bounds[0], mean_bounds[1]
             self.register_buffer("mean_bound_low", torch.tensor(float(low), dtype=torch.float32))
@@ -89,11 +89,11 @@ class AFRLPolicyWrapper(nn.Module):
 
 
 def build_config(log_dir: str, checkpoint: str):
-    """Build OmegaConf config for AFRL + Genesis Go2 (eval: train=False, play num_envs)."""
+    """Build OmegaConf config for SDPG + Genesis Go2 (eval: train=False, play num_envs)."""
     # TODO: currently use the cfgs file; may be better directly load the config in the log dir?
     cfgs_path = REPO_ROOT / "cfgs"
     task_cfg = OmegaConf.load(cfgs_path / "task" / "genesis" / "go2.yaml")
-    agent_cfg = OmegaConf.load(cfgs_path / "agent" / "afrl" / "genesis_go2.yaml")
+    agent_cfg = OmegaConf.load(cfgs_path / "agent" / "sdpg" / "genesis_go2.yaml")
 
     task_cfg.config = OmegaConf.merge(task_cfg.config, task_cfg.get("play", {}))
     task_cfg.config.num_envs = num_envs
@@ -118,11 +118,11 @@ def build_config(log_dir: str, checkpoint: str):
 
 
 def export_policy_as_jit(runner, path: str, name: str = "jit_model"):
-    """Export AFRL actor + obs_rms as a TorchScript JIT model. Input is a dict of tensors keyed by actor_input_keys."""
+    """Export SDPG actor + obs_rms as a TorchScript JIT model. Input is a dict of tensors keyed by actor_input_keys."""
     os.makedirs(path, exist_ok=True)
     out_path = os.path.join(path, f"{name}.pt")
 
-    wrapper = AFRLPolicyWrapper(
+    wrapper = SDPGPolicyWrapper(
         runner.actor,
         runner.obs_rms,
         actor_input_keys=runner.actor_input_keys,
@@ -140,8 +140,8 @@ def export_policy_as_jit(runner, path: str, name: str = "jit_model"):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Evaluate AFRL policy on Genesis Go2; export/load JIT model.")
-    parser.add_argument("checkpoint", type=str, help="Path to the AFRL checkpoint (.pt file).")
+    parser = argparse.ArgumentParser(description="Evaluate SDPG policy on Genesis Go2; export/load JIT model.")
+    parser.add_argument("checkpoint", type=str, help="Path to the SDPG checkpoint (.pt file).")
     parser.add_argument(
         "--output_directory",
         type=str,
@@ -163,9 +163,9 @@ def main():
 
     # Build config and create runner (env + models)
     cfg = build_config(log_dir, checkpoint)
-    from agents.afrl import AFRLRunner
+    from agents.sdpg import SDPGRunner
 
-    runner = AFRLRunner(cfg)
+    runner = SDPGRunner(cfg)
     if not os.path.exists(checkpoint):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
     runner.load(checkpoint)

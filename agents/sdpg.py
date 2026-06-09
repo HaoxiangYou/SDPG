@@ -24,7 +24,7 @@ from utils.tensor_utils import (
 )
 
 
-class AFRLRunner:
+class SDPGRunner:
     def __init__(self, config: DictConfig):
         self.config = config
         self.seed = config.seed
@@ -57,7 +57,7 @@ class AFRLRunner:
         wandb_config = config.wandb
         # Keep wandb init simple: if a field is null, don't pass it (wandb will auto-generate).
         wandb_kwargs = {
-            "project": wandb_config.get("project", "afrl"),
+            "project": wandb_config.get("project", "sdpg"),
             "entity": wandb_config.get("entity"),
             "group": wandb_config.get("group"),
             "job_type": wandb_config.get("job_type"),
@@ -1160,4 +1160,4 @@ def make_runner(config: DictConfig):
         config.log_dir = output_dir
         OmegaConf.set_struct(config, True)
 
-    return AFRLRunner(config)
+    return SDPGRunner(config)

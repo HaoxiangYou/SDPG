@@ -9,7 +9,7 @@ from utils.common_utils import TeeStdoutStderr
 
 
 def compute_num_envs(num_base_envs: int, num_action_perturbations: int) -> int:
-    """Compute total number of environments for AFRL.
+    """Compute total number of environments for SDPG.
 
     Formula: num_base_envs * (num_action_perturbations + 1)
     """
@@ -57,8 +57,8 @@ def make_runner(config: DictConfig):
             from agents.rl_games import make_runner
 
             return make_runner(config)
-        case "afrl":
-            from agents.afrl import make_runner
+        case "sdpg":
+            from agents.sdpg import make_runner
 
             return make_runner(config)
         case "drqv2":

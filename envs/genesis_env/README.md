@@ -105,9 +105,9 @@ NaN states are automatically detected and treated as terminations.
 
 ### 1.5 Additional Notes
 
-- **`get_states()` / `set_states()`**: These are the most critical functions to implement correctly. State must include **everything** that affects reward and observation computation — not just robot DOFs (`joint_q`, `joint_qd`), but also commands, targets, progress buffers, and any other internal variables. `set_states(get_states())` must reproduce the exact same state. This is essential for AFRL's auxiliary environment rollouts.
+- **`get_states()` / `set_states()`**: These are the most critical functions to implement correctly. State must include **everything** that affects reward and observation computation — not just robot DOFs (`joint_q`, `joint_qd`), but also commands, targets, progress buffers, and any other internal variables. `set_states(get_states())` must reproduce the exact same state. This is essential for SDPG's auxiliary environment rollouts.
 
-- **Action range**: AFRL outputs actions in **(-1, 1)** . Scale them to your actuator range inside `_set_actions()`.
+- **Action range**: SDPG outputs actions in **(-1, 1)** . Scale them to your actuator range inside `_set_actions()`.
 
 - **`compute_observations()`**: Called independently at each short-horizon rollout. It must be **deterministic** given the current state — calling it twice without an intervening `set_states()` or `step()` should return identical values. Be careful with history-dependent observations (e.g., stacked frames, velocity filters): any such history must be part of the state so it is properly saved/restored.
 
@@ -122,9 +122,9 @@ Standalone scripts under `envs/genesis_env/scripts/` for debugging environments:
 | `test_genesis_env.py` | Verify `get_states()`/`set_states()` consistency and action determinism across grouped envs. Change `env_name` at the top to target your env. |
 | `adjust_render.py` | Tune camera settings (`pos`, `lookat`, `fov`, lighting). Pass `--traj_path path/to/trajectory.pt` to replay a saved trajectory under the current camera config. |
 
-## 2. Tips for tuning AFRL agents
+## 2. Tips for tuning SDPG agents
 
-- Start with **state-based** observations to tune reward shaping, action scaling, and AFRL hyperparameters.
+- Start with **state-based** observations to tune reward shaping, action scaling, and SDPG hyperparameters.
 - Once state-based training works well, switching to **vision-based** is usually straightforward — add a visual encoder and increase the number of epochs.
 - To quickly sanity-check a new environment (reward scale, action range, termination logic), run a PPO baseline with `rl_games` (requires `externals/rl_games`).
 - In our experience, `horizon_length` and the **exploration strategy** are the most sensitive hyperparameters. For exploration, start with `fixed_std: true` (constant noise via `log_std_init`) to establish a baseline. Then try adaptive std (`fixed_std: false`). If `policy_std` decays too quickly, enable entropy regularization in the agent config. A good default is `state_dependent_std: false`, `actor_regularization: true`, and `soft_critic: false`.

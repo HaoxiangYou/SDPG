@@ -1,4 +1,4 @@
-name: afrl
+name: sdpg
 
 config:
 
@@ -6,18 +6,21 @@ config:
     actor:
       # List of input sources, each with name, encoder, and RMS normalization flag
       inputs:
-        - name: privileged_observations
-          encoder: null  # null = pass-through (no encoding)
-          apply_rms: true
+        - name: RGB
+          encoder:
+            type: drqv2
+            network:
+              output_dim: 256
+          apply_rms: false
       
       # Policy head processes concatenated encoded features
       policy_head:
         type: mlp
         network:
-          units: [512, 256, 128]
+          units: [256, 128]
           activation: elu
-        fixed_std: false
-        state_dependent_std: false
+        # fixed_std true = constant log_std (use log_std_init); false = learn log_std
+        fixed_std: False
         log_std_init: 0.0
     
     critic:
@@ -30,7 +33,7 @@ config:
       value_head:
         type: mlp
         network:
-          units: [512, 256, 128]
+          units: [128, 128]
           activation: elu
 
   # Number of base environments for rollout
@@ -42,8 +45,8 @@ config:
   # Total number of environments = num_base_envs  * ( num_action_perturbations + 1 )
   num_envs: ${compute_num_envs:${.num_base_envs},${.num_action_perturbations}}
 
-  max_epochs: 5000
-  horizon_length: 32
+  max_epochs: 200000
+  horizon_length: 16
   # Discount factor
   gamma: 0.99
   # TD(lambda)
@@ -56,14 +59,26 @@ config:
   reward_scale: 1.0
   target_critic_alpha: 0.2
 
-  actor_lr:  0.002
-  critic_lr: 0.0005
+  actor_lr:  2e-3
+  critic_lr: 5e-4
+
+  bounds:
+    mean_bounds: [-2, 2]
+    log_std_bounds: [-2.2, 0]
+  
+  entropy_parameters:
+    initial_temperature: 1e-2
+    actor_regularization: True
+    soft_critic: False
+    temperature_auto_tune: False
+    target_std: 0.15
+    temperature_lr: 1e-3
 
   # Learning rate schedules
   actor_lr_schedule:
     name: cosine  # Options: null, linear, cosine (cosine includes warmup)
     # CosineAnnealingLR with warmup parameters
-    T_max: 5000
+    T_max: 200000
     eta_min: 1e-5
     warmup_epochs: 100  # Number of epochs for warmup (linear increase from warmup_start_lr to actor_lr)
     warmup_start_lr: 0  # Starting learning rate for warmup (default: 0.0)
@@ -72,18 +87,6 @@ config:
     name: linear  # Options: null, linear, cosine
     start_factor: 1.0
     end_factor: 0.1
-
-  bounds:
-    mean_bounds: [-2, 2]
-    log_std_bounds: [-5, 2]
-
-  # entropy_parameters:
-  #   initial_temperature: 1e-2
-  #   actor_regularization: false
-  #   soft_critic: false
-  #   temperature_auto_tune: false
-  #   target_std: 0.15
-  #   temperature_lr: 1e-3
   
   # batch size for training the critic
   mini_batch_size: 4096

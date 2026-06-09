@@ -51,18 +51,18 @@ Vendored third-party packages (e.g., `rl_games`, `drqv2`) are included under `ex
 
 ### 2.1 Quick Start
 
-Training is launched via Hydra. Override `task` and `agent` to select the environment and algorithm. AFRL configs are provided for both state-based and vision-based observations.
+Training is launched via Hydra. Override `task` and `agent` to select the environment and algorithm. SDPG configs are provided for both state-based and vision-based observations.
 
 State-based:
 
 ```bash
-python scripts/run.py task=genesis/hopper agent=afrl/genesis_hopper
+python scripts/run.py task=genesis/hopper agent=sdpg/genesis_hopper
 ```
 
 Vision-based (override `vis_obs=True` so the env generates images each step, and use the `_vis` agent config):
 
 ```bash
-python scripts/run.py task=genesis/hopper task.config.vis_obs=True agent=afrl/genesis_hopper_vis
+python scripts/run.py task=genesis/hopper task.config.vis_obs=True agent=sdpg/genesis_hopper_vis
 ```
 
 Logs are written to `logs/<backend>/<task>/<agent>/train/<timestamp>/`.
@@ -75,7 +75,7 @@ To open the Genesis viewer during training, add `task.config.show_viewer=True`.
 
 By default the viewer renders all environments, which can slow down training. Limit it with `task.config.vis_options.rendered_envs_idx='[id_1, id_2, ...]'`.
 
-Environments are laid out in a grid separated by `env_spacing` (set in `build_scene()`), with `id=0` at the far corner. For AFRL the total count is `num_base_envs * (num_action_perturbations + 1)` — e.g., 64 * 64 = 4096 environments, with the grid center around `id=2048`.
+Environments are laid out in a grid separated by `env_spacing` (set in `build_scene()`), with `id=0` at the far corner. For SDPG the total count is `num_base_envs * (num_action_perturbations + 1)` — e.g., 64 * 64 = 4096 environments, with the grid center around `id=2048`.
 
 </details>
 
@@ -84,7 +84,7 @@ Environments are laid out in a grid separated by `env_spacing` (set in `build_sc
 Set `train=False` and point to a checkpoint:
 
 ```bash
-python scripts/run.py task=genesis/hopper agent=afrl/genesis_hopper train=False checkpoint=<path_to_checkpoint>
+python scripts/run.py task=genesis/hopper agent=sdpg/genesis_hopper train=False checkpoint=<path_to_checkpoint>
 ```
 
 Checkpoints are saved at `logs/<backend>/<task>/<agent>/train/<timestamp>/training_logs/nn/<name>.pt`.
@@ -92,7 +92,7 @@ Checkpoints are saved at `logs/<backend>/<task>/<agent>/train/<timestamp>/traini
 Use the same `task` and `agent` configs as training. For example, to evaluate a vision-based policy:
 
 ```bash
-python scripts/run.py task=genesis/hopper task.config.vis_obs=True agent=afrl/genesis_hopper_vis train=False checkpoint=<path_to_checkpoint>
+python scripts/run.py task=genesis/hopper task.config.vis_obs=True agent=sdpg/genesis_hopper_vis train=False checkpoint=<path_to_checkpoint>
 ```
 
 Control the number of evaluation environments with `task.play.num_envs=N` (more environments may slow down the visualizer and requires more GPU memories).

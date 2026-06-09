@@ -131,7 +131,7 @@ class TeacherStudentRunner:
 
     def _ensure_env_and_models(self, require_teacher=True):
         """Create env (vis_obs=True) and models. If require_teacher=False (e.g. play mode), only load student. Idempotent when require_teacher=True.
-        num_envs follows config (in play mode run.py overwrites agent.config.num_envs from task.play.num_envs, like rl_games/afrl)."""
+        num_envs follows config (in play mode run.py overwrites agent.config.num_envs from task.play.num_envs, like rl_games/sdpg)."""
         if require_teacher and self._env_and_models_initialized:
             return
         OmegaConf.set_struct(self.config, False)
@@ -312,7 +312,7 @@ class TeacherStudentRunner:
         }
         config = {
             "env_info": env_info,
-            "env_name": "afrl_env",
+            "env_name": "sdpg_env",
             "num_actors": self.num_envs,
             "normalize_input": rl_games_cfg.get("config", {}).get("normalize_input", True),
             "normalize_value": rl_games_cfg.get("config", {}).get("normalize_value", True),
@@ -609,7 +609,7 @@ class TeacherStudentRunner:
     def evaluate_policy(self, maximum_trajectory_length=None, save_trajectory=True):
         """Eval the student policy. If save_trajectory=True, dumps per-step env
         states (from env.get_states()) to {log_dir}/eval/trajectory.pt as a dict
-        of tensors with shape (num_envs, T+1, ...). Mirrors agents/afrl.py."""
+        of tensors with shape (num_envs, T+1, ...). Mirrors agents/sdpg.py."""
         episode_length = torch.zeros(self.num_envs, device=self.device)
         episode_length_meter = AverageMeter(1, 100).to(self.device)
         episode_reward = torch.zeros(self.num_envs, device=self.device)

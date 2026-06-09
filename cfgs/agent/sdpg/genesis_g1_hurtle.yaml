@@ -1,4 +1,4 @@
-name: afrl
+name: sdpg
 
 config:
 
@@ -12,9 +12,12 @@ config:
               units: [256]
               activation: elu
           apply_rms: true
-        - name: ego_centric_camera_observation
-          encoder:
-            type: drqv2
+        - name: height_field
+          encoder: 
+            type: mlp
+            network:
+              units: [128, 256]
+              activation: elu
           apply_rms: false
       
       policy_head:
@@ -64,7 +67,7 @@ config:
   reward_scale: 1.0
   target_critic_alpha: 0.2
 
-  actor_lr:  1e-3
+  actor_lr:  2e-3
   critic_lr: 5e-4
   
   actor_lr_schedule:

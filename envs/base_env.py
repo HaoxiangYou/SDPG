@@ -164,7 +164,7 @@ class BaseEnv(ABC):
     @abstractmethod
     def nominal_env_ids(self) -> torch.Tensor:
         """Get the nominal environment indices.
-        Used for AFRL agent.
+        Used for SDPG agent.
 
         Returns:
             The nominal environment indices.
@@ -174,7 +174,7 @@ class BaseEnv(ABC):
     @abstractmethod
     def num_nominal_envs(self) -> int:
         """Get the number of nominal environments.
-        Used for AFRL agent, for general RL algorithms, all environments are nominal environments.
+        Used for SDPG agent, for general RL algorithms, all environments are nominal environments.
 
         Returns:
             The number of nominal environments.

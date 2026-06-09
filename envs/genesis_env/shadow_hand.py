@@ -173,7 +173,7 @@ class ShadowHand(GenesisEnv):
         # Goal-orientation sampling. When enabled, every episode targets a single
         # achievable rotation (one world axis, bounded angle) that stays fixed for
         # the episode -- this keeps the reward a smooth function of the trajectory,
-        # which AFRL's first-order gradient estimate relies on. When disabled, the
+        # which SDPG's first-order gradient estimate relies on. When disabled, the
         # env falls back to the IsaacLab-style full-SO(3) random target.
         igr = init_goal_rotation or {}
         self._init_goal_rotation_enabled = bool(igr.get("enable", True))
@@ -268,7 +268,7 @@ class ShadowHand(GenesisEnv):
         )
 
         # Reward / termination scales. Smooth quadratic-orientation preset
-        # (mirrors AllegroHand) so the return is differentiable for AFRL:
+        # (mirrors AllegroHand) so the return is differentiable for SDPG:
         #   reward = -dist - rot_dist^2 - action_penalty + healthy
         # No success bonus / target resampling -- those discontinuities bias
         # first-order gradients and let the policy settle on just holding the cube.
