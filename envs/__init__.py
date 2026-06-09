@@ -21,7 +21,7 @@ def __getattr__(name: str) -> ModuleType:
     if name in _importing:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-    if name in ("rewarped_env", "genesis_env"):
+    if name in ("genesis_env",):
         _importing.add(name)
         try:
             # Use importlib to import the submodule directly
