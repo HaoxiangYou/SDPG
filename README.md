@@ -1,8 +1,20 @@
-# SDPG
+<p align="center">
+  <img src="media/title.svg" alt="SDPG — Efficient On-policy Visual-RL via Stochastic Decoupled Policy Gradient" width="85%">
+</p>
 
-Official implementation for **[Efficient On-policy Visual-RL via Stochastic Decoupled Policy Gradient](https://haoxiangyou.github.io/sdpg-website/)**.
+<p align="center">
+  🌐 <a href="https://haoxiangyou.github.io/sdpg-website/">Project Website</a>
+  &nbsp;·&nbsp;
+  📄 <a href="https://arxiv.org/abs/2605.26478">arXiv</a>
+</p>
 
-🌐 [Project Website](https://haoxiangyou.github.io/sdpg-website/) &nbsp;·&nbsp; 📄 [arXiv](https://arxiv.org/abs/2605.26478)
+<p align="center">
+  <img src="media/sdpg_preview.gif" alt="SDPG task suite" width="45%">
+</p>
+
+**SDPG** is a lightweight visual reinforcement learning method that trains diverse visuomotor control policies end-to-end within a few hours on a single NVIDIA RTX 4080 GPU. It estimates policy gradients from random perturbations of trajectory rollouts, requiring orders of magnitude fewer batch-rendered environments and substantially reducing compute and memory overhead. On visual MuJoCo benchmarks, SDPG matches state-based performance while training faster and using less memory than prior end-to-end methods, and transfers to physical hardware.
+
+This repository is the official implementation of [*Efficient On-policy Visual-RL via Stochastic Decoupled Policy Gradient*](https://haoxiangyou.github.io/sdpg-website/).
 
 ## 1. Installation
 
