@@ -1,5 +1,5 @@
 # Teacher-student DAgger for Genesis Humanoid (vis_obs required)
-# Teacher: PPO only (trained via agents/rl_games.py). Student: same network init as AFRL (models.actor from config).
+# Teacher: PPO only (trained via agents/rl_games.py). Student: same network init as SDPG (models.actor from config).
 # Override task.config.vis_obs=true or use a task that enables RGB.
 name: teacher_student
 

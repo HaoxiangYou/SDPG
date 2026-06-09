@@ -11,7 +11,7 @@
     "--it", // Enable interactive mode
     "--network=host",
     "--volume=/tmp/.X11-unix/:/tmp/.X11-unix/", // For GUI display
-    "--runtime=nvidia", // For CUDA/GPU support (for ApproximateFoRL training)
+    "--runtime=nvidia", // For CUDA/GPU support (for SDPG training)
   ],
   "remoteEnv": {
     "DISPLAY": "${localEnv:DISPLAY}"

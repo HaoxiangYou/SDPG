@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 150" width="900" height="150" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2563EB"/>
+      <stop offset="50%" stop-color="#0891B2"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+  </defs>
+  <text x="450" y="50" text-anchor="middle" font-size="31" font-weight="800" fill="url(#g)">
+    Efficient On-policy Visual-RL via
+  </text>
+  <text x="450" y="92" text-anchor="middle" font-size="31" font-weight="800" fill="url(#g)">
+    Stochastic Decoupled Policy Gradient
+  </text>
+  <rect x="120" y="116" width="660" height="6" rx="3" fill="url(#g)"/>
+</svg>

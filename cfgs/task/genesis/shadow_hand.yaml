@@ -4,7 +4,7 @@ name: shadow_hand
 
 config:
   num_envs: ${...num_envs}
-  # which envs are treated as the nominal environments (for AFRL agent),
+  # which envs are treated as the nominal environments (for SDPG agent),
   # if None, all envs are treated as nominal environments
   nominal_env_ids: null
 
@@ -12,7 +12,7 @@ config:
 
   # Goal orientation on reset (when randomize_init): single rotation about world +Y (pitch)
   # or +X (roll), angle uniform in [angle_deg_min, angle_deg_max]. The cube starts at its
-  # default orientation, giving AFRL a smooth, achievable reorientation target each episode.
+  # default orientation, giving SDPG a smooth, achievable reorientation target each episode.
   # Set enable: false to fall back to the IsaacLab-style full-SO(3) random target.
   init_goal_rotation:
     enable: true

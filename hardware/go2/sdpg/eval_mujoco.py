@@ -1,6 +1,6 @@
 """
-AFRL MuJoCo evaluation for Go2: load JIT policy, run with keyboard commands.
-Observation is a dict (e.g. {"observations": ...}) to match hardware/go2/afrl/eval_genesis.py.
+SDPG MuJoCo evaluation for Go2: load JIT policy, run with keyboard commands.
+Observation is a dict (e.g. {"observations": ...}) to match hardware/go2/sdpg/eval_genesis.py.
 Reuses keyboard_reader and MuJoCo/obs constants from hardware/go2/rsl/eval_mujoco.py.
 """
 import os
@@ -59,12 +59,12 @@ JOINT_LIMITS_HIGH = np.array(
     dtype=np.float32,
 )
 
-# AFRL Go2 actor input key (consistent with eval_genesis / genesis_go2.yaml)
+# SDPG Go2 actor input key (consistent with eval_genesis / genesis_go2.yaml)
 OBS_KEY = "observations"
 
 
-class AFRLController:
-    """AFRL controller for Go2. Obs is a dict keyed by actor input key(s), matching eval_genesis."""
+class SDPGController:
+    """SDPG controller for Go2. Obs is a dict keyed by actor input key(s), matching eval_genesis."""
 
     def __init__(
         self,
@@ -144,7 +144,7 @@ class AFRLController:
 def main():
     import argparse
     parser = argparse.ArgumentParser(
-        description="Evaluate AFRL JIT policy on MuJoCo Go2 with keyboard."
+        description="Evaluate SDPG JIT policy on MuJoCo Go2 with keyboard."
     )
     parser.add_argument(
         "jit_model",
@@ -175,7 +175,7 @@ def main():
     policy.to(device=args.device)
 
     keyboard = KeyboardController(vel_scale_x=1.0, vel_scale_y=1.0, vel_scale_rot=1.0)
-    controller = AFRLController(
+    controller = SDPGController(
         policy=policy,
         commands=np.zeros(3, dtype=np.float32),
         obs_key=OBS_KEY,

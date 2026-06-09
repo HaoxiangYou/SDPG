@@ -412,7 +412,7 @@ class DrQv2Workspace:
         self.episode_length_meter = AverageMeter(1, 100).to(self.device)
 
     def _init_wandb(self, config: DictConfig) -> bool:
-        """Init Weights & Biases if config.wandb.enable is True (same pattern as agents/afrl.py)."""
+        """Init Weights & Biases if config.wandb.enable is True (same pattern as agents/sdpg.py)."""
         if not getattr(config, "wandb", None) or not config.wandb.get("enable", False):
             return False
         w = config.wandb
@@ -464,7 +464,7 @@ class DrQv2Workspace:
         infos: dict | None = None,
         **extra_metrics,
     ):
-        """Write training statistics to TensorBoard and wandb (same pattern as afrl.write_stats).
+        """Write training statistics to TensorBoard and wandb (same pattern as sdpg.write_stats).
         Main metrics use iter/step/time axes; infos use 'info/' prefix and iter as x-axis."""
         metrics = dict(extra_metrics)
         if policy_reward is not None:
@@ -502,7 +502,7 @@ class DrQv2Workspace:
                 wandb_metrics[f"info/{key}"] = value
             wandb.log(wandb_metrics, step=iter)
 
-        # Print key stats to terminal (similar to afrl)
+        # Print key stats to terminal (similar to sdpg)
         parts = [f"iter {iter}", f"step {step}"]
         if policy_reward is not None:
             parts.append(f"ep reward {policy_reward:.2f}")
@@ -721,7 +721,7 @@ class DrQv2Workspace:
                         "episode": self.global_episode,
                     },
                 )
-                # Save best policy (same pattern as afrl)
+                # Save best policy (same pattern as sdpg)
                 if policy_reward is not None and policy_reward > best_policy_reward:
                     best_policy_reward = policy_reward
                     if getattr(self.cfg, "save_snapshot", False):

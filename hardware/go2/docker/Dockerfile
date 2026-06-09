@@ -154,7 +154,7 @@ RUN echo "source /opt/ros/humble/setup.zsh" >> /home/${USERNAME}/.zshrc && \
     sed -i "s/enp2s0/eth0/g" /home/${USERNAME}/unitree_ros2/cyclonedds_ws/src/cyclonedds.xml
 
 RUN echo "source /opt/ros/humble/setup.zsh" >> /home/${USERNAME}/.zshrc
-# Install ApproximateFoRL dependencies
+# Install SDPG dependencies
 RUN pip install \
     hydra-core \
     hydra-colorlog \
@@ -200,6 +200,6 @@ RUN apt-get update && \
 
 USER ${USERNAME}
 
-# Note: ApproximateFoRL and Genesis will be installed from the mounted workspace
+# Note: SDPG and Genesis will be installed from the mounted workspace
 # The workspace is mounted via devcontainer.json, so dependencies will be installed
 # when you run `pip install .` inside the container

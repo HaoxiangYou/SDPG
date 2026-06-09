@@ -218,7 +218,7 @@ class RlGamesRunnerWrapper:
 
     @torch.no_grad()
     def _run_play(self, args: Dict[str, Any]):
-        """Evaluate the policy and save trajectory (mirrors AFRLRunner.evaluate_policy)."""
+        """Evaluate the policy and save trajectory (mirrors SDPGRunner.evaluate_policy)."""
         print("Started to play")
         player = self._runner.create_player()
         _restore(player, args)
@@ -287,12 +287,12 @@ def make_runner(
     ), "Both actor and critic current only support one input key"
 
     vecenv.register(
-        "AFRLEnv",
+        "SDPGEnv",
         lambda config_name, num_actors, **kwargs: RlGamesGpuEnv(
             config_name, num_actors, input_keys=input_keys, **kwargs
         ),
     )
-    env_configurations.register("afrl_env", {"env_creator": lambda **kwargs: env, "vecenv_type": "AFRLEnv"})
+    env_configurations.register("sdpg_env", {"env_creator": lambda **kwargs: env, "vecenv_type": "SDPGEnv"})
 
     agent_config = OmegaConf.to_container(config.agent.config.rl_games, resolve=True)
     # Overwrite attributes based on parents config.

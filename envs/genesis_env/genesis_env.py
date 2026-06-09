@@ -58,7 +58,7 @@ class GenesisEnv(BaseEnv):
         )
 
         # Check if the number of environments is fully divisible by the number of nominal environments
-        # Nominal envs and auxiliary envs are for AFRL agent.
+        # Nominal envs and auxiliary envs are for SDPG agent.
         # For general RL algorithms, all environments are nominal environments.
         num_nominal_envs = self._nominal_env_ids.shape[0]
         if num_envs % num_nominal_envs != 0:
@@ -307,7 +307,7 @@ class GenesisEnv(BaseEnv):
     def _post_physics_step(self) -> None:
         """Do post physics step operations,
         E.g., set the goal condition command.
-        For AFRL agent, it may need to reset the auxiliary environments to the same command as the nominal environment.
+        For SDPG agent, it may need to reset the auxiliary environments to the same command as the nominal environment.
         """
 
     @property

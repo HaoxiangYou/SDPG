@@ -1,4 +1,4 @@
-name: afrl
+name: sdpg
 
 config:
 
@@ -6,9 +6,17 @@ config:
     actor:
       # List of input sources, each with name, encoder, and RMS normalization flag
       inputs:
-        - name: privileged_observations
-          encoder: null  # null = pass-through (no encoding)
-          apply_rms: true
+        - name: observations
+          encoder: 
+            type: mlp  
+            network:
+              units: [256, 128]
+              activation: elu
+          apply_rms: false
+        - name: ego_centric_camera_observation
+          encoder:
+            type: depth
+          apply_rms: false
       
       # Policy head processes concatenated encoded features
       policy_head:
@@ -16,15 +24,22 @@ config:
         network:
           units: [512, 256, 128]
           activation: elu
-        fixed_std: false
-        state_dependent_std: false
+        # fixed_std true = constant log_std (use log_std_init); false = learn log_std
+        fixed_std: true
         log_std_init: 0.0
     
     critic:
       # List of input sources, each with name, encoder, and RMS normalization flag
       inputs:
         - name: privileged_observations
-          encoder: null  # null = pass-through (no encoding)
+          encoder: null
+          apply_rms: false
+        - name: height_field
+          encoder: 
+            type: mlp
+            network:
+              units: [128, 256]
+              activation: elu
           apply_rms: true
       # Value head processes concatenated encoded features to output scalar value
       value_head:
@@ -42,52 +57,44 @@ config:
   # Total number of environments = num_base_envs  * ( num_action_perturbations + 1 )
   num_envs: ${compute_num_envs:${.num_base_envs},${.num_action_perturbations}}
 
-  max_epochs: 20000
-  horizon_length: 32
+  max_epochs: 50000
+  horizon_length: 24
   # Discount factor
   gamma: 0.99
   # TD(lambda)
   lam: 0.95
   # Whether to use causality to compute the return
-  causality: True
+  causality: False
   # Whether to use eligibility traces to compute the return
-  eligibility_trace: True
+  eligibility_trace: False
   
-  reward_scale: 1.0
-  target_critic_alpha: 0.2
+  reward_scale: 10.0
+  target_critic_alpha: 0.0
 
-  actor_lr:  2e-3
-  critic_lr: 2e-3
+  actor_lr:  0.0005
+  critic_lr: 0.0005
 
   # Learning rate schedules
   actor_lr_schedule:
-    name: cosine  # Options: null, linear, cosine (cosine includes warmup)
+    name: null  # Options: null, linear, cosine (cosine includes warmup)
     # CosineAnnealingLR with warmup parameters
-    T_max: 20000
-    eta_min: 1e-5
-    warmup_epochs: 100  # Number of epochs for warmup (linear increase from warmup_start_lr to actor_lr)
-    warmup_start_lr: 0  # Starting learning rate for warmup (default: 0.0)
+    # T_max: 4000
+    # eta_min: 1e-5
+    # warmup_epochs: 100  # Number of epochs for warmup (linear increase from warmup_start_lr to actor_lr)
+    # warmup_start_lr: 0  # Starting learning rate for warmup (default: 0.0)
   
   critic_lr_schedule:
     name: linear  # Options: null, linear, cosine
     start_factor: 1.0
     end_factor: 0.1
-
-  bounds:
-    mean_bounds: [-2, 2]
-    log_std_bounds: [-5, 2]
-
-  # entropy_parameters:
-  #   initial_temperature: 1e-2
-  #   actor_regularization: false
-  #   soft_critic: false
-  #   temperature_auto_tune: false
-  #   target_std: 0.15
-  #   temperature_lr: 1e-3
+  
+  # bounds:
+  #   mean_bounds: [-2, 2]
+  #   log_std_bounds: [-5, 2]
   
   # batch size for training the critic
   mini_batch_size: 4096
-  critic_iterations: 2
+  critic_iterations: 5
 
   truncated_grads: True
   grad_norm: 1.0
@@ -96,4 +103,4 @@ config:
   ret_rms: False
   normalize_delta_J: True
 
-  save_frequency: 400
+  save_frequency: 1000

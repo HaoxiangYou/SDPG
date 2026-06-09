@@ -51,7 +51,7 @@ config:
 
     config:
       name: franka_lift
-      env_name: afrl_env
+      env_name: sdpg_env
       multi_gpu: False
       ppo: True
       mixed_precision: False
