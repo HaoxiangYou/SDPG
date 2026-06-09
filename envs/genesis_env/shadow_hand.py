@@ -327,7 +327,7 @@ class ShadowHand(GenesisEnv):
         return transform_quat_by_quat(qy, qx)
 
     def build_scene(self) -> None:
-        self._scene.build(n_envs=self._num_envs, env_spacing=(1.0 / self._num_envs, 1.0/self._num_envs))
+        self._scene.build(n_envs=self._num_envs, env_spacing=(1.0, 1.0))
         self._hand_motors_ctrl_lower, self._hand_motors_ctrl_upper = self._robot.get_dofs_limit(
             dofs_idx_local=self._hand_motors_dof_idx
         )

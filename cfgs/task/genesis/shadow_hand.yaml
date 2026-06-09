@@ -28,7 +28,7 @@ config:
   viewer_options:
     max_FPS: 60
   vis_options:
-    rendered_envs_idx: [0]
+    rendered_envs_idx: null
 
   vis_obs: False
   sensors_args:
