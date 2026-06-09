@@ -293,7 +293,7 @@ class ShadowHand(GenesisEnv):
                     )
                 else:
                     offset_T = np.eye(4)
-            self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.01, collision=False, fixed=True))
+            self._camera_mount = self._scene.add_entity(gs.morphs.Sphere(radius=0.0001, collision=False, fixed=True))
             self._camera = self._scene.add_sensor(
                 gs.sensors.BatchRendererCameraOptions(
                     res=self._sensors_args["camera"]["res"],
