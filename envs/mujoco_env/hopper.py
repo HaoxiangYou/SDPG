@@ -22,6 +22,7 @@ class Hopper(MujocoEnv):
         randomize_init: bool = True,
         nominal_env_ids: Optional[Sequence[int]] = None,
         device: torch.device | None = None,
+        sensors_args: Dict[str, Any] | None = None,
         sim_options: Dict[str, Any] | None = None,
         show_viewer: bool = False,
         show_FPS: bool = False,
@@ -29,14 +30,38 @@ class Hopper(MujocoEnv):
         episode_length = 1000
         early_termination = True
 
-        if vis_obs:
-            raise NotImplementedError("Visual observations for the mujoco backend are not supported yet.")
-        self._vis_obs = vis_obs
-        self._observation_space = spaces.Dict(
-            {
-                "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(11,)),
+        if sensors_args is None:
+            sensors_args = {
+                "camera": {
+                    "res": [256, 256],
+                    "gpu_id": 0,
+                    "use_rasterizer": False,
+                }
             }
-        )
+        self._vis_obs = vis_obs
+        if vis_obs:
+            self._num_image_stack = 3
+            self._observation_space = spaces.Dict(
+                {
+                    "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(11,)),
+                    "RGB": spaces.Box(
+                        low=0,
+                        high=255,
+                        dtype=np.uint8,
+                        shape=(
+                            self._num_image_stack * 3,
+                            sensors_args["camera"]["res"][0],
+                            sensors_args["camera"]["res"][1],
+                        ),
+                    ),
+                }
+            )
+        else:
+            self._observation_space = spaces.Dict(
+                {
+                    "privileged_observations": spaces.Box(low=-np.inf, high=np.inf, shape=(11,)),
+                }
+            )
 
         super().__init__(
             num_envs=num_envs,
@@ -47,6 +72,7 @@ class Hopper(MujocoEnv):
             randomize_init=randomize_init,
             nominal_env_ids=nominal_env_ids,
             device=device,
+            sensors_args=sensors_args,
             sim_options=sim_options,
             show_viewer=show_viewer,
             show_FPS=show_FPS,
@@ -71,6 +97,30 @@ class Hopper(MujocoEnv):
         self._angle_reward_scale = 1.0
         self._action_penalty = -1e-1
 
+        if self._vis_obs:
+            from envs.mujoco_env.batch_renderer import MadronaBatchRenderer
+
+            camera_args = self._sensors_args["camera"]
+            # Render only the nominal environments (auxiliary envs never need
+            # visual observations), matching the genesis env_idx optimization.
+            self._batch_renderer = MadronaBatchRenderer(
+                mj_model=self._sim.mj_model,
+                env_ids=self._nominal_env_ids.cpu().tolist(),
+                width=camera_args["res"][0],
+                height=camera_args["res"][1],
+                gpu_id=camera_args.get("gpu_id", 0),
+                use_rasterizer=camera_args.get("use_rasterizer", False),
+            )
+            self._imgs_buf = torch.zeros(
+                self.nominal_env_ids.shape[0],
+                self._num_image_stack,
+                camera_args["res"][0],
+                camera_args["res"][1],
+                3,
+                device=self._device,
+                dtype=torch.uint8,
+            )
+
     def compute_observations(self, states: Dict[str, Any]) -> Dict[str, Any]:
         observations = {}
         robot_states = states["robot_states"]
@@ -84,6 +134,14 @@ class Hopper(MujocoEnv):
             dim=-1,
         )
         observations["privileged_observations"] = privileged_observations.to(torch.float32)
+
+        if self._vis_obs:
+            batch_size, num_stack, img_height, img_width, rgb = self._imgs_buf.shape
+            # NOTE: for SDPG agent, RGB observation and privileged observations may has different shapes
+            # Reshape: (batch, num_stack, H, W, 3) -> (batch, num_stack * 3, H, W)
+            observations["RGB"] = self._imgs_buf.permute(0, 1, 4, 2, 3).reshape(
+                batch_size, num_stack * rgb, img_height, img_width
+            )
 
         return observations
 
@@ -138,8 +196,41 @@ class Hopper(MujocoEnv):
 
         self._set_dof_state(env_ids, dof_pos, dof_vel)
 
+        if self._vis_obs:
+            # Find which nominal environments are being reset and refresh their
+            # whole image stack with a freshly rendered frame.
+            mask = torch.isin(self.nominal_env_ids, env_ids)
+            nominal_idx_to_reset = torch.nonzero(mask, as_tuple=True)[0]
+
+            if len(nominal_idx_to_reset) > 0:
+                reset_nominal_env_ids = self.nominal_env_ids[nominal_idx_to_reset]
+                new_img = self.render(env_ids=reset_nominal_env_ids)
+
+                self._imgs_buf[nominal_idx_to_reset] = new_img.unsqueeze(1)
+
     def _post_physics_step(self) -> None:
-        pass
+        """Update image buffer by rolling frames and appending new image."""
+        if self._vis_obs:
+            new_img = self.render(env_ids=self.nominal_env_ids)
+            # Roll the buffer to shift old frames: [t-2, t-1, t-0] -> [t-1, t-0, None]
+            self._imgs_buf = torch.roll(self._imgs_buf, shifts=-1, dims=1)
+            self._imgs_buf[:, -1] = new_img
+
+    def render(self, env_ids: Optional[Sequence[int]] = None) -> Optional[torch.Tensor]:
+        """Render the nominal environments; returns uint8 (len(env_ids), H, W, 3).
+
+        The batch renderer always renders all nominal worlds (madrona world
+        buffers are fixed at init); env_ids selects which rows are returned.
+        """
+        if not self._vis_obs:
+            return None
+        if env_ids is None:
+            env_ids = self.nominal_env_ids
+        rgb = self._batch_renderer.render(
+            self._qpos[self.nominal_env_ids], self._qvel[self.nominal_env_ids]
+        )
+        rows = torch.nonzero(torch.isin(self.nominal_env_ids, env_ids), as_tuple=True)[0]
+        return rgb[rows]
 
     def get_states(self, env_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
         if env_ids is None:

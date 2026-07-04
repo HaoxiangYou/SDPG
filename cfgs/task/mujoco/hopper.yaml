@@ -24,6 +24,12 @@ config:
 
   # state or rgb based observation
   vis_obs: False
+  sensors_args:
+    camera:
+      res: [84, 84]
+      gpu_id: 0
+      # false -> madrona raytracer, true -> rasterizer
+      use_rasterizer: False
 
   show_viewer: False
   show_FPS: False

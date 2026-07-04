@@ -134,6 +134,14 @@ class MjxSim:
         return self._mj_model
 
     @property
+    def mjx_model(self):
+        return self._mjx_model
+
+    @property
+    def data_template(self):
+        return self._data_template
+
+    @property
     def nq(self) -> int:
         return self._mj_model.nq
 

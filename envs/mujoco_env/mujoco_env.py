@@ -40,6 +40,7 @@ class MujocoEnv(BaseEnv):
         randomize_init: bool = True,
         nominal_env_ids: Optional[Sequence[int]] = None,
         device: torch.device | None = None,
+        sensors_args: Dict[str, Any] | None = None,
         sim_options: Dict[str, Any] | None = None,
         show_viewer: bool = False,
         show_FPS: bool = False,
@@ -58,6 +59,7 @@ class MujocoEnv(BaseEnv):
         self._early_termination = early_termination
         self._randomize_init = randomize_init
         self._seed = seed
+        self._sensors_args = sensors_args
         self._show_viewer = show_viewer  # interactive viewing is handled by replay tooling
         self._show_FPS = show_FPS
         self._nominal_env_ids = (
