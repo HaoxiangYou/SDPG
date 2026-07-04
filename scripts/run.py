@@ -61,6 +61,10 @@ def make_runner(config: DictConfig):
             from agents.sdpg import make_runner
 
             return make_runner(config)
+        case "dva":
+            from agents.dva import make_runner
+
+            return make_runner(config)
         case "drqv2":
             from agents.drqv2 import make_runner
 
