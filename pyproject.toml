@@ -3,10 +3,10 @@ requires = ["setuptools", "build", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "approximate-forl"
-authors = [{ name = "approximate-forl contributors", email = "95882094+HaoxiangYou@users.noreply.github.com" }]
+name = "sdpg"
+authors = [{ name = "SDPG contributors", email = "95882094+HaoxiangYou@users.noreply.github.com" }]
 requires-python = ">=3.10"
-description = "Implementation for approximate first-order RL"
+description = "Efficient On-policy Visual-RL via Stochastic Decoupled Policy Gradient"
 license = { text = "MIT" }
 classifiers = [
     "Programming Language :: Python :: 3.10",
@@ -35,10 +35,10 @@ dev = ["ruff", "pre-commit"]
 GitHub = "https://github.com/HaoxiangYou/SDPG"
 
 [tool.setuptools.packages.find]
-include = ["approximate_forl*", "envs*", "utils*", "scripts*", "agents*", "models*"]
+include = ["envs*", "utils*", "scripts*", "agents*", "models*"]
 
 [tool.setuptools.package-data]
-approximate_forl = ["**/*.yml", "**/*.yaml"]
+"*" = ["**/*.yml", "**/*.yaml"]
 
 [tool.setuptools.dynamic]
 version = { file = ["VERSION"] }
@@ -100,7 +100,7 @@ line-ending = "auto"
 docstring-code-format = true
 
 [tool.ruff.lint.isort]
-known-first-party = ["approximate_forl"]
+known-first-party = ["agents", "envs", "models", "scripts", "utils"]
 
 [tool.pyright]
 extraPaths = ["externals/Genesis"]

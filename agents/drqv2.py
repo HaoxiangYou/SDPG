@@ -417,7 +417,7 @@ class DrQv2Workspace:
             return False
         w = config.wandb
         kwargs = {
-            "project": w.get("project", "approximate-forl"),
+            "project": w.get("project", "sdpg"),
             "entity": w.get("entity"),
             "group": w.get("group"),
             "job_type": w.get("job_type"),

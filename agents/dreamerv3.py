@@ -602,7 +602,7 @@ class DreamerWorkspace:
         if not getattr(config, "wandb", None) or not config.wandb.get("enable", False):
             return False
         wandb_kwargs = {
-            "project": config.wandb.get("project", "approximate-forl"),
+            "project": config.wandb.get("project", "sdpg"),
             "entity": config.wandb.get("entity"),
             "group": config.wandb.get("group"),
             "job_type": config.wandb.get("job_type"),
