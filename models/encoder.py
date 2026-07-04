@@ -127,6 +127,7 @@ class CNNEncoder(nn.Module):
                 in_channels,
                 input_shape[1] if len(input_shape) > 1 else 64,
                 input_shape[2] if len(input_shape) > 2 else 64,
+                device=device,
             )
             dummy_output = self.convnet(dummy_input)
             repr_dim = dummy_output.flatten(start_dim=1).shape[1]

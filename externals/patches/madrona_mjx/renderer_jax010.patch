@@ -1,0 +1,89 @@
+diff --git a/src/madrona_mjx/renderer.py b/src/madrona_mjx/renderer.py
+index 24951e1..218b897 100644
+--- a/src/madrona_mjx/renderer.py
++++ b/src/madrona_mjx/renderer.py
+@@ -4,19 +4,25 @@ import sys
+ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+ 
+ import jax
+-from jax import core
++# NOTE: patched for jax >= 0.6 (tested with jax 0.10.2):
++# - jax.core.Primitive moved to jax.extend.core.Primitive
++# - jax.lib.xla_client.register_custom_call_target was removed; use
++#   jax.ffi.register_ffi_target(..., api_version=0) (legacy untyped call)
++# - jaxlib.hlo_helpers.custom_call was removed; use the equivalent
++#   jax._src.interpreters.mlir.custom_call helper
++import jax.ffi
+ from jax import dtypes
+ from jax import lax
+ from jax import numpy as jp
+ from jax import random
+ from jax.core import ShapedArray
++from jax.extend import core
+ from jax.interpreters import batching
+ from jax.interpreters import mlir
+ from jax.interpreters import xla
+ from jax.interpreters.mlir import dtype_to_ir_type
+ from jax.interpreters.mlir import ir
+-from jax.lib import xla_client
+-from jaxlib.hlo_helpers import custom_call
++from jax._src.interpreters.mlir import custom_call
+ from mujoco.mjx._src import io
+ from mujoco.mjx._src import math
+ from mujoco.mjx._src import support
+@@ -365,16 +371,18 @@ def _setup_jax_primitives(
+   init_custom_call_name = f"{custom_call_prefix}_init"
+   render_custom_call_name = f"{custom_call_prefix}_render"
+ 
+-  xla_client.register_custom_call_target(
++  jax.ffi.register_ffi_target(
+       init_custom_call_name,
+       init_custom_call_capsule,
+       platform=custom_call_platform,
++      api_version=0,
+   )
+ 
+-  xla_client.register_custom_call_target(
++  jax.ffi.register_ffi_target(
+       render_custom_call_name,
+       render_custom_call_capsule,
+       platform=custom_call_platform,
++      api_version=0,
+   )
+ 
+   def _row_major_layout(shape):
+@@ -451,9 +459,24 @@ def _setup_jax_primitives(
+   _render_primitive.def_impl(_render_primitive_impl)
+   _render_primitive.def_abstract_eval(_render_abstract)
+ 
++  def _unbatch_token(vector_arg_values, batch_axes):
++    # The render token is a dummy scalar used only for data-dependence
++    # ordering; it must stay unbatched. jax >= 0.6 validates batch dims
++    # eagerly, so returning a batch axis for the scalar token output
++    # raises IndexError. Strip any batch dim from the token input and
++    # report the token output as unbatched (axis None).
++    if batch_axes[0] is not None:
++      token = jp.take(vector_arg_values[0], 0, axis=batch_axes[0])
++      vector_arg_values = (token,) + tuple(vector_arg_values[1:])
++      batch_axes[0] = None
++    return vector_arg_values, batch_axes
++
+   def _init_prim_batch(vector_arg_values, batch_axes):
+     # assert all(b == batch_axes[1] for b in batch_axes[1:])
+     batch_axes = list(batch_axes)
++    vector_arg_values, batch_axes = _unbatch_token(
++        vector_arg_values, batch_axes
++    )
+     for i in range(1, len(batch_axes)):
+       if batch_axes[i] != 0:
+         print("Inferred batch not found, overriding manually")
+@@ -482,6 +505,9 @@ def _setup_jax_primitives(
+   def _render_prim_batch(vector_arg_values, batch_axes):
+     # assert all(b == batch_axes[1] for b in batch_axes[1:])
+     batch_axes = list(batch_axes)
++    vector_arg_values, batch_axes = _unbatch_token(
++        vector_arg_values, batch_axes
++    )
+     for i in range(1, len(batch_axes)):
+       if batch_axes[i] != batch_axes[1]:
+         print("Inferred batch not found, overriding manually")

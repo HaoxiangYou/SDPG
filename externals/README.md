@@ -138,6 +138,68 @@ Example update command (adjust ref as needed):
 git subtree pull --prefix=externals/mujoco https://github.com/google-deepmind/mujoco.git <ref> --squash
 ```
 
+## madrona_mjx (batch renderer for the mujoco backend)
+
+madrona_mjx lives at `externals/madrona_mjx/` as a **plain recursive clone**
+(NOT a subtree — it needs its submodules and a compiled build tree), and is
+therefore **gitignored**; the pin, patches, and build recipe below are the
+source of truth for reproducing it.
+
+- Upstream: `https://github.com/shacklettbp/madrona_mjx.git`
+- Pinned commit: `1505699168fd7c0c12629356f357b05491ce9d0c` (madrona core submodule `b46e6ab`)
+- Note: upstream declared madrona_mjx deprecated (Feb 2026) in favor of native
+  MJWarp batch rendering (available from mujoco 3.6, `impl="warp"`). We stay on
+  madrona because this repo pins mujoco 3.3.7 and differentiates through the
+  classic pure-JAX `mjx.step`, which the warp impl does not support.
+
+### Build recipe (RTX 5090 / Blackwell sm_120 verified)
+
+Madrona JIT-compiles all device code at runtime via nvrtc for the local GPU
+arch, so Blackwell needs no special flags — only a CUDA toolkit >= 12.8. The
+toolkit lives in a dedicated conda env so the SDPG env's packages are untouched
+(do not delete `cuda-build`: the built libraries RPATH-resolve nvrtc/cudart
+from it):
+
+```bash
+conda create -y -n cuda-build -c nvidia/label/cuda-12.8.1 cuda-toolkit
+git clone --recursive https://github.com/shacklettbp/madrona_mjx.git externals/madrona_mjx
+cd externals/madrona_mjx && git checkout 1505699168fd7c0c12629356f357b05491ce9d0c
+git apply ../patches/madrona_mjx/renderer_jax010.patch
+export CUDAToolkit_ROOT=$HOME/miniconda3/envs/cuda-build
+export PATH=$HOME/miniconda3/envs/cuda-build/bin:$PATH
+cmake -B build -DLOAD_VULKAN=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+      -DPython_EXECUTABLE=$HOME/miniconda3/envs/SDPG/bin/python .
+make -C build -j32
+pip install --no-deps --no-build-isolation -e .   # in the SDPG env
+```
+
+### Local patches
+
+#### Patch 01: jax 0.10 compatibility + vmap batching fix (`renderer_jax010.patch`)
+
+`src/madrona_mjx/renderer.py`:
+- Migrated removed jax APIs: `jax.core.Primitive` → `jax.extend.core.Primitive`,
+  `xla_client.register_custom_call_target` → `jax.ffi.register_ffi_target(..., api_version=0)`,
+  `jaxlib.hlo_helpers.custom_call` → `jax._src.interpreters.mlir.custom_call`.
+- Fixed the vmap batching rules: the scalar render token was assigned batch
+  axis 0, which jax >= 0.6 rejects; `_unbatch_token` strips it on input and
+  reports axis `None` on output.
+
+### Runtime notes
+
+- First construction JIT-compiles the megakernels (~30 s); set
+  `MADRONA_MWGPU_KERNEL_CACHE` to a **file** path to cache them (the env
+  adapter `envs/mujoco_env/batch_renderer.py` defaults it to
+  `~/.cache/madrona_mjx_kernels/cache.bin`).
+- Madrona reserves a fixed 4 GiB device heap by default; tune with
+  `MADRONA_MWGPU_DEVICE_HEAP_SIZE` (bytes). Keep
+  `XLA_PYTHON_CLIENT_PREALLOCATE=false` (the mujoco backend sets it).
+- `num_worlds` is baked in at construction; the env adapter sizes it to the
+  nominal envs only (subset rendering). RGB layout `(worlds, cams, H, W, 4)`
+  uint8; depth has NaN background.
+- Standalone verification: `externals/patches/madrona_mjx/sdpg_smoke_test.py`
+  (a copy also lives at `externals/madrona_mjx/scripts/sdpg_smoke_test.py`).
+
 ## rl_games
 
 `rl_games` is vendored under `externals/rl_games/` as a git subtree (upstream: `https://github.com/Denys88/rl_games.git`).
