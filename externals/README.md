@@ -99,6 +99,45 @@ Example update command (adjust ref as needed):
 git subtree pull --prefix=externals/Genesis https://github.com/Genesis-Embodied-AI/Genesis.git <ref> --squash
 ```
 
+## mujoco (MJX)
+
+MuJoCo is vendored under `externals/mujoco/` as a git subtree (upstream: `https://github.com/google-deepmind/mujoco.git`).
+
+Pinned upstream ref:
+- tag `3.3.7` (commit `f1d45bd5`), matching the `mujoco==3.3.7` wheel already installed in the conda env (Genesis requires `mujoco>=3.3.6,<3.4.0`).
+
+Only the **MJX** python package is installed from the subtree (the C engine comes from the PyPI wheel):
+
+```bash
+pip install "jax[cuda13]"            # jax 0.10.2 at time of vendoring
+pip install -e externals/mujoco/mjx  # editable mujoco-mjx 3.3.7
+```
+
+### Local patches
+
+#### Patch 01: reverse-mode differentiable constraint solver
+
+`mjx.step` was not reverse-mode differentiable when `opt.iterations > 1`: the
+main solver loop used `jax.lax.while_loop`, which JAX cannot
+reverse-differentiate. The line search already used the scan-based
+`_while_loop_scan` helper (fixed trip count + done mask, numerically
+identical), so the patch applies the same helper to the main loop.
+
+Changes in `externals/mujoco/mjx/mujoco/mjx/_src/solver.py` (in `solve`):
+
+- `ctx = jax.lax.while_loop(cond, body, ctx)` → `ctx = _while_loop_scan(cond, body, ctx, m.opt.iterations)`
+
+Cost note: the scan always runs `opt.iterations` body evaluations (no early
+exit), so keep `iterations` small in MJX task XMLs (e.g. `iterations="4"`,
+`ls_iterations="8"`, the mujoco_playground convention) rather than relying on
+the default 100.
+
+Example update command (adjust ref as needed):
+
+```bash
+git subtree pull --prefix=externals/mujoco https://github.com/google-deepmind/mujoco.git <ref> --squash
+```
+
 ## rl_games
 
 `rl_games` is vendored under `externals/rl_games/` as a git subtree (upstream: `https://github.com/Denys88/rl_games.git`).

@@ -1,0 +1,16 @@
+diff --git a/externals/mujoco/mjx/mujoco/mjx/_src/solver.py b/externals/mujoco/mjx/mujoco/mjx/_src/solver.py
+index 6ac37f19..c77d837e 100644
+--- a/externals/mujoco/mjx/mujoco/mjx/_src/solver.py
++++ b/externals/mujoco/mjx/mujoco/mjx/_src/solver.py
+@@ -599,7 +599,10 @@ def solve(m: Model, d: Data) -> Data:
+   if m.opt.iterations == 1:
+     ctx = body(ctx)
+   else:
+-    ctx = jax.lax.while_loop(cond, body, ctx)
++    # Local patch (SDPG): jax.lax.while_loop is not reverse-mode
++    # differentiable; the scan-based variant is, with identical results and
++    # cost bounded by opt.iterations.
++    ctx = _while_loop_scan(cond, body, ctx, m.opt.iterations)
+ 
+   d = d.tree_replace({
+       'qfrc_constraint': ctx.qfrc_constraint,
