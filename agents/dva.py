@@ -279,12 +279,13 @@ class DVARunner:
                             break
                     if invalid_obs:
                         next_values[i + 1, id] = 0.0
-                    elif terminated[id]:  # early termination
-                        next_values[i + 1, id] = 0.0
-                    else:  # timeout: bootstrap with the terminal value from the pre-reset observation
+                    elif truncated[id]:  # timeout: bootstrap with the terminal value from the pre-reset observation
+                        # (timeout takes precedence over termination on the same step, as in reference D.Va)
                         real_obs = {key: obs_before_reset[key][id : id + 1] for key in self.critic_input_keys}
                         real_obs = self.process_observations(real_obs, obs_rms)
                         next_values[i + 1, id] = self.target_critic(real_obs).squeeze(-1)
+                    else:  # early termination
+                        next_values[i + 1, id] = 0.0
 
             if (next_values[i + 1] > 1e6).sum() > 0 or (next_values[i + 1] < -1e6).sum() > 0:
                 print("next value error")

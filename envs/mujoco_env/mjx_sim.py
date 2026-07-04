@@ -47,6 +47,7 @@ class _MjxStepFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_qpos: torch.Tensor, grad_qvel: torch.Tensor):
+        ctx.sim._assert_precision()  # backward may run after another env flipped the x64 flag
         qpos, qvel, ctrl = ctx.saved_tensors
         d_qpos, d_qvel, d_ctrl = ctx.sim._vjp_fn(
             _torch_to_jax(qpos),
@@ -74,10 +75,11 @@ class MjxSim:
     ) -> None:
         if precision not in ("32", "64"):
             raise ValueError(f"precision must be '32' or '64', got {precision!r}")
-        # Global for the process; mjx then builds float64 models/data. Set
-        # explicitly both ways so envs of different precision can be created
-        # sequentially in one process (e.g. in tests).
-        jax.config.update("jax_enable_x64", precision == "64")
+        # Global for the process; mjx then builds float64 models/data. The
+        # flag is re-asserted before every jitted call (jit traces lazily) so
+        # envs of different precision can coexist in one process (e.g. tests).
+        self._enable_x64 = precision == "64"
+        jax.config.update("jax_enable_x64", self._enable_x64)
         if device is not None and torch.device(device).type == "cpu":
             jax.config.update("jax_platform_name", "cpu")
 
@@ -120,6 +122,7 @@ class MjxSim:
         Tensors are (num_envs, nq/nv/nu) in the sim dtype. Differentiable
         w.r.t. all three inputs when the sim was built with requires_grad.
         """
+        self._assert_precision()
         if self._requires_grad:
             return _MjxStepFunction.apply(self, qpos, qvel, ctrl)
         with torch.no_grad():
@@ -146,6 +149,13 @@ class MjxSim:
     def requires_grad(self) -> bool:
         return self._requires_grad
 
+    def _assert_precision(self) -> None:
+        """Re-assert this sim's x64 mode; jit traces lazily and the flag is
+        process-global, so another env of different precision may have
+        flipped it since construction."""
+        if jax.config.jax_enable_x64 != self._enable_x64:
+            jax.config.update("jax_enable_x64", self._enable_x64)
+
     @property
     def torch_dtype(self) -> torch.dtype:
-        return torch.float64 if jax.config.jax_enable_x64 else torch.float32
+        return torch.float64 if self._enable_x64 else torch.float32
