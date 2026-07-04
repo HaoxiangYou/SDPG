@@ -99,6 +99,107 @@ Example update command (adjust ref as needed):
 git subtree pull --prefix=externals/Genesis https://github.com/Genesis-Embodied-AI/Genesis.git <ref> --squash
 ```
 
+## mujoco (MJX)
+
+MuJoCo is vendored under `externals/mujoco/` as a git subtree (upstream: `https://github.com/google-deepmind/mujoco.git`).
+
+Pinned upstream ref:
+- tag `3.3.7` (commit `f1d45bd5`), matching the `mujoco==3.3.7` wheel already installed in the conda env (Genesis requires `mujoco>=3.3.6,<3.4.0`).
+
+Only the **MJX** python package is installed from the subtree (the C engine comes from the PyPI wheel):
+
+```bash
+pip install "jax[cuda13]"            # jax 0.10.2 at time of vendoring
+pip install -e externals/mujoco/mjx  # editable mujoco-mjx 3.3.7
+```
+
+### Local patches
+
+#### Patch 01: reverse-mode differentiable constraint solver
+
+`mjx.step` was not reverse-mode differentiable when `opt.iterations > 1`: the
+main solver loop used `jax.lax.while_loop`, which JAX cannot
+reverse-differentiate. The line search already used the scan-based
+`_while_loop_scan` helper (fixed trip count + done mask, numerically
+identical), so the patch applies the same helper to the main loop.
+
+Changes in `externals/mujoco/mjx/mujoco/mjx/_src/solver.py` (in `solve`):
+
+- `ctx = jax.lax.while_loop(cond, body, ctx)` → `ctx = _while_loop_scan(cond, body, ctx, m.opt.iterations)`
+
+Cost note: the scan always runs `opt.iterations` body evaluations (no early
+exit), so keep `iterations` small in MJX task XMLs (e.g. `iterations="4"`,
+`ls_iterations="8"`, the mujoco_playground convention) rather than relying on
+the default 100.
+
+Example update command (adjust ref as needed):
+
+```bash
+git subtree pull --prefix=externals/mujoco https://github.com/google-deepmind/mujoco.git <ref> --squash
+```
+
+## madrona_mjx (batch renderer for the mujoco backend)
+
+madrona_mjx lives at `externals/madrona_mjx/` as a **plain recursive clone**
+(NOT a subtree — it needs its submodules and a compiled build tree), and is
+therefore **gitignored**; the pin, patches, and build recipe below are the
+source of truth for reproducing it.
+
+- Upstream: `https://github.com/shacklettbp/madrona_mjx.git`
+- Pinned commit: `1505699168fd7c0c12629356f357b05491ce9d0c` (madrona core submodule `b46e6ab`)
+- Note: upstream declared madrona_mjx deprecated (Feb 2026) in favor of native
+  MJWarp batch rendering (available from mujoco 3.6, `impl="warp"`). We stay on
+  madrona because this repo pins mujoco 3.3.7 and differentiates through the
+  classic pure-JAX `mjx.step`, which the warp impl does not support.
+
+### Build recipe (RTX 5090 / Blackwell sm_120 verified)
+
+Madrona JIT-compiles all device code at runtime via nvrtc for the local GPU
+arch, so Blackwell needs no special flags — only a CUDA toolkit >= 12.8. The
+toolkit lives in a dedicated conda env so the SDPG env's packages are untouched
+(do not delete `cuda-build`: the built libraries RPATH-resolve nvrtc/cudart
+from it):
+
+```bash
+conda create -y -n cuda-build -c nvidia/label/cuda-12.8.1 cuda-toolkit
+git clone --recursive https://github.com/shacklettbp/madrona_mjx.git externals/madrona_mjx
+cd externals/madrona_mjx && git checkout 1505699168fd7c0c12629356f357b05491ce9d0c
+git apply ../patches/madrona_mjx/renderer_jax010.patch
+export CUDAToolkit_ROOT=$HOME/miniconda3/envs/cuda-build
+export PATH=$HOME/miniconda3/envs/cuda-build/bin:$PATH
+cmake -B build -DLOAD_VULKAN=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+      -DPython_EXECUTABLE=$HOME/miniconda3/envs/SDPG/bin/python .
+make -C build -j32
+pip install --no-deps --no-build-isolation -e .   # in the SDPG env
+```
+
+### Local patches
+
+#### Patch 01: jax 0.10 compatibility + vmap batching fix (`renderer_jax010.patch`)
+
+`src/madrona_mjx/renderer.py`:
+- Migrated removed jax APIs: `jax.core.Primitive` → `jax.extend.core.Primitive`,
+  `xla_client.register_custom_call_target` → `jax.ffi.register_ffi_target(..., api_version=0)`,
+  `jaxlib.hlo_helpers.custom_call` → `jax._src.interpreters.mlir.custom_call`.
+- Fixed the vmap batching rules: the scalar render token was assigned batch
+  axis 0, which jax >= 0.6 rejects; `_unbatch_token` strips it on input and
+  reports axis `None` on output.
+
+### Runtime notes
+
+- First construction JIT-compiles the megakernels (~30 s); set
+  `MADRONA_MWGPU_KERNEL_CACHE` to a **file** path to cache them (the env
+  adapter `envs/mujoco_env/batch_renderer.py` defaults it to
+  `~/.cache/madrona_mjx_kernels/cache.bin`).
+- Madrona reserves a fixed 4 GiB device heap by default; tune with
+  `MADRONA_MWGPU_DEVICE_HEAP_SIZE` (bytes). Keep
+  `XLA_PYTHON_CLIENT_PREALLOCATE=false` (the mujoco backend sets it).
+- `num_worlds` is baked in at construction; the env adapter sizes it to the
+  nominal envs only (subset rendering). RGB layout `(worlds, cams, H, W, 4)`
+  uint8; depth has NaN background.
+- Standalone verification: `externals/patches/madrona_mjx/sdpg_smoke_test.py`
+  (a copy also lives at `externals/madrona_mjx/scripts/sdpg_smoke_test.py`).
+
 ## rl_games
 
 `rl_games` is vendored under `externals/rl_games/` as a git subtree (upstream: `https://github.com/Denys88/rl_games.git`).

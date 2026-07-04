@@ -210,3 +210,4 @@ logs/
 
 wandb/
 .vscode/
+externals/madrona_mjx/

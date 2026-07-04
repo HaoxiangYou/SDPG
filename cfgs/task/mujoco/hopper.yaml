@@ -1,0 +1,40 @@
+backend: mujoco
+
+name: hopper
+
+config:
+  num_envs: ${...num_envs}
+  # which envs are treated as the nominal environments (for SDPG agent),
+  # if None, all envs are treated as nominal environments
+  nominal_env_ids: null
+
+  randomize_init: True
+  sim_options:
+    # control dt; physics dt = dt / substeps
+    dt: 1e-2
+    substeps: 2
+    # constraint solver budget (the patched MJX solver always runs
+    # `solver_iterations` iterations; keep it small)
+    solver_iterations: 4
+    ls_iterations: 8
+    # differentiable simulation (first-order agents set this; SDPG/PPO leave it off)
+    requires_grad: False
+    # null -> "64" when requires_grad else "32"
+    precision: null
+
+  # state or rgb based observation
+  vis_obs: False
+  sensors_args:
+    camera:
+      res: [84, 84]
+      gpu_id: 0
+      # false -> madrona raytracer, true -> rasterizer
+      use_rasterizer: False
+
+  show_viewer: False
+  show_FPS: False
+
+
+play:
+  num_envs: 64
+  randomize_init: True
