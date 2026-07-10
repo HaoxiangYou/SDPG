@@ -9,7 +9,7 @@ Checks, in order:
    and are finite.
 4. Throughput report for both modes.
 
-Run: python envs/mujoco_env/scripts/test_mujoco_env.py
+Run: python envs/mujoco_env/scripts/test_mujoco_env.py [--env hopper|walker]
 """
 
 import argparse
@@ -18,15 +18,18 @@ import time
 import torch
 
 from envs.mujoco_env.hopper import Hopper
+from envs.mujoco_env.walker import Walker
+
+ENVS = {"hopper": Hopper, "walker": Walker}
 
 
 def flatten_states(states):
     return torch.cat([v for v in states["robot_states"].values()], dim=-1)
 
 
-def test_round_trip(device):
+def test_round_trip(env_cls, device):
     num_envs = 8
-    env = Hopper(num_envs=num_envs, seed=0, device=device, sim_options={"dt": 1e-2, "substeps": 2})
+    env = env_cls(num_envs=num_envs, seed=0, device=device, sim_options={"dt": 1e-2, "substeps": 2})
     env.reset()
 
     # random warmup steps so states differ across envs
@@ -52,9 +55,9 @@ def test_round_trip(device):
     print(f"[1/4] round-trip exactness OK (max err {max_err})")
 
 
-def test_rollout(device):
+def test_rollout(env_cls, device):
     num_envs = 64
-    env = Hopper(num_envs=num_envs, seed=0, device=device, sim_options={"dt": 1e-2, "substeps": 2})
+    env = env_cls(num_envs=num_envs, seed=0, device=device, sim_options={"dt": 1e-2, "substeps": 2})
     env.reset()
     total_terminated = 0
     for i in range(200):
@@ -67,10 +70,10 @@ def test_rollout(device):
     print(f"[2/4] rollout sanity OK ({total_terminated} terminations over 200 random steps x {num_envs} envs)")
 
 
-def test_gradients(device):
+def test_gradients(env_cls, device):
     num_envs = 16
     horizon = 16
-    env = Hopper(
+    env = env_cls(
         num_envs=num_envs,
         seed=0,
         device=device,
@@ -101,9 +104,9 @@ def test_gradients(device):
     print(f"[3/4] gradient flow OK (per-step action grad norms {grad_norms.min():.2e}..{grad_norms.max():.2e})")
 
 
-def test_throughput(device):
+def test_throughput(env_cls, device):
     for requires_grad, num_envs in ((False, 4096), (True, 64)):
-        env = Hopper(
+        env = env_cls(
             num_envs=num_envs,
             seed=0,
             device=device,
@@ -128,10 +131,12 @@ def test_throughput(device):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--env", default="hopper", choices=sorted(ENVS))
     args = parser.parse_args()
 
-    test_round_trip(args.device)
-    test_rollout(args.device)
-    test_gradients(args.device)
-    test_throughput(args.device)
+    env_cls = ENVS[args.env]
+    test_round_trip(env_cls, args.device)
+    test_rollout(env_cls, args.device)
+    test_gradients(env_cls, args.device)
+    test_throughput(env_cls, args.device)
     print("ALL CHECKS PASSED")
