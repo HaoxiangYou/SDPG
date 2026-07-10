@@ -1,0 +1,71 @@
+name: dva
+
+config:
+
+  model:
+    actor:
+      # List of input sources, each with name, encoder, and RMS normalization flag
+      inputs:
+        - name: RGB
+          encoder:
+            type: drqv2
+            network:
+              output_dim: 128
+          apply_rms: false
+
+      # Policy head processes concatenated encoded features
+      policy_head:
+        type: mlp
+        network:
+          units: [128, 64, 32]
+          activation: elu
+        # fixed_std true = constant log_std (use log_std_init); false = learn log_std
+        fixed_std: false
+        state_dependent_std: false
+        log_std_init: -1.0
+
+    critic:
+      # List of input sources, each with name, encoder, and RMS normalization flag
+      inputs:
+        - name: privileged_observations
+          encoder: null  # null = pass-through (no encoding)
+          apply_rms: true
+      # Value head processes concatenated encoded features to output scalar value
+      value_head:
+        type: mlp
+        network:
+          units: [64, 64]
+          activation: elu
+
+  num_envs: 64
+
+  max_epochs: 2000
+  # Length of the short horizon rollout for backpropagation through the simulator
+  horizon_length: 32
+  # Discount factor
+  gamma: 0.99
+  # TD(lambda)
+  lam: 0.95
+
+  # Critic target computation: ['one-step', 'td-lambda']
+  critic_method: td-lambda
+  critic_iterations: 16
+  num_critic_batches: 4
+  # Polyak averaging coefficient, multiplies the OLD target critic
+  target_critic_alpha: 0.2
+
+  actor_lr: 2e-3
+  critic_lr: 2e-4
+  betas: [0.7, 0.95]  # adam
+  # Learning rate schedule: ['constant', 'linear']
+  lr_schedule: linear
+
+  # Whether to use running mean and std for observations (per-input apply_rms flags above)
+  obs_rms: true
+  # Whether to use running mean and std for returns
+  ret_rms: false
+
+  truncate_grads: true
+  grad_norm: 1.0
+
+  save_frequency: 400

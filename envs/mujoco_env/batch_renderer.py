@@ -13,11 +13,17 @@ traces). Rendering is never differentiated — visual first-order agents (D.Va)
 detach the actor input, which is the whole point of the algorithm.
 """
 
+import os
 from typing import Optional, Sequence, Tuple
 
 import jax
 import numpy as np
 import torch
+
+# Cache the compiled madrona megakernels across processes (first compile ~30s+).
+_DEFAULT_KERNEL_CACHE = os.path.expanduser("~/.cache/madrona_mjx_kernels/cache.bin")
+os.makedirs(os.path.dirname(_DEFAULT_KERNEL_CACHE), exist_ok=True)
+os.environ.setdefault("MADRONA_MWGPU_KERNEL_CACHE", _DEFAULT_KERNEL_CACHE)
 
 
 class MadronaBatchRenderer:
@@ -65,6 +71,48 @@ class MadronaBatchRenderer:
         self._pose_fn = jax.jit(jax.vmap(pose))
         self._render_token = None
 
+        # renderer.init/render are written to be called per world under
+        # jax.vmap (the mujoco_playground MadronaWrapper pattern): the
+        # underlying custom call reads raw device buffers with a fixed
+        # (num_worlds, ...) layout and does no shape checking, so an
+        # unvmapped call on batched data silently renders garbage (and can
+        # fault reading past the too-small camera buffers). Model visual
+        # fields consumed by init must be tiled across worlds.
+        import jax.numpy as jp
+
+        model_in_axes = jax.tree_util.tree_map(lambda x: None, self._mjx_model)
+        model_in_axes = model_in_axes.tree_replace(
+            {
+                "geom_rgba": 0,
+                "geom_matid": 0,
+                "geom_size": 0,
+                "light_pos": 0,
+                "light_dir": 0,
+                "light_type": 0,
+                "light_castshadow": 0,
+                "light_cutoff": 0,
+            }
+        )
+
+        def tile(x):
+            return jp.repeat(jp.expand_dims(x, 0), self._num_worlds, axis=0)
+
+        m = self._mjx_model
+        self._tiled_model = m.tree_replace(
+            {
+                "geom_rgba": tile(m.geom_rgba),
+                "geom_matid": tile(jp.repeat(-1, m.geom_matid.shape[0], 0)),
+                "geom_size": tile(m.geom_size),
+                "light_pos": tile(m.light_pos),
+                "light_dir": tile(m.light_dir),
+                "light_type": tile(m.light_type),
+                "light_castshadow": tile(m.light_castshadow),
+                "light_cutoff": tile(m.light_cutoff),
+            }
+        )
+        self._init_fn = jax.vmap(self._renderer.init, in_axes=(0, model_in_axes))
+        self._render_fn = jax.vmap(self._renderer.render, in_axes=(0, 0))
+
     def _pose(self, qpos: torch.Tensor, qvel: torch.Tensor):
         # Assert the f32 trace context (a float64 sim in the same process
         # flips the global flag before its own jitted calls).
@@ -76,7 +124,7 @@ class MadronaBatchRenderer:
     def init(self, qpos: torch.Tensor, qvel: torch.Tensor) -> torch.Tensor:
         """Initialize madrona world buffers from the first poses; returns RGB."""
         data = self._pose(qpos, qvel)
-        self._render_token, rgb, _ = self._renderer.init(data, self._mjx_model)
+        self._render_token, rgb, _ = self._init_fn(data, self._tiled_model)
         return self._rgb_to_torch(rgb)
 
     def render(self, qpos: torch.Tensor, qvel: torch.Tensor) -> torch.Tensor:
@@ -85,12 +133,14 @@ class MadronaBatchRenderer:
         if self._render_token is None:
             return self.init(qpos, qvel)
         data = self._pose(qpos, qvel)
-        _, rgb, _ = self._renderer.render(self._render_token, data)
+        _, rgb, _ = self._render_fn(self._render_token, data)
         return self._rgb_to_torch(rgb)
 
     @staticmethod
     def _rgb_to_torch(rgb: jax.Array) -> torch.Tensor:
-        return torch.utils.dlpack.from_dlpack(rgb).clone()[..., :3]
+        # madrona returns (num_worlds, num_cams, H, W, 4); a single camera is
+        # enabled, so drop the cam axis and the alpha channel.
+        return torch.utils.dlpack.from_dlpack(rgb).clone()[:, 0, :, :, :3]
 
     @property
     def num_worlds(self) -> int:
