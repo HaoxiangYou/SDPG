@@ -30,7 +30,7 @@ from utils.statistic_utils import AverageMeter, RunningMeanStd
 class DoubleQCritic(nn.Module):
     """Twin Q networks on (privileged state, action); no visual encoder (asymmetric)."""
 
-    def __init__(self, state_dim, num_actions, units, activation, device="cuda:0"):
+    def __init__(self, state_dim, num_actions, units, activation, use_layernorm=True, device="cuda:0"):
         super().__init__()
 
         def make_q():
@@ -42,7 +42,8 @@ class DoubleQCritic(nn.Module):
                 mods.append(lin)
                 if i < len(dims) - 2:
                     mods.append(get_activation_func(activation))
-                    mods.append(nn.LayerNorm(dims[i + 1]))
+                    if use_layernorm:
+                        mods.append(nn.LayerNorm(dims[i + 1]))
             return nn.Sequential(*mods)
 
         self.q1 = make_q().to(device)
@@ -194,6 +195,7 @@ class AsymSACRunner:
             num_actions=self.num_actions,
             units=value_head.network.units,
             activation=value_head.network.activation,
+            use_layernorm=value_head.network.get("layernorm", True),
             device=self.device,
         )
         self.critic_target = copy.deepcopy(self.critic)
