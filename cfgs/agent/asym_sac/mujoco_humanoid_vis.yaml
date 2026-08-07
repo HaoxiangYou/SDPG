@@ -1,76 +1,77 @@
-# Asymmetric SAC (visual RL baseline of arXiv:2412.13662, Pinto et al. 2017 idea):
+# Asymmetric SAC (visual RL baseline idea of arXiv:2412.13662 / Pinto et al. 2017):
 # actor on 84x84 stacked RGB, twin Q critics on privileged state.
-# Hyperparameters follow Table 5 (DMControl) of arXiv:2412.13662, which covers
-# Humanoid-Walk: lr 3e-4, batch 512, discount 0.99, update-to-data ratio 0.25,
-# replay buffer 500k, autotuned entropy. Env-step budget ~4M (paper Fig. 4).
-# NOTE: mujoco (mjx) humanoid backend pending; config is ready once the env
-# exposes RGB + privileged_observations like the hopper/walker tasks.
+# Shared hyperparameters are standardized to the DrQ-v2 baseline config
+# (cfgs/agent/drqv2/*.yaml) for controlled comparison: lr 1e-4, batch 256,
+# 32 envs, encoder feature 50, [1024,1024] ReLU heads (no LayerNorm),
+# UTD 0.125, no state normalization. The published recipe of arXiv:2412.13662
+# (stronger: ~4x more sample-efficient on mjx hopper) is kept in
+# mujoco_humanoid_vis_table5.yaml.
+# Remaining inherent differences vs DrQ-v2: SAC entropy vs scheduled noise;
+# DrQ-v2 uses n-step 3 returns (asym_sac is 1-step, which favors DrQ-v2).
 name: asym_sac
 
 config:
 
   model:
     actor:
-      # List of input sources, each with name, encoder, and RMS normalization flag
       inputs:
         - name: RGB
           encoder:
             type: drqv2
             network:
-              # paper uses a 256-d feature with LayerNorm after the CNN
-              output_dim: 256
+              # DrQ-v2 feature_dim
+              output_dim: 50
           apply_rms: false
 
-      # Policy head processes encoded features into a tanh-squashed Gaussian
       policy_head:
         type: mlp
         network:
-          units: [512, 256]
-          activation: elu
+          # DrQ-v2 hidden_dim 1024
+          units: [1024, 1024]
+          activation: relu
         fixed_std: false
-        # SAC uses a state-dependent std (mean and log_std heads)
         state_dependent_std: true
         log_std_init: -1.0
 
     critic:
-      # Asymmetric: critic consumes the privileged state only (plus the action internally)
       inputs:
         - name: privileged_observations
-          encoder: null  # null = pass-through (no encoding)
-          apply_rms: true
-      # Twin Q networks built from these units (input = state + action, output = scalar Q)
+          encoder: null
+          # DrQ-v2 has no observation normalization
+          apply_rms: false
       value_head:
         type: mlp
         network:
-          units: [512, 256]
-          activation: elu
+          units: [1024, 1024]
+          activation: relu
+          # DrQ-v2 Q MLPs have no LayerNorm
+          layernorm: false
 
-  num_envs: 64
+  # DrQ-v2 baseline runs 32 envs
+  num_envs: 32
 
-  # Env steps counted with action repeat (num_envs * action_repeat per iteration);
-  # paper trains Humanoid-Walk for ~4M env steps
+  # Env steps counted with action repeat; paper trains Humanoid-Walk ~4M env steps
   total_env_steps: 4000000
   action_repeat: 2
-  # Random uniform actions until this many env steps (seeding the replay buffer)
-  num_seed_steps: 8000
+  # DrQ-v2 num_seed_frames
+  num_seed_steps: 4000
 
-  # Discount factor
   gamma: 0.99
   reward_scale: 1.0
 
-  # SAC update
-  batch_size: 512
-  lr: 3e-4
-  # Gradient updates per env step (paper: 0.25); with 64 envs * action repeat 2
-  # this gives 32 updates per iteration. Set updates_per_iter to override.
-  utd_ratio: 0.25
+  # DrQ-v2 batch/lr
+  batch_size: 256
+  lr: 1e-4
+  # DrQ-v2 effective updates: updates_per_step 16 with update_every_steps 2
+  # -> 8 updates per iteration at 32 envs * action repeat 2 (UTD 0.125)
+  utd_ratio: 0.125
   updates_per_iter: null
-  critic_tau: 0.005
-  # Entropy temperature (autotuned towards target_entropy = -num_actions)
+  # DrQ-v2 critic_target_tau
+  critic_tau: 0.01
   init_temperature: 0.1
   log_std_bounds: [-5, 2]
 
-  # Replay buffer (transitions; paper value for DMControl)
+  # Replay buffer (transitions)
   replay_buffer_size: 500000
   buffer_device: cpu
 
