@@ -6,34 +6,7 @@ import torch
 from gym import spaces
 
 from envs.mujoco_env.mujoco_env import MujocoEnv
-
-
-def _quat_mul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    """Hamilton product a * b for wxyz quaternions (matches genesis transform_quat_by_quat)."""
-    aw, ax, ay, az = a.unbind(-1)
-    bw, bx, by, bz = b.unbind(-1)
-    return torch.stack(
-        [
-            aw * bw - ax * bx - ay * by - az * bz,
-            aw * bx + ax * bw + ay * bz - az * by,
-            aw * by - ax * bz + ay * bw + az * bx,
-            aw * bz + ax * by - ay * bx + az * bw,
-        ],
-        dim=-1,
-    )
-
-
-def _quat_rotate(quat: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
-    """Rotate vectors v by unit wxyz quaternions (matches genesis transform_by_quat)."""
-    w, xyz = quat[..., :1], quat[..., 1:]
-    t = 2.0 * torch.linalg.cross(xyz, v, dim=-1)
-    return v + w * t + torch.linalg.cross(xyz, t, dim=-1)
-
-
-def _axis_angle_to_quat(angle: torch.Tensor, axis: torch.Tensor) -> torch.Tensor:
-    """wxyz quaternion for a rotation of angle (rad) about unit axis (matches genesis)."""
-    half = (0.5 * angle).unsqueeze(-1)
-    return torch.cat([torch.cos(half), torch.sin(half) * axis], dim=-1)
+from envs.mujoco_env.quat_utils import axis_angle_to_quat, quat_mul, quat_rotate
 
 
 class Humanoid(MujocoEnv):
@@ -223,8 +196,8 @@ class Humanoid(MujocoEnv):
         target_dirs = self._target[:n_batch] - base_pose[:, :3]
         target_dirs[:, 2] = 0
         target_dirs = torch.nn.functional.normalize(target_dirs)
-        heading_vec = _quat_rotate(base_quat, self._basis_heading.expand(n_batch, 3))
-        up_vec = _quat_rotate(base_quat, self._basis_up.expand(n_batch, 3))
+        heading_vec = quat_rotate(base_quat, self._basis_heading.expand(n_batch, 3))
+        up_vec = quat_rotate(base_quat, self._basis_up.expand(n_batch, 3))
 
         privileged_observations = torch.cat(
             [
@@ -269,8 +242,8 @@ class Humanoid(MujocoEnv):
         target_dirs = self._target[:n_batch] - base_pose[:, :3]
         target_dirs[:, 2] = 0
         target_dirs = torch.nn.functional.normalize(target_dirs)
-        heading_vec = _quat_rotate(base_quat, self._basis_heading.expand(n_batch, 3))
-        up_vec = _quat_rotate(base_quat, self._basis_up.expand(n_batch, 3))
+        heading_vec = quat_rotate(base_quat, self._basis_heading.expand(n_batch, 3))
+        up_vec = quat_rotate(base_quat, self._basis_up.expand(n_batch, 3))
 
         up_reward = 0.1 * up_vec[:, 1]
         heading_reward = (heading_vec * target_dirs).sum(dim=-1)
@@ -311,7 +284,7 @@ class Humanoid(MujocoEnv):
             axis = torch.nn.functional.normalize(
                 torch.rand(len(env_ids), 3, generator=self._rng, device=self._device, dtype=self._sim_dtype) - 0.5
             )
-            base_quat = _quat_mul(base_quat, _axis_angle_to_quat(angle, axis))
+            base_quat = quat_mul(base_quat, axis_angle_to_quat(angle, axis))
             noise = torch.rand(motor_dof_pos.shape, generator=self._rng, device=self._device, dtype=self._sim_dtype)
             motor_dof_pos = motor_dof_pos + (noise - 0.5) * 0.1
 
@@ -338,22 +311,6 @@ class Humanoid(MujocoEnv):
                 new_img = self.render(env_ids=reset_nominal_env_ids)
 
                 self._imgs_buf[nominal_idx_to_reset] = new_img.unsqueeze(1)
-
-    def _set_qpos_qvel(self, env_ids: torch.Tensor, qpos: torch.Tensor, qvel: torch.Tensor) -> None:
-        """Write per-env absolute (qpos, qvel) rows.
-
-        Autograd-safe like the base _set_dof_state (clone + index-assign), but
-        without its qpos0-relative storage: the free joint's qpos0 is nonzero
-        (spawn height, unit quat), so reconstructing absolute targets through
-        the offset costs a float rounding and would break the exact SDPG
-        get_states/set_states round-trip.
-        """
-        new_qpos = self._qpos.clone()
-        new_qvel = self._qvel.clone()
-        new_qpos[env_ids] = qpos.to(self._sim_dtype)
-        new_qvel[env_ids] = qvel.to(self._sim_dtype)
-        self._qpos = new_qpos
-        self._qvel = new_qvel
 
     def _action_to_ctrl(self, actions: torch.Tensor) -> torch.Tensor:
         # actions arrive clamped to [-1, 1]; actuator gear in the MJCF applies the

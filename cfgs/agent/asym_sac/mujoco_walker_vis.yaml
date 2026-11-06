@@ -1,0 +1,70 @@
+name: asym_sac
+
+config:
+
+  model:
+    actor:
+      inputs:
+        - name: RGB
+          encoder:
+            type: drqv2
+            network:
+              # DrQ-v2 feature_dim
+              output_dim: 50
+          apply_rms: false
+
+      policy_head:
+        type: mlp
+        network:
+          # DrQ-v2 hidden_dim 1024
+          units: [1024, 1024]
+          activation: relu
+        fixed_std: false
+        state_dependent_std: true
+        log_std_init: -1.0
+
+    critic:
+      inputs:
+        - name: privileged_observations
+          encoder: null
+          # DrQ-v2 has no observation normalization
+          apply_rms: false
+      value_head:
+        type: mlp
+        network:
+          units: [1024, 1024]
+          activation: relu
+          # DrQ-v2 Q MLPs have no LayerNorm
+          layernorm: false
+
+  # DrQ-v2 baseline runs 32 envs
+  num_envs: 32
+
+  total_env_steps: 3000000
+  action_repeat: 2
+  # DrQ-v2 num_seed_frames
+  num_seed_steps: 4000
+
+  gamma: 0.99
+  reward_scale: 1.0
+
+  # DrQ-v2 batch/lr
+  batch_size: 256
+  lr: 1e-4
+  # DrQ-v2 effective updates: updates_per_step 16 with update_every_steps 2
+  # -> 8 updates per iteration at 32 envs * action repeat 2 (UTD 0.125)
+  utd_ratio: 0.125
+  updates_per_iter: null
+  # DrQ-v2 critic_target_tau
+  critic_tau: 0.01
+  init_temperature: 0.1
+  log_std_bounds: [-5, 2]
+
+  replay_buffer_size: 200000
+  buffer_device: cpu
+
+  truncate_grads: false
+  grad_norm: 10.0
+
+  log_interval: 25
+  save_frequency: 2000

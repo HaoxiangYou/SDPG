@@ -200,6 +200,22 @@ class MujocoEnv(BaseEnv):
         self._qpos = qpos
         self._qvel = qvel
 
+    def _set_qpos_qvel(self, env_ids: torch.Tensor, qpos: torch.Tensor, qvel: torch.Tensor) -> None:
+        """Write per-env absolute (qpos, qvel) rows.
+
+        Autograd-safe like the base _set_dof_state (clone + index-assign), but
+        without its qpos0-relative storage: the free joint's qpos0 is nonzero
+        (spawn height, unit quat), so reconstructing absolute targets through
+        the offset costs a float rounding and would break the exact SDPG
+        get_states/set_states round-trip.
+        """
+        new_qpos = self._qpos.clone()
+        new_qvel = self._qvel.clone()
+        new_qpos[env_ids] = qpos.to(self._sim_dtype)
+        new_qvel[env_ids] = qvel.to(self._sim_dtype)
+        self._qpos = new_qpos
+        self._qvel = new_qvel
+
     def _action_to_ctrl(self, actions: torch.Tensor) -> torch.Tensor:
         """Map clamped [-1, 1] actions to actuator controls (default: identity;
         actuator gear in the MJCF applies the physical scaling)."""
