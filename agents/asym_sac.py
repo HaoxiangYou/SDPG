@@ -16,12 +16,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import wandb
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from tensorboardX import SummaryWriter
 
 import models
+import wandb
 from utils.common_utils import TimeReport, make_envs, print_info
 from utils.model_utils import get_activation_func, init_module
 from utils.statistic_utils import AverageMeter, RunningMeanStd
@@ -167,9 +167,9 @@ class AsymSACRunner:
 
         self.actor_input_keys = [input.name for input in self.actor_config.inputs]
         self.critic_input_keys = [input.name for input in self.critic_config.inputs]
-        assert self.critic_input_keys == ["privileged_observations"], (
-            "asym_sac critic expects a single privileged_observations input"
-        )
+        assert self.critic_input_keys == [
+            "privileged_observations"
+        ], "asym_sac critic expects a single privileged_observations input"
         assert self.actor_input_keys == ["RGB"], "asym_sac actor expects a single RGB input"
 
         self.inputs_dim = {}
@@ -304,6 +304,8 @@ class AsymSACRunner:
 
     def _train_init(self):
         self.max_env_steps = int(self.agent_config.total_env_steps)
+        # Optional wall-clock budget (seconds); training stops cleanly once exceeded.
+        self.max_train_seconds = self.agent_config.get("max_train_seconds", None)
         self.action_repeat = int(self.agent_config.get("action_repeat", 1))
         self.gamma = self.agent_config.gamma
         self.batch_size = self.agent_config.batch_size
@@ -323,7 +325,9 @@ class AsymSACRunner:
 
         # Optimizers
         lr = float(self.agent_config.get("lr", 3e-4))
-        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=float(self.agent_config.get("actor_lr", lr)))
+        self.actor_optimizer = torch.optim.Adam(
+            self.actor.parameters(), lr=float(self.agent_config.get("actor_lr", lr))
+        )
         self.critic_optimizer = torch.optim.Adam(
             self.critic.parameters(), lr=float(self.agent_config.get("critic_lr", lr))
         )
@@ -513,6 +517,13 @@ class AsymSACRunner:
         last_log_step = 0
 
         while self.step_count < self.max_env_steps:
+            if self.max_train_seconds is not None and time.time() - start_time >= self.max_train_seconds:
+                print_info(
+                    "Wall-clock budget of {:.0f} s reached at iter {}; stopping.".format(
+                        self.max_train_seconds, self.iter_count
+                    )
+                )
+                break
             # --- Rollout ---
             self.time_report.start_timer("rollout")
             with torch.no_grad():
