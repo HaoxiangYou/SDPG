@@ -5,12 +5,12 @@ import time
 
 import torch
 import torch.nn.functional as F
-import wandb
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from tensorboardX import SummaryWriter
 
 import models
+import wandb
 from utils.common_utils import TimeReport, make_envs, print_info
 from utils.statistic_utils import AverageMeter, RunningMeanStd
 from utils.tensor_utils import (
@@ -81,6 +81,8 @@ class SDPGRunner:
 
     def _train_init(self):
         self.max_epochs = self.agent_config.max_epochs
+        # Optional wall-clock budget (seconds); training stops cleanly once exceeded.
+        self.max_train_seconds = self.agent_config.get("max_train_seconds", None)
         self.horizon_length = self.agent_config.horizon_length
         self.causality = self.agent_config.causality
         self.eligibility_trace = self.agent_config.eligibility_trace
@@ -1001,6 +1003,15 @@ class SDPGRunner:
 
             if self.iter_count % self.save_frequency == 0 or self.iter_count == self.max_epochs - 1:
                 self.save(filename="iter_{}_reward_{:.2f}".format(self.iter_count, policy_reward))
+
+            if self.max_train_seconds is not None and time_elapse >= self.max_train_seconds:
+                print_info(
+                    "Wall-clock budget of {:.0f} s reached at iter {}; stopping.".format(
+                        self.max_train_seconds, self.iter_count
+                    )
+                )
+                self.save(filename="final_policy")
+                break
 
         self.time_report.report()
 

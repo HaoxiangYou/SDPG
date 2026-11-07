@@ -73,6 +73,8 @@ class DVARunner:
 
     def _train_init(self):
         self.max_epochs = self.agent_config.max_epochs
+        # Optional wall-clock budget (seconds); training stops cleanly once exceeded.
+        self.max_train_seconds = self.agent_config.get("max_train_seconds", None)
         self.horizon_length = self.agent_config.horizon_length
         self.gamma = self.agent_config.gamma
         self.lam = self.agent_config.lam
@@ -574,6 +576,15 @@ class DVARunner:
 
             if self.iter_count % self.save_frequency == 0 or self.iter_count == self.max_epochs - 1:
                 self.save(filename="iter_{}_reward_{:.2f}".format(self.iter_count, policy_reward))
+
+            if self.max_train_seconds is not None and time_elapse >= self.max_train_seconds:
+                print_info(
+                    "Wall-clock budget of {:.0f} s reached at iter {}; stopping.".format(
+                        self.max_train_seconds, self.iter_count
+                    )
+                )
+                self.save(filename="final_policy")
+                break
 
         self.time_report.report()
 
